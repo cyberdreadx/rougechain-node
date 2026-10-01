@@ -8,31 +8,33 @@ Endpoints for validator staking operations. All write operations use v2 signed r
 GET /api/validators
 ```
 
-### Query Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `publicKey` | string | (Optional) Filter by specific validator |
-
 ### Response
 
 ```json
 {
+  "success": true,
   "validators": [
     {
       "publicKey": "abc123...",
-      "stake": 10000.0,
+      "name": "my-node",
+      "stake": 20000,
       "status": "active",
+      "slashCount": 0,
+      "jailedUntil": 0,
+      "entropyContributions": 0,
       "blocksProposed": 142
     },
     {
       "publicKey": "def456...",
-      "stake": 5000.0,
+      "stake": 10000,
       "status": "active",
+      "slashCount": 0,
+      "jailedUntil": 0,
+      "entropyContributions": 0,
       "blocksProposed": 71
     }
   ],
-  "totalStaked": 15000.0
+  "totalStake": 30000
 }
 ```
 
@@ -41,8 +43,12 @@ GET /api/validators
 | Field | Type | Description |
 |-------|------|-------------|
 | `publicKey` | string | Validator's ML-DSA-65 public key |
+| `name` | string | Node name, if known (omitted otherwise) |
 | `stake` | number | Amount of XRGE staked |
-| `status` | string | `active` or `unbonding` |
+| `status` | string | `active`, `jailed` or `inactive` (no stake) |
+| `slashCount` | number | Times this validator has been slashed |
+| `jailedUntil` | number | Block height the validator is jailed until (`0` if never) |
+| `entropyContributions` | number | Entropy contributions counter |
 | `blocksProposed` | number | Total blocks produced |
 
 ---
@@ -74,18 +80,18 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "txId": "abc123...",
-  "stake": 10000.0,
-  "status": "active"
+  "message": "Stake transaction submitted"
 }
 ```
+
+No transaction id is returned; check `/api/validators` once the transaction is in a block.
 
 ### Requirements
 
 | Requirement | Value |
 |-------------|-------|
 | Minimum stake | 10,000 XRGE |
-| Fee | 0.1 XRGE |
+| Fee | 1 XRGE (fixed for stake and unstake) |
 
 ---
 
@@ -116,8 +122,7 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "txId": "abc123...",
-  "remainingStake": 5000.0
+  "message": "Unstake transaction submitted"
 }
 ```
 
@@ -131,7 +136,7 @@ After unstaking, tokens enter an unbonding period (500 blocks) before they becom
 
 | Error | Cause |
 |-------|-------|
-| `"insufficient balance"` | Not enough XRGE to stake |
-| `"below minimum stake"` | Amount is less than 10,000 XRGE |
-| `"validator not found"` | Trying to unstake but not a validator |
-| `"invalid signature"` | ML-DSA-65 signature verification failed |
+| `"insufficient XRGE balance: …"` | Not enough XRGE to cover the stake plus the 1 XRGE fee |
+| `"minimum stake is 10000 XRGE"` | Amount is less than 10,000 XRGE |
+| `"insufficient staked balance: …"` | Unstaking more than is staked |
+| `"Invalid signature"` / `"Signature verification failed: …"` | ML-DSA-65 signature verification failed |

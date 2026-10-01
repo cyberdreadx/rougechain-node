@@ -1,6 +1,6 @@
 # Create a Wallet
 
-You explicitly create (or import) your RougeChain wallet and set a password (minimum 8 characters) at creation. Here's what you need to know about it.
+You explicitly create (or import) your RougeChain wallet, and onboarding then asks you to set a password (at least 8 characters). The password is **required**: on the web, the wallet is saved in your browser only once it's encrypted with it. Here's what you need to know about your wallet.
 
 ## Wallet Components
 
@@ -24,7 +24,7 @@ rouge1q8f3x7k2m4n9pvj5dz6ywl2cg8hs0kw9...
 
 Addresses are ~63 characters — much shorter than the raw 3,904-char hex public key. The wallet, extension, and explorer all display this format.
 
-> **Note:** API endpoints still use the raw hex public key internally. The `rouge1` address is for display, sharing, and QR codes.
+> **Note:** Some API endpoints still require the raw hex public key (see [Address Format](../api-reference/README.md#address-format)). The `rouge1` address is for display, sharing, and QR codes.
 
 ## Backup Your Wallet
 
@@ -58,7 +58,7 @@ Wallets also support **24-word BIP-39 mnemonic** backup (256-bit entropy for pos
 2. Write down all 24 words in order
 3. Store securely — anyone with your seed phrase has full access to your wallet
 
-> **Tip:** Use the seed phrase as your primary backup method. The `.pqcbackup` file is best for transferring between devices.
+> **Important:** The seed phrase restores your **signing key and address** (and so your funds). Wallets created or imported from the phrase on rougechain.io (since 2026-10-01) or in Qwalla also get a messaging/mail encryption key **derived from the phrase**, so the phrase alone restores it — the same key in both apps. Wallets created on the website **before** that change have a random encryption key that the phrase cannot restore: keep their `.pqcbackup` file, which contains both keys, to read earlier messages and mail. The browser extension still generates a random encryption key, so keep a `.pqcbackup` for extension wallets too.
 
 ## `.pqcbackup` File Format
 
@@ -90,7 +90,7 @@ The encrypted backup file uses industry-standard cryptography:
 3. The salt, IV, and ciphertext are bundled into a `.pqcbackup` JSON file
 4. Without the correct password, the file cannot be decrypted
 
-> **Warning:** There is no password recovery. If you forget your backup password, use your seed phrase to restore instead.
+> **Warning:** There is no password recovery. If you forget your backup password, you can restore your address and funds from your seed phrase; your old messages and mail come back too only if the wallet's encryption key is seed-derived (see above).
 
 ## Security Best Practices
 
@@ -110,22 +110,29 @@ The encrypted backup file uses industry-standard cryptography:
 const mnemonic = bip39.generateMnemonic(256);
 
 // Derive 32-byte seed via HKDF-SHA256
-const seed = hkdf(mnemonicToSeed(mnemonic), "rougechain-pqc-v1");
+const seed = hkdf(sha256, mnemonicToSeed(mnemonic), undefined, "rougechain-ml-dsa-65-v1", 32);
 
 // Signing keypair (ML-DSA-65 / FIPS 204)
 const signingKeypair = ml_dsa65.keygen(seed);
 
-// Encryption keypair (ML-KEM-768 / FIPS 203)
-const encryptionKeypair = ml_kem768.keygen(seed);
+// Encryption keypair (ML-KEM-768 / FIPS 203) — derived from the phrase, identical to Qwalla.
+// (No phrase, e.g. a private-key import: the signing private key hex is used instead.)
+const kemSeed = sha512(utf8(`${mnemonic || signingPrivateKeyHex}|rougee-gram|kem-v1`)); // 64 bytes
+const encryptionKeypair = ml_kem768.keygen(kemSeed);
+// Wallets created on the website before 2026-10-01 keep their original random key.
 ```
 
 ### Key Storage
 
-Keys are encrypted at rest with **AES-256-GCM** (PBKDF2, 600,000 iterations). Only the encrypted blob is persisted to disk; the decrypted key is held only in memory for the active session.
+Once you set a password, keys are encrypted at rest with **AES-256-GCM** (PBKDF2, 600,000 iterations).
+
+On the web, a new or imported wallet is held only in the tab's `sessionStorage` until you set its password; nothing is written to `localStorage` before that, so if you close the tab during the recovery-phrase or password step the wallet is not kept (restore it from the recovery phrase). Setting the password stores the encrypted blob in `localStorage`. While the wallet is unlocked, the decrypted wallet is kept in `sessionStorage`, which the browser clears when the tab closes. Keep a `.pqcbackup` as well.
+
+Older versions of the site saved a wallet without a password to `localStorage` **unencrypted**. If you still have such a wallet, rougechain.io asks you to set a password before you can keep using it (you can back it up first); the wallet is then encrypted and the unencrypted copy is deleted.
 
 | Platform | Storage |
 |----------|---------|
-| Web (rougechain.io) | encrypted blob in `localStorage`; decrypted key in memory only |
+| Web (rougechain.io) | encrypted blob in `localStorage`; decrypted wallet in `sessionStorage` while unlocked (and before the password is set during create / import). Private keys are never written to `localStorage` unencrypted |
 | Browser Extension (RougeChain Wallet) | encrypted AES-256-GCM vault in `chrome.storage.local`; decrypted key in `chrome.storage.session`, never written to disk |
 | Mobile (Qwalla) | `expo-secure-store` → device keychain |
 

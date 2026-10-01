@@ -1,4 +1,4 @@
-import { DemoWalletProvider } from "./wallet/DemoWalletProvider";
+import { WalletProvider } from "./wallet/WalletProvider";
 import { MemoryRouter } from "react-router-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi, it, expect } from "vitest";
 import Home from "./Home";
 import Explorer from "./Explorer";
-import Swap, { quote } from "./Swap";
+import { quote } from "./Swap";
 import DesignSystem from "./DesignSystem";
 import { NetworkProvider, NetworkControls, DataNote } from "./Network";
 import { WorkspaceBoundary as ExploreBoundary } from "./explore/WorkspaceExperience";
@@ -18,11 +18,11 @@ function wrap(children: React.ReactNode) {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Unavailable")));
   return render(
     <QueryClientProvider client={client}>
-      <DemoWalletProvider>
+      <WalletProvider autoRegister={false}>
         <NetworkProvider>
           <MemoryRouter>{children}</MemoryRouter>
         </NetworkProvider>
-      </DemoWalletProvider>
+      </WalletProvider>
     </QueryClientProvider>,
   );
 }
@@ -41,16 +41,81 @@ it("renders the complete homepage with honest fallback", async () => {
   );
   expect(screen.queryByText("MAINNET LIVE")).not.toBeInTheDocument();
 });
-it("renders Explorer and filters only the recent block list", async () => {
+
+it("keeps the approved homepage section order", () => {
+  const { container } = wrap(<Home />);
+  const ids = [
+    "technology",
+    "build",
+    "security",
+    "ecosystem",
+    "xrge",
+    "team",
+    "regenerate",
+    "explore",
+  ];
+  const sections = ids.map((id) => container.querySelector(`#${id}`));
+  sections.forEach((section) => expect(section).not.toBeNull());
+  for (let i = 0; i < sections.length - 1; i += 1) {
+    expect(
+      sections[i]!.compareDocumentPosition(sections[i + 1]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  }
+});
+
+it("renders and navigates the six ecosystem possibilities", async () => {
+  wrap(<Home />);
+  for (const name of [
+    "Qwalla",
+    "Swap",
+    "Bridge",
+    "Talk",
+    "Validate",
+    "Build",
+  ]) {
+    expect(
+      screen.getByRole("tab", { name: new RegExp(name, "i") }),
+    ).toBeInTheDocument();
+  }
+  expect(
+    screen.getByRole("heading", {
+      name: "Your assets. Ready for what’s next.",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", {
+      name: "Trade. Provide liquidity. Stay onchain.",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      /Send post-quantum encrypted messages and email directly between wallet identities/i,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", {
+      name: "Built for developers. Ready for agents.",
+    }),
+  ).toBeInTheDocument();
+
+  const talkTab = screen.getByRole("tab", { name: /Talk/i });
+  await userEvent.click(talkTab);
+  expect(talkTab).toHaveAttribute("aria-selected", "true");
+});
+it("renders the Explorer with a labelled snapshot and no synthetic data", async () => {
   wrap(<Explorer />);
   expect(screen.getByRole("heading", { name: "Explorer" })).toBeInTheDocument();
   await screen.findAllByText("200");
-  await userEvent.type(
-    screen.getByLabelText("Filter recent blocks by height or hash"),
-    "impossible-block",
-  );
-  expect(screen.getByText("No matching blocks")).toBeInTheDocument();
-  expect(screen.getByText("Synthetic demo")).toBeInTheDocument();
+  expect(screen.getAllByText("Snapshot").length).toBeGreaterThan(0);
+  expect(
+    screen.getByText(/From the saved snapshot. Not live data./),
+  ).toBeInTheDocument();
+  expect(
+    await screen.findByText("Transactions unavailable"),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Synthetic demo")).not.toBeInTheDocument();
+  expect(screen.queryByText(/rc_demo_/)).not.toBeInTheDocument();
 });
 it("renders the design system and its modal", async () => {
   wrap(<DesignSystem />);
@@ -79,7 +144,7 @@ it("uses keyboard-navigable mobile tabs and shared content", async () => {
   await userEvent.keyboard("{Home}{ArrowRight}");
   expect(screen.getByRole("tab", { name: "Explorer" })).toHaveFocus();
 });
-it("keeps the functional launcher if Trellis throws", () => {
+it("keeps the functional launcher if the workspace throws", () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   function Broken(): never {
     throw new Error("chunk failed");
@@ -90,7 +155,7 @@ it("keeps the functional launcher if Trellis throws", () => {
     </ExploreBoundary>,
   );
   expect(
-    screen.getByText(/Interactive layout unavailable/),
+    screen.getByText(/Workspace unavailable/),
   ).toBeInTheDocument();
   for (const name of ["Network", "Explorer", "Ecosystem", "Build", "Security"])
     expect(
@@ -114,46 +179,6 @@ it("switches to explicit snapshot mode", async () => {
     screen.getByRole("button", { name: "Refresh network data" }),
   ).toBeDisabled();
 });
-it("Swap review and token changes never perform a request", async () => {
-  const fetchMock = vi.fn();
-  vi.stubGlobal("fetch", fetchMock);
-  render(<Swap />);
-  expect(screen.getByRole("heading", { name: "Swap" })).toBeInTheDocument();
-  await userEvent.selectOptions(
-    screen.getByLabelText("Receive token"),
-    "qUSDC",
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Review swap" }));
-  expect(screen.getByRole("dialog")).toBeInTheDocument();
-  expect(screen.getByText(/All values are synthetic/)).toBeInTheDocument();
-  await userEvent.click(
-    screen.getByRole("button", { name: "Demo only — close preview" }),
-  );
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(fetchMock).not.toHaveBeenCalled();
-});
-it.each(["Loading quote", "Insufficient balance", "Network unavailable"])(
-  "disables review for %s",
-  async (state) => {
-    render(<Swap />);
-    await userEvent.selectOptions(
-      screen.getByLabelText("Preview an interface state"),
-      state,
-    );
-    expect(screen.getByRole("button", { name: "Review swap" })).toBeDisabled();
-  },
-);
-it("shows high impact warning both before and during review", async () => {
-  render(<Swap />);
-  await userEvent.selectOptions(
-    screen.getByLabelText("Preview an interface state"),
-    "High price impact",
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Review swap" }));
-  expect(screen.getByRole("dialog")).toHaveTextContent(
-    "High price impact: 8.2%",
-  );
-});
 it.each(["-1", "NaN", "Infinity", "0", "1000000000001"])(
   "rejects invalid illustrative amount %s",
   (value) => {
@@ -170,19 +195,21 @@ it("preserves a stale successful response when refresh fails", async () => {
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   client.setQueryData(
-    ["network"],
+    ["network", "mainnet"],
     { ...demoSnapshot, height: 777 },
     { updatedAt: Date.now() - 120000 },
   );
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Offline")));
   render(
     <QueryClientProvider client={client}>
-      <DemoWalletProvider>
+      <WalletProvider autoRegister={false}>
         <NetworkProvider>
-          <DataNote />
-          <Explorer />
+          <MemoryRouter>
+            <DataNote />
+            <Explorer />
+          </MemoryRouter>
         </NetworkProvider>
-      </DemoWalletProvider>
+      </WalletProvider>
     </QueryClientProvider>,
   );
   await waitFor(() =>

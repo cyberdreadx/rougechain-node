@@ -55,7 +55,7 @@ import {
   WalletTransaction
 } from "@/lib/pqc-wallet";
 import { generateKeypair } from "@/lib/pqc-blockchain";
-import { generateEncryptionKeypair, registerWalletOnNode } from "@/lib/pqc-messenger";
+import { deriveMessagingKeypair, registerWalletOnNode } from "@/lib/pqc-messenger";
 import { createWalletViaNode } from "@/lib/node-api";
 import { NETWORK_STORAGE_KEY, getCoreApiHeaders, getNetworkLabel, getNodeApiBaseUrl } from "@/lib/network";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
@@ -94,7 +94,7 @@ const Wallet = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
-  const [showSend, setShowSend] = useState<string | false>(false);
+  const [showSend, setShowSend] = useState<string | boolean>(false); // true = open with the default token, string = preselected symbol
   const [showReceive, setShowReceive] = useState(false);
   const [showShield, setShowShield] = useState(false);
   const [showUnshield, setShowUnshield] = useState(false);
@@ -400,8 +400,8 @@ const Wallet = () => {
       const mnemonic = generateMnemonic();
       const { publicKey: signingPublicKey, secretKey: signingPrivateKey } = keypairFromMnemonic(mnemonic);
 
-      // Generate encryption keys for messenger E2EE (ML-KEM-768)
-      const encryptionKeys = generateEncryptionKeypair();
+      // Messenger E2EE keys (ML-KEM-768), seed-derived like Qwalla so the phrase restores them
+      const encryptionKeys = deriveMessagingKeypair(mnemonic, signingPrivateKey);
       
       const newWallet: UnifiedWallet = {
         id: `wallet-${Date.now()}`,

@@ -13,7 +13,7 @@ RougeChain includes two built-in communication systems — both fully end-to-end
 | **Self-destruct** | ✅ Configurable timer | ❌ |
 | **Folders** | — | Inbox, Sent, Trash |
 | **Threading** | Conversations | Reply chains |
-| **Server sees** | Encrypted blobs only | Encrypted blobs only |
+| **Server sees** | Ciphertext + metadata (sender, conversation members, timing, size, message type) | Ciphertext + metadata (sender, recipients, timing, size) |
 
 ## Why Post-Quantum?
 
@@ -41,7 +41,9 @@ Alice                                       Bob
   │                  8. AES-GCM decrypt
 ```
 
-**Key principle:** The server stores two encrypted blobs per message — one for the sender, one for the recipient. It never has the keys to decrypt either.
+**Key principle:** In a 1:1 conversation each message package holds two ciphertexts — one encapsulated to the recipient's ML-KEM key, one to the sender's own. Group conversations (2+ other members) use the same CEK pattern as mail: one ciphertext plus a per-member KEM-wrapped key (sender included). The server never has the private keys to decrypt any of them.
+
+**Your encryption key is derived from your seed phrase** for wallets created or imported from the phrase on rougechain.io (since 2026-10-01) or in Qwalla: the ML-KEM-768 seed is `SHA-512("<phrase>|rougee-gram|kem-v1")`, so restoring from the 24-word phrase in either app restores the same key and your old messages and mail. Wallets created on the website before that change (and extension wallets) have a random key: restore those from their `.pqcbackup` file to keep old messages. A backup that contains encryption keys always keeps them as they are.
 
 ### Mail Encryption (CEK Pattern)
 
@@ -144,17 +146,17 @@ The messenger tracks public key fingerprints (SHA-256 hash) for contacts:
 | Property | Details |
 |----------|---------|
 | **Quantum-resistant** | ML-KEM-768 key encapsulation (FIPS 203) |
-| **Forward secrecy** | Each message uses a fresh encapsulation |
-| **Zero-knowledge server** | Server stores only ciphertext — cannot read messages |
-| **Client-side crypto** | All encryption/decryption in the browser via WebAssembly |
-| **Dual ciphertext** | Sender and recipient each get their own encrypted copy |
+| **No forward secrecy** | Each message uses a fresh encapsulation, but always to the recipient's (and sender's) long-term ML-KEM key — there is no ratchet. Anyone who later obtains that key can decrypt every stored message sent to or from it. Protect your encryption key and backups accordingly |
+| **Server can't read content** | Server stores only ciphertext and cannot read messages, but it does see metadata (who talks to whom, when, and message size) |
+| **Client-side crypto** | All encryption/decryption happens on the client |
+| **Per-member ciphertext** | Sender and every recipient can each decrypt their own copy (two ciphertexts in 1:1, wrapped CEK per member in groups) |
 | **Signed requests** | All API calls authenticated with ML-DSA-65 signatures |
 | **Anti-replay** | Nonce + timestamp prevents request replay attacks |
 | **TOFU** | Key fingerprint tracking with change detection |
 | **Unified signatures** | Mail signed over all encrypted parts (subject + body + attachment) |
 | **CEK multi-recipient** | Efficient per-recipient key wrapping without re-encryption |
 | **Atomic name registry** | Compare-and-swap prevents race conditions on name claims |
-| **Persistent or vaulted keys** | Private keys in localStorage (no password) or AES-256-GCM encrypted blob (with vault passphrase); active session keys in sessionStorage |
+| **Vaulted keys** | Private keys persisted only as an AES-256-GCM encrypted blob (vault password required); active session keys in sessionStorage |
 
 ## Notifications & Unread Badges
 

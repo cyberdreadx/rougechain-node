@@ -1,0 +1,424 @@
+{
+  "meta": {
+    "title": "RougeChain — Post-cuántica desde el génesis.",
+    "description": "RougeChain — una blockchain de capa 1 post-cuántica construida sobre criptografía de retículos estandarizada por el NIST.",
+    "explorerTitle": "RougeChain Explorer — bloques, transacciones, direcciones y tokens",
+    "explorerDescription": "Explora RougeChain, la capa 1 post-cuántica: bloques, transacciones, direcciones, tokens, NFT y contratos."
+  },
+  "language": {
+    "label": "Idioma"
+  },
+  "loading": "Cargando…",
+  "skipToContent": "Saltar al contenido",
+  "ui": {
+    "closeDialog": "Cerrar diálogo",
+    "designDemo": "DEMO DE DISEÑO"
+  },
+  "header": {
+    "mainNav": "Navegación principal",
+    "docs": "Docs",
+    "localNav": "Navegación de {{name}}",
+    "workspace": "Espacio de trabajo"
+  },
+  "sections": {
+    "technology": "Tecnología",
+    "build": "Construir",
+    "security": "Seguridad",
+    "ecosystem": "Ecosistema",
+    "regenerate": "Regenerar",
+    "explore": "Explorar"
+  },
+  "footer": {
+    "tagline": "Construida para lo que viene.",
+    "docs": "Documentación",
+    "community": "Comunidad",
+    "designSystem": "Sistema de diseño",
+    "architecture": "Arquitectura",
+    "motto": "Post-cuántica desde el génesis."
+  },
+  "explorerSite": {
+    "wordmark": "Explorador de RougeChain",
+    "tagline": "Cada bloque, transacción y dirección de RougeChain."
+  },
+  "notFound": {
+    "title": "Página no encontrada.",
+    "body": "Usa Apps para explorar las rutas disponibles.",
+    "home": "Volver a RougeChain",
+    "explorerBody": "Busca un bloque, una transacción, una dirección, un token o un contrato.",
+    "explorerHome": "Inicio del explorador"
+  },
+  "projectNav": {
+    "label": "Navegación del proyecto",
+    "title": "Explora RougeChain",
+    "sections": "Secciones del proyecto",
+    "home": "Inicio de RougeChain",
+    "walletConnected": "Cartera conectada · {{address}}",
+    "walletDisconnected": "Cartera desconectada · usa Conectar cartera en la cabecera."
+  },
+  "switcher": {
+    "apps": "Apps",
+    "dialog": "Apps de RougeChain",
+    "home": "Inicio de RougeChain",
+    "closeLabel": "Cerrar apps",
+    "close": "Cerrar",
+    "localNav": "Navegación móvil de {{name}}",
+    "global": "Aplicaciones globales",
+    "comingSoon": "Próximamente",
+    "extensionLabel": "Extensión RougeChain Wallet ↗",
+    "workspace": "Espacio de trabajo completo"
+  },
+  "appStatus": {
+    "live": "En vivo",
+    "preview": "Vista previa",
+    "demo": "Demo",
+    "external": "Externa",
+    "future": "Planeada"
+  },
+  "appGroups": {
+    "Hold": "Guardar",
+    "Trade": "Operar",
+    "Play": "Jugar",
+    "Talk": "Hablar",
+    "Explore": "Explorar",
+    "Build": "Construir",
+    "Community": "Comunidad"
+  },
+  "appNav": {
+    "wallet": "Cartera",
+    "settings": "Ajustes",
+    "swap": "Intercambiar",
+    "pools": "Pools",
+    "positions": "Posiciones",
+    "overview": "Resumen",
+    "blocks": "Bloques",
+    "transactions": "Transacciones",
+    "tokens": "Tokens",
+    "nfts": "NFTs",
+    "contracts": "Contratos",
+    "bridgeActivity": "Puente",
+    "validators": "Validadores",
+    "genesis": "Programa génesis",
+    "status": "Estado"
+  },
+  "apps": {
+    "qwalla": {
+      "name": "Cartera móvil Qwalla",
+      "description": "Explora el ecosistema Qwalla."
+    },
+    "wallet": {
+      "name": "Cartera web",
+      "description": "Tus activos, protegidos para el mañana."
+    },
+    "wallet-extension": {
+      "name": "Extensión de cartera",
+      "description": "Extensión de navegador RougeChain Wallet."
+    },
+    "rougee": {
+      "name": "Rougee",
+      "description": "Descubre Rougee."
+    },
+    "qwave": {
+      "name": "qWave",
+      "description": "Descubre qWave."
+    },
+    "arcade": {
+      "name": "Arcade",
+      "description": "Juegos próximamente."
+    },
+    "messenger": {
+      "name": "Mensajes",
+      "description": "Chats, grupos y pagos con cifrado post-cuántico."
+    },
+    "mail": {
+      "name": "Correo",
+      "description": "Correo cifrado en @rouge.quant y @qwalla.mail."
+    },
+    "swap": {
+      "name": "Intercambiar",
+      "description": "Intercambia activos. Explora posibilidades."
+    },
+    "bridge": {
+      "name": "Puente",
+      "description": "Una conexión entre redes."
+    },
+    "liquidity": {
+      "name": "Liquidez",
+      "description": "Aporta liquidez y gana comisiones de intercambio."
+    },
+    "explorer": {
+      "name": "Explorador",
+      "description": "La red, en detalle."
+    },
+    "validators": {
+      "name": "Validadores",
+      "description": "Los participantes que protegen la red."
+    },
+    "network": {
+      "name": "Estado de la red",
+      "description": "Telemetría de solo lectura de la API pública."
+    },
+    "build": {
+      "name": "Portal para desarrolladores",
+      "description": "Herramientas para construir en RougeChain."
+    },
+    "docs": {
+      "name": "Documentación",
+      "description": "Lee la documentación actual."
+    },
+    "sdk": {
+      "name": "SDK",
+      "description": "Vista previa de herramientas para desarrolladores."
+    },
+    "mcp": {
+      "name": "MCP / Agentes",
+      "description": "Deja que agentes de IA lean y usen la cadena."
+    },
+    "node": {
+      "name": "Ejecutar un nodo",
+      "description": "Comandos, requisitos y nodos activos."
+    },
+    "regenerate": {
+      "name": "Regenerar",
+      "description": "Descubre la misión de la comunidad."
+    },
+    "community": {
+      "name": "Comunidad RougeChain",
+      "description": "Conecta con la comunidad."
+    }
+  },
+  "network": {
+    "names": {
+      "mainnet": "Mainnet",
+      "testnet": "Testnet"
+    },
+    "state": {
+      "live": "API en vivo",
+      "demo": "demo",
+      "loading": "cargando",
+      "stale": "desactualizado",
+      "unavailable": "no disponible"
+    },
+    "dataState": {
+      "live": "Datos de la API en vivo",
+      "demo": "Demo · instantánea guardada",
+      "stale": "Desactualizado · última lectura correcta",
+      "unavailable": "No disponible",
+      "loading": "Cargando datos de la red"
+    },
+    "source": {
+      "live": "API en vivo",
+      "demo": "Instantánea",
+      "unavailable": "No disponible",
+      "loading": "cargando",
+      "stale": "desactualizado"
+    },
+    "controls": {
+      "mode": "Modo de datos de la red",
+      "live": "Datos en vivo",
+      "snapshot": "Instantánea",
+      "refresh": "Actualizar datos de la red"
+    },
+    "note": {
+      "unavailable": "Datos de {{network}} no disponibles.",
+      "captured": "Capturado el {{date}}.",
+      "lastRead": "Última lectura: {{date}}.",
+      "liveness": "Que la API responda no demuestra que la cadena esté activa."
+    },
+    "metrics": {
+      "height": "Altura de bloque",
+      "validators": "Validadores reportados",
+      "peers": "Pares conectados",
+      "source": "Fuente de datos"
+    }
+  },
+  "workspacePage": {
+    "eyebrow": "Tu ecosistema / Espacio de trabajo",
+    "title": "Haz sitio a lo posible.",
+    "lead": "Abre una app. Pon la red en primer plano.",
+    "unknownPreview": "Esa vista previa no está disponible. Elige una app a continuación."
+  },
+  "explore": {
+    "eyebrow": "08 / Explora RougeChain",
+    "title": "Explora RougeChain",
+    "subtitle": "La red. Las herramientas. Las posibilidades. Hazlo tuyo.",
+    "openWorkspace": "Abrir espacio de trabajo completo",
+    "paneNote": "Empieza con tres paneles. Abre más desde el lanzador."
+  },
+  "workspace": {
+    "views": {
+      "Network": "Red",
+      "Explorer": "Explorador",
+      "Ecosystem": "Ecosistema",
+      "Wallet": "Cartera",
+      "Swap": "Intercambiar",
+      "Bridge": "Puente",
+      "Messenger": "Mensajes",
+      "Mail": "Correo",
+      "Validators": "Validadores",
+      "Build": "Construir",
+      "Security": "Seguridad"
+    },
+    "groups": {
+      "Network": "Red",
+      "Use": "Usar",
+      "Trade": "Operar",
+      "Build": "Construir"
+    },
+    "state": {
+      "notOpened": "Sin abrir",
+      "hidden": "Oculto",
+      "focused": "Enfocado",
+      "open": "Abierto"
+    },
+    "launcher": "Lanzador del espacio de trabajo",
+    "developer": "Desarrolladores",
+    "openView": "Abrir {{name}}",
+    "hideView": "Ocultar {{name}}",
+    "panels": "Paneles del espacio de trabajo",
+    "reset": "Restablecer espacio de trabajo",
+    "compactNote": "Espacio de trabajo compacto · El estado de los paneles dura esta visita.",
+    "unavailable": "Espacio de trabajo no disponible. Usa el espacio compacto de abajo.",
+    "toolbar": "ABRIR · ORGANIZAR · PESTAÑAS · ENFOCAR · OCULTAR · RESTAURAR",
+    "interactive": "Vista interactiva",
+    "simple": "Vista simple"
+  },
+  "dock": {
+    "menu": "Menú del panel",
+    "menuFor": "Menú del panel {{name}}",
+    "panel": "Panel {{name}}",
+    "openApp": "Abrir la app completa",
+    "restoreLayout": "Restaurar diseño",
+    "maximize": "Maximizar",
+    "newColumn": "Mover a una nueva columna",
+    "dock": "Acoplar",
+    "float": "Flotar",
+    "hide": "Ocultar",
+    "close": "Cerrar",
+    "restoreView": "Restaurar {{name}}",
+    "maximizeView": "Maximizar {{name}}",
+    "closeView": "Cerrar {{name}}",
+    "dockToMaximize": "Acopla este panel para maximizarlo",
+    "maximizePanel": "Maximizar panel",
+    "hideTitle": "Ocultar panel (se restaura desde el lanzador)",
+    "watermark": "Elige una app en el lanzador para restaurar tu espacio de trabajo.",
+    "status": {
+      "mainnet": "MAINNET",
+      "open_one": "{{count}} ABIERTO",
+      "open_other": "{{count}} ABIERTOS",
+      "saveOn": "AUTOGUARDADO DEL DISEÑO ACTIVO",
+      "saveOff": "ALMACENAMIENTO DEL DISEÑO NO DISPONIBLE"
+    },
+    "overview": "Vista general",
+    "region": "Espacio de trabajo interactivo de RougeChain"
+  },
+  "block": {
+    "title": "Bloque #{{height}}",
+    "liveAtSelection": "API en vivo al seleccionar",
+    "dataAtSelection": "Datos ({{source}}) al seleccionar",
+    "hash": "Hash",
+    "transactions": "Transacciones",
+    "timestamp": "Fecha y hora",
+    "note": "Tomado de la lista de bloques actual. No se consultó ningún endpoint de detalle.",
+    "openExplorer": "Abrir el explorador completo"
+  },
+  "views": {
+    "network": {
+      "kicker": "ROUGECHAIN MAINNET",
+      "connected": "API conectada",
+      "latest": "ÚLTIMO BLOQUE REPORTADO",
+      "validators": "Validadores",
+      "noteDemo": "Instantánea guardada de la API pública.",
+      "noteLive": "Una vista de solo lectura de los datos públicos de la red.",
+      "noteStale": "Últimos datos correctos; actualización no disponible.",
+      "noteLoading": "Solicitando datos públicos de la red."
+    },
+    "explorer": {
+      "kicker": "ÚLTIMOS BLOQUES",
+      "open": "Abrir explorador",
+      "txs_one": "{{count}} tx",
+      "txs_other": "{{count}} txs",
+      "loading": "Cargando datos de la red…",
+      "publicData": "Datos públicos (GET)",
+      "note": "Inspecciona la red sin conectar una cartera."
+    },
+    "ecosystem": {
+      "intro": "Tu ecosistema. Un espacio de trabajo.",
+      "openPreview": "Abrir vista previa",
+      "architecture": "Explora la arquitectura del ecosistema"
+    },
+    "build": {
+      "intro": "Construye sobre una nueva base.",
+      "sdk": "SDK y documentación",
+      "wasm": "Contratos WASM",
+      "agents": "MCP / Agentes y Ejecutar un nodo",
+      "source": "Código fuente"
+    },
+    "security": {
+      "intro": "Primitivas post-cuánticas.",
+      "signatures": "Firmas post-cuánticas",
+      "kem": "Encapsulación de claves post-cuántica",
+      "aead": "Cifrado autenticado",
+      "hashing": "Hash / compromisos de prueba",
+      "stack": "La pila criptográfica"
+    }
+  },
+  "previews": {
+    "account": "Cuenta: {{address}}",
+    "noWallet": "No hay ninguna cartera conectada.",
+    "compose": "Redactar no disponible",
+    "developer": "SDK · WASM · MCP / Agentes · Ejecutar un nodo",
+    "wallet": {
+      "connected": "Cartera conectada",
+      "locked": "Cartera bloqueada",
+      "none": "Sin cartera",
+      "title": "Tus activos",
+      "unlock": "Desbloquea tu cartera para ver los saldos.",
+      "open": "Abrir cartera",
+      "note": "Las claves se quedan en este navegador; la firma se hace en la página de la cartera."
+    },
+    "swap": {
+      "status": "Cotización simulada",
+      "title": "Intercambiar activos",
+      "connect": "Conecta tu cartera en la cabecera para usar tu identidad.",
+      "pay": "Pagas",
+      "receive": "Recibes",
+      "unavailable": "Intercambio no disponible",
+      "note": "Tasa ilustrativa. Sin servicio de cotización ni de transacciones.",
+      "open": "Abrir Intercambiar completo"
+    },
+    "bridge": {
+      "status": "Vista previa del puente",
+      "reverse": "Invertir dirección",
+      "assets": "Activos",
+      "activity": "Actividad del puente",
+      "unavailable": "Puente no disponible",
+      "note": "Sin aprobaciones, depósitos ni retiros."
+    },
+    "messenger": {
+      "status": "Vista previa de Mensajes",
+      "conversations": "Conversaciones",
+      "contacts": "Contactos",
+      "noContacts": "Aún no hay contactos",
+      "yours": "Tus conversaciones",
+      "connected": "Cartera conectada. La mensajería aún no está disponible en este sitio.",
+      "disconnected": "No hay ninguna cuenta conectada. Aquí aparecerían los mensajes.",
+      "note": "No se envía ningún mensaje ni se cifra nada."
+    },
+    "mail": {
+      "status": "Vista previa de Correo",
+      "inbox": "Recibidos",
+      "sent": "Enviados",
+      "empty": "La carpeta {{folder}} está vacía",
+      "noAccount": "No hay ninguna cuenta de correo conectada.",
+      "note": "No se descarga ni se envía correo."
+    },
+    "validators": {
+      "title": "Validadores de la red",
+      "connected": "Cartera conectada · sin cuenta de staking cargada",
+      "reported": "Reportado por la API pública · mainnet",
+      "nodeDocs": "Documentación para ejecutar un nodo",
+      "staking": "Propuesta de arquitectura de staking",
+      "unavailable": "Staking no disponible"
+    }
+  }
+}

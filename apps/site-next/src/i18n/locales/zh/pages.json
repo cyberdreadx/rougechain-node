@@ -1,0 +1,736 @@
+{
+  "common": {
+    "loading": "加载中…",
+    "mainnet": "Mainnet",
+    "testnet": "Testnet",
+    "devnet": "Devnet",
+    "mainnetLower": "主网",
+    "testnetLower": "测试网",
+    "copied": "已复制",
+    "copyWhat": "复制{{what}}",
+    "command": "命令",
+    "refresh": "刷新",
+    "openWallet": "打开钱包",
+    "unknown": "未知",
+    "apiUnavailable": "无法读取 {{network}} 节点 API。为避免猜测，此处不显示任何内容。"
+  },
+  "seo": {
+    "validators": {
+      "title": "验证者 — RougeChain",
+      "description": "质押 XRGE，帮助保护抗量子网络。实时查看验证者集合、质押与最终确认。"
+    },
+    "genesis": {
+      "title": "创世验证者 — RougeChain",
+      "description": "成为首个抗量子 Layer 1 的创始独立验证者。"
+    },
+    "node": {
+      "title": "运行节点 — RougeChain",
+      "description": "运行 RougeChain 节点：准备条件、命令与节点实时状态。"
+    },
+    "agents": {
+      "title": "AI 代理（MCP）— RougeChain",
+      "description": "RougeChain 的 Model Context Protocol 服务器：让 AI 代理读取链上数据并签署交易。"
+    },
+    "status": {
+      "title": "网络状态 — RougeChain",
+      "description": "RougeChain 网络实时数据、共识规则与跨链桥状态。"
+    },
+    "regenerate": {
+      "title": "RougeChain Regenerate — 资助你所在之地的未来",
+      "description": "RougeChain Regenerate 是 RougeChain 上的再生计划与金库，资助透明、可衡量的本地项目，首站为墨西哥图卢姆。"
+    },
+    "privacy": {
+      "title": "隐私政策 — RougeChain",
+      "description": "RougeChain 钱包扩展和 rougechain.io 会收集什么、不会收集什么。"
+    }
+  },
+  "validators": {
+    "eyebrow": "浏览 / 质押 · 共识",
+    "title": "验证者",
+    "lead": "保护 RougeChain 的参与者，实时读取自节点。质押 XRGE 即可加入他们。",
+    "testnetNotice": "你正在查看测试网。此处显示的质押和验证者均来自测试网。测试网 XRGE 没有价值。",
+    "stats": {
+      "total": "验证者",
+      "active": "{{count}} 个活跃",
+      "staked": "总质押",
+      "entropy": "量子熵",
+      "entropySub": "次贡献",
+      "participation": "投票参与率",
+      "height": "高度 {{height}}"
+    },
+    "tiers": {
+      "title": "等级分布",
+      "standard": "标准",
+      "operator": "运营者",
+      "genesis": "创世"
+    },
+    "tierBenefits": {
+      "standard": {
+        "b0": "参与区块验证",
+        "b1": "获得验证奖励"
+      },
+      "operator": {
+        "b0": "包含标准等级全部权益",
+        "b1": "提议者选择优先"
+      },
+      "genesis": {
+        "b0": "包含运营者等级全部权益",
+        "b1": "最高提议者优先级"
+      }
+    },
+    "proposer": {
+      "title": "当前提议者",
+      "height": "高度",
+      "proposer": "指定提议者",
+      "you": "你是指定提议者",
+      "weight": "选择权重",
+      "totalStake": "总质押",
+      "entropy": "熵",
+      "unavailable": "此节点无法提供提议者选择信息。"
+    },
+    "finality": {
+      "title": "最终确认",
+      "finalized": "已最终确认",
+      "tip": "最新高度",
+      "lag": "落后最新高度",
+      "quorum": "法定质押",
+      "unavailable": "此节点无法提供最终确认状态。"
+    },
+    "list": {
+      "title": "验证者排行榜",
+      "total": "共 {{count}} 个",
+      "empty": "暂无验证者",
+      "emptyBody": "成为第一个质押 XRGE 的验证者。",
+      "loading": "正在加载验证者",
+      "votes": "投票 {{pct}}%",
+      "seen": "最后出现 #{{height}}",
+      "power": "投票权 {{pct}}%",
+      "powerLabel": "投票权 {{pct}}%",
+      "slashed": "被罚没 {{count}} 次",
+      "jailedUntil": "监禁至 #{{height}}",
+      "you": "你"
+    },
+    "status": {
+      "active": "活跃",
+      "pending": "待定",
+      "jailed": "已监禁",
+      "unbonding": "解绑中",
+      "inactive": "非活跃"
+    },
+    "mine": {
+      "title": "你的质押",
+      "notConnected": "连接钱包以查看你的质押并质押 XRGE。",
+      "locked": "你的钱包已锁定。解锁后才能质押或解除质押。",
+      "available": "可质押",
+      "staked": "已质押",
+      "tier": "等级",
+      "status": "状态",
+      "notValidator": "此钱包还不是验证者。",
+      "youAre": "你是{{tier}}等级验证者",
+      "needMore": "还需 {{amount}} XRGE 才能达到 10,000 XRGE 的最低要求。",
+      "stake": "质押 XRGE",
+      "addStake": "追加质押",
+      "unstake": "解除质押",
+      "pending": "质押已提交",
+      "pendingBody": "正在等待区块打包你的质押交易。",
+      "extension": "每次签名都由你的 RougeChain 扩展批准。",
+      "slashed": "被罚没 {{count}} 次",
+      "slashedJailed": "被罚没 {{count}} 次 · 监禁至区块 #{{height}}",
+      "missed": "作为指定提议者时漏出区块会冻结你的轮次；漏出 50 个区块会被自动罚没。请保持节点在线。"
+    },
+    "how": {
+      "title": "验证机制",
+      "stakedTitle": "节点密钥就是验证者",
+      "stakedBody": "质押的密钥就是验证的密钥。你的节点使用 node-keys.json 中的身份密钥签署区块，因此请从该密钥质押（例如 rougechain --node-keys <path> stake 10000），或先将该密钥导入钱包再在此处质押。从其他钱包质押不会让你的节点成为验证者。",
+      "steps": {
+        "stake": {
+          "title": "质押 XRGE",
+          "body": "从验证者密钥锁定至少 10,000 XRGE（标准 10k · 运营者 100k · 创世 1M）。"
+        },
+        "run": {
+          "title": "以 --mine 运行节点",
+          "body": "启动一个 node-keys.json 为该质押密钥的节点，加上 --mine，并保持在线且连接对等节点。"
+        },
+        "propose": {
+          "title": "提议与投票",
+          "body": "每个高度的指定提议者从按质押加权的集合中选出；区块使用 ML-DSA-65 签名。"
+        },
+        "reliable": {
+          "title": "保持可靠",
+          "body": "错过轮次会冻结提议者；多次错过或双重签名将导致罚没和监禁。"
+        }
+      },
+      "guide": "验证者指南"
+    },
+    "tierBenefitsTitle": "质押等级",
+    "runNode": {
+      "title": "运行节点",
+      "body": "运行自己的节点来增强网络。质押 XRGE 即可参与共识并分享交易手续费。",
+      "guide": "完整指南",
+      "nodePage": "节点设置与状态",
+      "genesis": "加入创世验证者计划"
+    },
+    "securityBody": "每个验证者签名都使用 ML-DSA-65（CRYSTALS-Dilithium），NIST 安全等级 3。"
+  },
+  "staking": {
+    "stakeTitle": "质押 XRGE",
+    "unstakeTitle": "解除质押 XRGE",
+    "reviewTitle": "核对并签名",
+    "amount": "数量",
+    "max": "最多 {{amount}} XRGE",
+    "tier": "验证者等级",
+    "minimum": "{{tier}}等级的最低质押为 {{amount}} XRGE。",
+    "insufficient": "XRGE 余额不足。",
+    "insufficientFee": "请保留 {{fee}} XRGE 作为网络手续费。",
+    "overStaked": "你已质押 {{amount}} XRGE。",
+    "wholeNumber": "请输入整数数量的 XRGE。",
+    "enterAmount": "请输入数量。",
+    "balances": "可质押：{{available}} XRGE · 已质押：{{staked}} XRGE · {{network}}",
+    "review": "核对",
+    "back": "返回",
+    "sign": "签名并质押",
+    "signUnstake": "签名并解除质押",
+    "signing": "签名中…",
+    "cancel": "取消",
+    "rows": {
+      "action": "操作",
+      "stake": "质押",
+      "unstake": "解除质押",
+      "amount": "数量",
+      "from": "来自",
+      "tier": "结果等级",
+      "remaining": "剩余质押",
+      "fee": "网络手续费",
+      "network": "网络"
+    },
+    "localSign": "在此浏览器中用你的 ML-DSA-65 密钥签名。你的密钥不会离开此页面。",
+    "extensionSign": "你的 RougeChain 扩展会请你批准此交易。",
+    "nodeKeyWarning": "只有 node-keys.json 中保存的正是此密钥的节点，才会以这笔质押进行验证。",
+    "unstakeWarning": "低于 10,000 XRGE 会将此密钥移出验证者集合。",
+    "staked": "已质押 {{amount}} XRGE",
+    "unstaked": "已解除质押 {{amount}} XRGE",
+    "submitted": "已提交 — 下一个区块打包后生效。",
+    "failed": "交易失败"
+  },
+  "genesis": {
+    "eyebrow": "RougeChain · 验证者计划",
+    "title": "成为首个抗量子 L1 的<em>创世验证者</em>。",
+    "lead": "RougeChain 已上线、抗量子且无需许可 — 但一个网络的去中心化程度取决于保护它的人。我们正在招募首批独立验证者。我们需要的是运营者，而不是投机者。",
+    "facts": {
+      "network": { "k": "网络", "v": "mainnet-1 · 运行中" },
+      "cohort": { "k": "首批名额", "v": "10 位运营者" },
+      "stake": { "k": "加入所需质押", "v": "10,000 XRGE" },
+      "signatures": { "k": "签名", "v": "ML-DSA-65" }
+    },
+    "honestTitle": "请先读这里 — 坦诚说明",
+    "honestBody": "目前验证 RougeChain 几乎没有收益：没有代币增发，奖励储备为空，而且在一条年轻的链上手续费接近于零。不要为了收益加入。加入是为了成为一条链的创始运营者 — 这条链为其他所有链都忽视的那一天而建：量子计算机攻破当今密码学的那一天。经济回报会在之后到来，前提是这条链赢得它。角色、认可和地位现在就可以获得。",
+    "getsTitle": "创世验证者能获得什么",
+    "getsLead": "我们没有为此增发通胀 — 它依靠认可、现有的手续费分成以及金库的 XRGE 资助，而不是新铸造的代币。",
+    "perks": {
+      "recognition": {
+        "tag": "认可",
+        "title": "链上创始身份",
+        "body": "永久的创世验证者徽章、你的节点在网络地图上署名，以及在公开验证者排行榜上的一席之地。"
+      },
+      "weight": {
+        "tag": "真实权重",
+        "title": "真实的质押，而非客串",
+        "body": "共识权重来自自有质押的 XRGE — 因此创世验证者会获得金库 XRGE 资助作为自己的质押，团队也会逐步降低自身质押。你的投票和手续费分成是真正算数的。"
+      },
+      "grant": {
+        "tag": "启动资助",
+        "title": "覆盖你的成本",
+        "body": "前 6 个月每月提供 XRGE 资助，在手续费还很少时覆盖服务器和 gas 成本。这是通往真实手续费规模的桥梁，而不是工资。"
+      },
+      "support": {
+        "tag": "支持",
+        "title": "直接的上手协助",
+        "body": "手把手部署、私密的运营者频道，并抢先了解升级。你不会独自调试。"
+      },
+      "voice": {
+        "tag": "话语权",
+        "title": "参与决定下一步",
+        "body": "创世验证者可以率先就重要决策发表意见 — 包括 RougeChain 是否采用可持续的质押增发。"
+      },
+      "mission": {
+        "tag": "使命",
+        "title": "守护真正重要的东西",
+        "body": "你将为首个已经抗量子的生产级 L1 运行共识。这就是我们的主张。如果它打动不了你，那这不适合你 — 这也没关系。"
+      }
+    },
+    "asksTitle": "我们对你的要求",
+    "asks": {
+      "stake": { "k": "质押", "v": "从你的验证者密钥持有并质押至少 10,000 XRGE — 获取很容易；门槛在于投入，而不是资本。" },
+      "node": { "k": "真实节点", "v": "一个可访问的节点（1 vCPU / 1 GB / 5 GB 即可），具备公网 URL，并保持在线。" },
+      "uptime": { "k": "在线率", "v": "目标 ≥ 95%。漏出 50 个区块会被自动罚没，请把它当作基础设施来对待。" },
+      "keys": { "k": "密钥管理", "v": "使用专用的验证者密钥（绝不能是你的金库密钥），做好备份，且绝不同时在两个节点上运行 — 双重签名会被罚没。" },
+      "independence": { "k": "独立性", "v": "你不是创始团队。关键就在于你是另一个人。" },
+      "commitment": { "k": "承诺", "v": "运行 6 个月，让首批验证者足够稳定，才有意义。" }
+    },
+    "joinTitle": "如何加入",
+    "steps": {
+      "apply": { "t": "申请", "body": "告诉我们你是谁，以及你将在哪里运行节点。" },
+      "spin": { "t": "启动节点", "body": "按照<link>验证者指南</link>操作 — 首次运行时会生成你的身份密钥（node-keys.json）。" },
+      "fund": { "t": "注资并质押", "body": "质押的正是你的节点用来签署区块的那个密钥。" },
+      "live": { "t": "上线并验证", "body": "以 --mine 运行，然后执行 validator-status，直到每项检查都显示 ✓。我们会发放你的质押资助、授予徽章，你就正式加入了。" }
+    },
+    "fyi": "说明 — \"暂无收益\"是有意为之，而非疏忽。可持续的质押增发已列入议程，将作为一项审慎且对持有者公开的决策 — 由创世验证者参与决定。",
+    "ctaTitle": "守护抗量子区块链",
+    "ctaBody": "十位运营者。真正的独立。首个上线的抗量子 L1 的创始验证者集合。如果这说的是你，请站出来。",
+    "ctaGuide": "开始验证者指南",
+    "ctaValidators": "查看验证者"
+  },
+  "node": {
+    "eyebrow": "构建 / 运行节点",
+    "title": "运行节点",
+    "lead": "为网络贡献算力。准备条件、命令，以及本页可访问节点的实时状态。",
+    "dashboardTitle": "在线节点",
+    "scanning": "正在扫描节点…",
+    "scanningBody": "正在检查网络 API 和本地端口 5100–5104。",
+    "none": "未检测到节点",
+    "noneBody": "启动一个节点即可在此看到。端口 5100–5104 上的本地节点会被自动检测。",
+    "online": "网络在线 · {{count}} 个验证者",
+    "summary": {
+      "validators": "验证者",
+      "peers": "对等节点总数",
+      "tip": "最新高度",
+      "finalized": "已最终确认",
+      "mining": "出块节点"
+    },
+    "card": {
+      "core": "节点 {{n}}",
+      "mining": "出块中",
+      "peers": "对等节点",
+      "tip": "最新高度",
+      "finalized": "已最终确认",
+      "chain": "链",
+      "port": "端口",
+      "fees": "手续费",
+      "lastBlock": "上一区块",
+      "yes": "是",
+      "no": "否"
+    },
+    "chains": "检测到的链 ID：{{ids}}",
+    "needTitle": "你需要",
+    "needs": {
+      "computer": "一台电脑或 VPS（1 vCPU / 1 GB / 5 GB）",
+      "tooling": "Docker，或用于源码构建的 Rust",
+      "internet": "互联网连接"
+    },
+    "stepsTitle": "命令",
+    "steps": {
+      "docker": {
+        "title": "方案 A：Docker（最快）",
+        "body": "无需 Rust — 一条命令即可运行。运行后直接跳到第 3 步。"
+      },
+      "rust": {
+        "title": "方案 B，第 1 步：安装 Rust",
+        "body": "如果还没有 Rust，请在终端中运行此命令。大约需要 2 分钟。"
+      },
+      "build": {
+        "title": "第 2 步：下载并构建",
+        "body": "从 GitHub 克隆代码并构建。首次构建需要几分钟。"
+      },
+      "start": {
+        "title": "第 3 步：启动节点",
+        "body": "你的节点会连接网络、同步链并开始运行。加入主网必须使用 --genesis 和 --chain-id — 否则节点会自建创世区块并拒绝同步。"
+      },
+      "name": {
+        "title": "可选：为节点命名",
+        "body": "使用 --node-name 让节点以名称显示在网络地图上。"
+      }
+    },
+    "optionsTitle": "更多选项",
+    "options": {
+      "mine": "出块",
+      "dataDir": "自定义数据目录",
+      "apiKeys": "API 密钥认证",
+      "publicUrl": "公网 URL"
+    },
+    "validatorTitle": "成为验证者",
+    "validatorLead": "验证者是提议区块并投票的节点。节点的身份密钥就是验证者：它必须持有至少 10,000 XRGE 的质押。",
+    "validatorSteps": {
+      "find": {
+        "title": "找到节点密钥",
+        "body": "首次运行时，节点会把身份密钥写入数据目录中的 node-keys.json。你的节点提议的每个区块都由该密钥签名。"
+      },
+      "fund": {
+        "title": "为该密钥注资",
+        "body": "向节点密钥的地址发送至少 10,000 XRGE（另加手续费）。如有需要，请先从 Base 跨链或购买 XRGE。"
+      },
+      "stake": {
+        "title": "从该密钥质押",
+        "body": "运行 rougechain --node-keys <path> stake 10000，或将该密钥导入钱包后在验证者页面质押。从其他任何钱包质押都不会让你的节点成为验证者。"
+      },
+      "mine": {
+        "title": "开启出块",
+        "body": "以 --mine 重启节点，并保持在线且连接对等节点。运行 validator-status，直到每项检查都通过。"
+      }
+    },
+    "validatorsLink": "前往验证者",
+    "guideLink": "验证者指南",
+    "testnetHint": "这些命令会加入主网。如需测试网，请使用节点 README 中的测试网创世文件和链 ID。"
+  },
+  "agents": {
+    "eyebrow": "构建 / 原生 MCP",
+    "title": "RougeChain 上的 AI 代理",
+    "lead": "RougeChain 提供 Model Context Protocol 服务器。AI 代理可以查询链上状态、使用 DeFi、部署合约和管理钱包 — 全部通过标准协议完成。",
+    "howTitle": "工作原理",
+    "flow": {
+      "agent": { "label": "AI 代理", "sub": "Claude、GPT、自定义" },
+      "server": { "label": "MCP 服务器", "sub": "{{count}} 个区块链工具" },
+      "api": { "label": "节点 API", "sub": "REST + JSON-RPC" },
+      "chain": { "label": "RougeChain L1", "sub": "ML-DSA + ML-KEM" }
+    },
+    "flowNote": "代理通过 MCP 协议经 stdio 通信。所有链上操作都保持抗量子保障（ML-DSA-65 / ML-KEM-768）。",
+    "toolsTitle": "代理能做什么",
+    "toolsLead": "{{total}} 个工具，分为 {{cats}} 类 — {{read}} 个只读，另有 {{write}} 个会签署真实交易。服务器配置钱包后，写入类工具才会启用。",
+    "signsTx": "签署交易",
+    "toolsCount_other": "{{count}} 个工具",
+    "quickTitle": "快速开始",
+    "install": "安装 MCP 服务器",
+    "installNote": "也可以直接使用 npx @rougechain/mcp-server — 无需全局安装。",
+    "configTitle": "添加到代理配置",
+    "configLabel": "配置",
+    "readOnly": "Claude Desktop — 只读",
+    "recommended": "推荐",
+    "readWrite": "读 + 写",
+    "writeNote": "添加 ROUGECHAIN_MNEMONIC 以解锁 {{count}} 个签名工具。每笔交易都在本地用 ML-DSA-65 签名 — 你的助记词永远不会离开服务器。请使用专用的低余额代理钱包；可用 generate_wallet 工具生成。",
+    "talkTitle": "开始与链对话",
+    "prompts": {
+      "height": "当前区块高度是多少？有多少验证者处于活跃状态？",
+      "balance": "查询 rouge1q8f3x... 的余额并列出其最近的交易",
+      "quote": "获取 1000 XRGE 兑换 QSHIB 的报价，滑点 2%",
+      "social": "展示社交时间线上的最新帖子和热门艺术家",
+      "launch": "创建一个名为 AGENT 的代币，建立 XRGE/AGENT 池，并发帖宣布上线",
+      "deploy": "部署这个 WASM 合约并调用 init 函数",
+      "resolve": "解析 rougeboss@rouge.quant 并展示其代币持仓"
+    },
+    "needsWallet": "需要钱包 — 会签署真实交易",
+    "compatibleTitle": "兼容的代理",
+    "compatible": {
+      "claude": { "name": "Claude Desktop", "desc": "即插即用配置，原生支持 MCP" },
+      "cursor": { "name": "Cursor IDE", "desc": "在代理模式中可用 MCP 工具" },
+      "custom": { "name": "自定义代理", "desc": "任何通过 stdio 兼容 MCP 的客户端" }
+    },
+    "supported": "已支持",
+    "resourcesTitle": "资源",
+    "resources": {
+      "source": { "title": "MCP 服务器源码", "sub": "在 GitHub 上查看" },
+      "docs": { "title": "文档", "sub": "完整的设置与 API 指南" },
+      "sdk": { "title": "@rougechain/sdk", "sub": "npm 上的 TypeScript SDK" },
+      "spec": { "title": "MCP 规范", "sub": "Model Context Protocol 文档" }
+    },
+    "categories": {
+      "keys": "钱包密钥",
+      "chain": "链",
+      "wallet": "钱包",
+      "tokens": "代币",
+      "defi": "DeFi",
+      "nfts": "NFT",
+      "staking": "质押与水龙头",
+      "validators": "验证者",
+      "contracts": "智能合约",
+      "social": "社交",
+      "messaging": "消息",
+      "names": "名称与身份",
+      "bridge": "跨链桥",
+      "governance": "治理与手续费"
+    },
+    "tools": {
+      "generate_wallet": "创建全新的 ML-DSA-65 钱包及助记词",
+      "wallet_info": "已配置的签名者、地址、余额、写入状态",
+      "get_chain_stats": "区块高度、验证者、供应量、手续费",
+      "get_block": "按高度获取任意区块",
+      "get_latest_blocks": "获取最新区块流",
+      "get_balance": "查询 XRGE 和代币余额",
+      "get_transaction": "按哈希查询任意交易",
+      "send_transaction": "向地址发送 XRGE 或任意代币",
+      "burn_tokens": "永久销毁 XRGE 或代币",
+      "list_tokens": "网络上的所有代币",
+      "get_token": "代币元数据、供应量和创建者",
+      "get_token_holders": "主要持有者与供应分布",
+      "create_token": "发行新的自定义代币",
+      "mint_tokens": "增发可铸造代币",
+      "update_token_metadata": "更新 logo、链接、描述",
+      "claim_token_metadata": "认领创建者元数据权限",
+      "list_pools": "所有 AMM 流动性池",
+      "get_swap_quote": "获取含滑点的代币兑换报价",
+      "swap": "在 AMM DEX 上执行兑换",
+      "create_pool": "创建新的流动性池",
+      "add_liquidity": "添加流动性并获得 LP 代币",
+      "remove_liquidity": "销毁 LP 代币以提取",
+      "list_nft_collections": "浏览 NFT 合集",
+      "get_nft_collection": "合集元数据与代币",
+      "nft_create_collection": "发布新的 NFT 合集",
+      "nft_mint": "铸造单个 NFT",
+      "nft_batch_mint": "一笔交易铸造多个 NFT",
+      "nft_transfer": "转移 NFT（可附售价）",
+      "nft_burn": "永久销毁 NFT",
+      "nft_lock": "锁定 / 解锁 NFT",
+      "nft_freeze_collection": "冻结 / 解冻合集",
+      "stake": "质押 XRGE 以保护链",
+      "unstake": "解除质押 XRGE 返回钱包",
+      "request_faucet": "领取测试网 XRGE（仅测试网）",
+      "list_validators": "活跃验证者与质押",
+      "list_contracts": "已部署的 WASM 合约",
+      "get_contract": "合约元数据与字节码",
+      "get_contract_state": "读取合约存储",
+      "get_contract_events": "合约事件历史",
+      "query_contract": "免费只读试运行合约方法",
+      "get_tx_receipt": "已上链交易的回执(成功/失败)",
+      "publish_contract": "部署新的 WASM 合约",
+      "execute_contract": "执行会修改状态的合约方法",
+      "get_global_timeline": "全局动态 — 所有帖子，最新优先",
+      "get_post": "单个帖子及互动数据",
+      "get_user_posts": "指定用户的帖子",
+      "get_post_replies": "帖子的回复串",
+      "get_track_stats": "音乐曲目的播放、点赞、评论",
+      "get_artist_stats": "艺术家粉丝与关注状态",
+      "create_post": "在链上发布帖子",
+      "delete_post": "删除自己的帖子",
+      "repost": "转发其他用户的帖子",
+      "follow": "关注 / 取消关注账户",
+      "like_track": "点赞 / 取消点赞曲目或 NFT",
+      "comment_on_track": "评论曲目或 NFT",
+      "list_messenger_wallets": "带显示名称的已注册钱包",
+      "resolve_name": "解析 rouge.quant / qwalla.mail 名称",
+      "reverse_lookup_name": "查询钱包或公钥对应的名称",
+      "register_name": "为钱包注册名称",
+      "release_name": "释放你注册的名称",
+      "bridge_withdraw": "将跨链资产提取到 EVM 地址",
+      "list_proposals": "治理提案",
+      "get_fee_info": "当前 EIP-1559 动态手续费数据"
+    }
+  },
+  "status": {
+    "eyebrow": "浏览 / 网络状态",
+    "title": "网络状态",
+    "lead": "来自公共节点 API 的{{network}}实时数据，以及哪些功能已上线、哪些尚未启用。",
+    "autoRefresh": "每 15 秒刷新",
+    "apiError": "无法连接 API",
+    "height": "区块高度",
+    "finalized": "已最终确认",
+    "validators": "验证者（活跃 / 总数）",
+    "peers": "节点连接数",
+    "totalStake": "总质押",
+    "baseFee": "基础费用",
+    "burned": "已销毁手续费",
+    "chainId": "链 ID",
+    "consensusTitle": "共识",
+    "stateRoot": "状态根",
+    "designatedProposer": "指定提议者（下一区块）",
+    "rule": "规则",
+    "activation": "激活高度",
+    "state": "状态",
+    "validatorsTitle": "验证者与节点版本",
+    "active": "活跃",
+    "inactive": "非活跃",
+    "noValidators": "未报告任何验证者。",
+    "nodeRelease": "当前节点版本",
+    "mandatory": "强制升级",
+    "bridgeTitle": "跨链桥",
+    "audits": "审计",
+    "footer": "已上线与已构建但未启用的功能列表维护于",
+    "updated": "数据更新日期",
+    "factsMainnet": "版本、共识和跨链桥信息描述的是主网。",
+    "factsUnavailable": "无法加载版本信息。"
+  },
+  "regen": {
+    "kicker": "RougeChain Regenerate",
+    "sub": "RougeChain 上的再生计划与金库",
+    "title": "<em>资助未来</em>，就在你所在之地。",
+    "lead": "RougeChain Regenerate 将数字基础设施与现实世界的再生连接起来 — 资助透明、可衡量的项目，改善我们身边的社区与生态系统。",
+    "viewProjects": "查看项目",
+    "propose": "提交项目",
+    "statement": "技术应当改善<em>它所触及的土地。</em>",
+    "statementBody": "全球性问题真实存在，但改变在本地层面才变得具体可感。RougeChain Regenerate 从我们能真正看见、衡量和改善的社区、生态系统和基础设施开始。",
+    "solarpunk": "太阳朋克立场：技术、建筑、艺术与社区共同构建一个值得生活的未来 — 而不只是勉强存续的未来。",
+    "categoriesLabel": "类别",
+    "categories": {
+      "ecology": { "title": "本地生态", "blurb": "红树林、水体修复、生物多样性、植树造林。" },
+      "infrastructure": { "title": "再生型基础设施", "blurb": "太阳能、集水、园圃、堆肥、社区能源。" },
+      "technology": { "title": "开放技术", "blurb": "环境传感器、测绘工具、公共基础设施软件、开源气候技术。" },
+      "art": { "title": "艺术 + 社区", "blurb": "公共装置、教育、工作坊、社区空间和太阳朋克项目。" }
+    },
+    "projectStatus": {
+      "proposed": "已提议",
+      "reviewing": "审核中",
+      "funded": "已资助",
+      "in_progress": "进行中",
+      "completed": "已完成"
+    },
+    "projects": {
+      "tulum-mangrove-01": {
+        "name": "红树林廊道修复",
+        "description": "重新种植并监测退化的红树林区段，它们能缓冲海岸线、过滤水体并储存碳 — 由社区守护者参与，并开放调查数据。",
+        "m0": "场地调查与基线",
+        "m1": "社区守护者就位",
+        "m2": "第一阶段补种",
+        "m3": "公开监测看板"
+      },
+      "tulum-cenote-water-02": {
+        "name": "天然井水质传感器网络",
+        "description": "低成本的开源传感器监测天然井和含水层系统，并公开发布读数，让社区能长期了解水体健康状况。",
+        "m0": "开源硬件规格",
+        "m1": "试点传感器部署",
+        "m2": "开放数据流上线"
+      },
+      "tulum-community-solar-03": {
+        "name": "社区太阳能 + 集水",
+        "description": "为社区空间提供共享屋顶太阳能和雨水收集 — 在电网停摆时仍能运行的韧性本地基础设施。",
+        "m0": "场地合作协议",
+        "m1": "安装",
+        "m2": "公开计量"
+      }
+    },
+    "territoryKicker": "首个地区",
+    "territoryName": "TULUM",
+    "territoryBody": "再生应当从真实的地方开始。RougeChain Regenerate 将首先在图卢姆探索项目，那里是技术、生态、文化与快速发展的交汇之处。",
+    "funded": "资助已启动 — 查看下方项目及其链上资助。",
+    "notFunded": "正在探索项目 — 尚未资助任何项目。",
+    "treasuryTitle": "金库与影响",
+    "treasuryLive": "实时读取自 RougeChain",
+    "treasuryPending": "金库地址公布后上线",
+    "treasuryUnreachable": "暂时无法连接节点。",
+    "stat": {
+      "balance": "金库余额",
+      "funded": "已资助项目",
+      "deployed": "累计投放",
+      "territories": "活跃地区",
+      "notLive": "尚未上线"
+    },
+    "wallet": "金库钱包",
+    "copyAddress": "复制地址",
+    "donate": "任何人都可以向此地址捐赠 XRGE。每一笔捐赠和资助都在链上公开。",
+    "donations": "已收捐赠",
+    "viewExplorer": "在浏览器中查看",
+    "recent": "最近活动",
+    "donation": "捐赠",
+    "grant": "资助",
+    "noTxs": "暂无交易。",
+    "testnet": "你正在使用测试网。Regenerate 金库是主网钱包，因此此处隐藏其数据；显示的投票来自测试网节点。",
+    "proofKicker": "影响力证明",
+    "proofBody": "每个获资助项目都有一份永久的链上影响记录 — 资金去向、承诺内容、完成情况以及成果证据。这不是慈善包装，而是一套协议。",
+    "protocol": {
+      "project": "项目",
+      "location": "地点",
+      "funding": "资金",
+      "milestones": "里程碑",
+      "evidence": "证据",
+      "verification": "核验"
+    },
+    "projectsTitle": "项目",
+    "illustrative": "示例候选提案 — 尚未资助任何项目。流程开放后，卡片将由真实提案和链上记录填充。",
+    "milestones": "里程碑",
+    "evidence": "证据",
+    "evidencePending": "证据：待提供",
+    "fundingNone": "资金：暂无",
+    "fundingTbd": "资金：待定",
+    "requested": "申请 {{amount}} XRGE",
+    "fundedOnChain": "链上已资助 {{amount}} XRGE",
+    "proposeTitle": "有适合这片土地的项目吗？",
+    "proposeLead": "我们正在图卢姆打造首个地区。如果你从事本地生态、基础设施、开放技术或社区相关工作，欢迎提交。我们会审阅每一份提案并回复。"
+  },
+  "proposalForm": {
+    "name": "你的姓名或组织",
+    "contact": "邮箱或 Telegram",
+    "contactPh": "便于我们回复",
+    "project": "项目名称",
+    "location": "地点",
+    "locationPh": "例如 Tulum, Quintana Roo",
+    "category": "类别",
+    "choose": "请选择",
+    "amount": "申请资金（XRGE）",
+    "amountPh": "不确定可留空",
+    "payout": "收款用 RougeChain 地址（可选）",
+    "description": "你将做什么？这个地方会发生什么改变？",
+    "milestones": "里程碑以及我们如何看到成果",
+    "milestonesPh": "每行一项：完成什么，以及证据（照片、数据、收据）",
+    "links": "链接（可选）",
+    "linksPh": "网站、社交媒体、过往作品",
+    "submit": "提交提案",
+    "sending": "发送中…",
+    "discord": "有疑问？先在 Discord 上提问",
+    "error": "发送失败。请检查网络连接后重试，或发到 Discord。",
+    "sentTitle": "提案已收到",
+    "sentBody": "谢谢。我们会审阅每一份提案，并通过你提供的联系方式回复。获批项目会显示在此页面，其资助会以金库钱包的链上转账呈现。",
+    "another": "再提交一份"
+  },
+  "votes": {
+    "title": "社区投票",
+    "lead": "XRGE 持有者决定金库资助哪些项目。权重为投票开启时你的余额，上限为可投票供应量的 {{cap}}%；团队、金库和交易所钱包不参与投票。提案在参与率达到 {{turnout}}% 且赞成多于反对时通过。",
+    "signed": "每张选票都由投票者的钱包签名，并连同签名一起公开，任何人都可以重新计票。",
+    "open": "发起提案",
+    "empty": "暂无提案。获批的项目提案会在此开放社区投票。",
+    "unavailable": "此节点目前无法提供社区投票。",
+    "loading": "正在加载社区投票…",
+    "status": {
+      "open": "投票中",
+      "passed": "已通过 · 待付款",
+      "paid": "已通过 · 已付款",
+      "failed": "未通过",
+      "cancelled": "已取消"
+    },
+    "choice": {
+      "yes": "赞成",
+      "no": "反对",
+      "abstain": "弃权"
+    },
+    "choiceLower": {
+      "yes": "赞成",
+      "no": "反对",
+      "abstain": "弃权"
+    },
+    "tallyLabel": "赞成 {{yes}}，反对 {{no}}，弃权 {{abstain}} XRGE",
+    "turnout": "参与 {{have}} / 需 {{need}}",
+    "requests": "申请",
+    "to": "收款方",
+    "closed": "已于 {{date}} 结束",
+    "timeLeftDays": "剩余 {{count}} 天",
+    "timeLeftHours": "剩余 {{count}} 小时",
+    "timeLeftMinutes": "剩余 {{count}} 分钟",
+    "timeLeftClosed": "已结束",
+    "voters_other": "{{count}} 位投票者 · 快照于区块 {{height}}",
+    "details": "详情",
+    "connect": "连接钱包即可投票。",
+    "locked": "解锁钱包即可投票。",
+    "excluded": "此钱包属于团队、金库或交易所，无法投票。",
+    "noWeight": "投票开启时此钱包未持有 XRGE，因此对该提案没有投票权。",
+    "weight": "你的权重 {{weight}} XRGE",
+    "weightVoted": "你的权重 {{weight}} XRGE · 你投了{{vote}}（可以更改）",
+    "reviewTitle": "核对并签署你的投票",
+    "reviewRows": {
+      "proposal": "提案",
+      "choice": "你的投票",
+      "weight": "你的权重",
+      "voter": "签名者",
+      "network": "网络"
+    },
+    "reviewNote": "投票是签名消息，而非交易：无手续费，余额不变。投票开放期间可以更改你的投票。",
+    "sign": "签署投票",
+    "cancel": "取消",
+    "recorded": "投票已记录：{{choice}}",
+    "paidFrom": "已从金库支付 {{amount}}",
+    "payoutPh": "金库付款交易 ID",
+    "recordPayout": "记录付款",
+    "payoutRecorded": "付款已记录",
+    "form": {
+      "intro": "发起提案会立即为每个可投票余额建立快照；投票持续 {{days}} 天。需要策展人权限或 {{min}} XRGE。",
+      "title": "标题",
+      "summary": "摘要",
+      "territory": "地区",
+      "requested": "申请的 XRGE",
+      "recipient": "收款人（rouge1…）",
+      "link": "详情链接（https://）",
+      "submit": "开放投票",
+      "opened": "提案已开放投票"
+    }
+  },
+  "privacy": {
+    "eyebrow": "法律",
+    "title": "隐私政策",
+    "lastUpdated": "最后更新：{{date}}",
+    "englishOnly": "本政策以英文提供，英文文本为具有约束力的版本。"
+  }
+}

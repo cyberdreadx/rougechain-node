@@ -21,12 +21,14 @@ Run a node with a single command — no Rust toolchain needed:
 ```bash
 docker run -d \
   --name rougechain-node \
-  -p 5100:5100 \
-  -v qv-data:/data \
+  -p 127.0.0.1:5100:8900 \
+  -v qv-data:/data/rougechain \
   rougechain/node \
-  --host 0.0.0.0 --api-port 5100 \
+  --data-dir /data/rougechain --host 0.0.0.0 --api-port 8900 \
   --mine --peers https://testnet.rougechain.io/api
 ```
+
+Arguments after the image name replace the image's default command, so keep `--data-dir /data/rougechain` (the image's volume) and `--api-port 8900` (the port the image's health check probes). See [Docker](docker.md).
 
 Verify it's running:
 
@@ -40,9 +42,10 @@ For a persistent setup, create a `.env` file:
 
 ```env
 API_PORT=5100
-QV_PEERS=https://testnet.rougechain.io/api
-CHAIN_ID=rougechain-devnet-1
+QV_PEERS=https://api.rougechain.io/api
 ```
+
+The compose file always uses the mainnet genesis (chain id `rougechain-mainnet-1`; there is no chain-id setting) and always passes `--mine`, so point `QV_PEERS` at mainnet peers. The API is published on `127.0.0.1:${API_PORT}` only; set `API_BIND=0.0.0.0` to expose it on every interface.
 
 Then start:
 
@@ -228,14 +231,15 @@ Ensure you have Visual Studio Build Tools with C++ workload installed.
 
 ## Environment Variables
 
-All CLI flags can also be set via environment variables:
+Some CLI flags can also be set via environment variables (others, such as `--host`, `--api-port`, `--data-dir`, `--chain-id`, `--mine` and the `--rate-limit-*` flags, are CLI-only):
 
 | Variable | CLI Flag | Default | Description |
 |----------|----------|---------|-------------|
 | `QV_PEERS` | `--peers` | — | Comma-separated peer URLs |
 | `QV_PUBLIC_URL` | `--public-url` | — | This node's public URL for peer discovery |
-| `QV_CORS_ORIGINS` | — | localhost only | Comma-separated allowed CORS origins |
+| `QV_CORS_ORIGINS` | — | built-in list (local dev servers, rougechain.io, www.rougechain.io, testnet.rougechain.io, rougee.app, www.rougee.app) | Comma-separated allowed CORS origins |
 | `QV_API_KEYS` | `--api-keys` | — | Comma-separated API keys for authenticated access |
+| `QV_TRUST_PROXY` | `--trust-proxy` | `false` | Key rate limits by the client IP a local reverse proxy reports (loopback peers only) |
 | `QV_BRIDGE_CUSTODY_ADDRESS` | `--bridge-custody-address` | — | EVM custody address (enables bridge) |
 | `QV_BASE_SEPOLIA_RPC` | `--base-sepolia-rpc` | `https://sepolia.base.org` | Base RPC URL used for bridge verification. The name is historical: on mainnet nodes set it to a **Base mainnet** RPC (chain id `8453`) |
 
@@ -243,9 +247,9 @@ Common CLI-only flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--host` | `127.0.0.1` | Bind address. Use `0.0.0.0` for public nodes |
+| `--host` | `127.0.0.1` | Bind address. Keep `127.0.0.1` and put a reverse proxy in front for public nodes; `0.0.0.0` exposes the API on every interface (needed inside Docker) |
 | `--api-port` | `5101` | REST API port |
 | `--mine` | off | Enable block production |
 | `--data-dir` | `~/.quantum-vault/core-node/` | Chain data directory |
 | `--chain-id` | `rougechain-devnet-1` | Network chain ID |
-| `--block-time-ms` | `400` | Target block time in milliseconds |
+| `--block-time-ms` | `400` | How often the miner checks for pending transactions, in milliseconds (blocks are only produced when there are transactions) |

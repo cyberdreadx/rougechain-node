@@ -1,52 +1,37 @@
-import {
-  render,
-  screen,
-  within,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react";
+/**
+ * Header wallet control + shared identity across shells. Replaces the POC's demo-wallet tests
+ * (DemoWalletProvider / synthetic identity) now that the control drives the real wallet.
+ */
+import { act, render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {
-  MemoryRouter,
-  Link,
-  Routes,
-  Route,
-  useLocation,
-} from "react-router-dom";
+import { MemoryRouter, Link, Routes, Route, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, it, expect, vi } from "vitest";
-import {
-  DemoWalletProvider,
-  DEMO_WALLET_KEY,
-  DEMO_ADDRESS,
-  DEMO_SHORT_ADDRESS,
-} from "./DemoWalletProvider";
+import { pubkeyToAddress, formatAddress } from "@rougechain/core/address";
+import { lockUnifiedWallet, unlockUnifiedWallet } from "@rougechain/core/unified-wallet";
+import { WalletProvider } from "./WalletProvider";
 import { WalletControl } from "./WalletControl";
 import { WalletPreview } from "../explore/Previews";
 import { AppSwitcher } from "../ecosystem/AppSwitcher";
 import { MarketingHeader, AppHeader, WorkspaceHeader } from "../Shell";
 import { NetworkProvider } from "../Network";
+import { mockFetch, resetBrowserState, seedAppsWebWallet } from "./test-utils";
+
 beforeEach(() => {
-  const data = new Map<string, string>();
-  vi.stubGlobal("sessionStorage", {
-    getItem: (k: string) => data.get(k) ?? null,
-    setItem: (k: string, v: string) => data.set(k, v),
-    removeItem: (k: string) => data.delete(k),
-  });
+  resetBrowserState();
+  mockFetch();
 });
-function wrap(content: React.ReactNode) {
+
+function wrap(content: React.ReactNode, path = "/") {
   return render(
-    <MemoryRouter>
-      <DemoWalletProvider>{content}</DemoWalletProvider>
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+      <WalletProvider autoRegister={false}>
+        <MemoryRouter initialEntries={[path]}>{content}</MemoryRouter>
+      </WalletProvider>
+    </QueryClientProvider>,
   );
 }
-async function connect(source = "RougeChain Wallet") {
-  await userEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
-  await userEvent.click(
-    screen.getByRole("button", { name: `Preview connection with ${source}` }),
-  );
-}
+
 it("global Apps exposes apps in the requested group order without resource or utility entries", async () => {
   wrap(<AppSwitcher />);
   await userEvent.click(screen.getByRole("button", { name: "Apps" }));
@@ -56,97 +41,45 @@ it("global Apps exposes apps in the requested group order without resource or ut
     within(group)
       .getAllByRole("link")
       .map((a) => a.querySelector("span")?.textContent?.replace(" ↗", "")),
-  ).toEqual([
-    "Qwalla Mobile Wallet",
-    "Web Wallet",
-    "Wallet Extension",
-    "Swap",
-    "Bridge",
-    "Rougee",
-    "qWave",
-    "Messenger",
-    "Mail",
-    "Explorer",
-    "Validators",
-  ]);
-  expect(within(group).getByText("Arcade").parentElement).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  expect(
-    within(group).queryByRole("link", { name: /Arcade/ }),
-  ).not.toBeInTheDocument();
-  for (const text of [
-    "Build",
-    "Community",
-    "Developer Portal",
-    "Documentation",
-    "SDK",
-    "MCP / Agents",
-    "Run a Node",
-    "Regenerate",
-    "RougeChain Community",
-    "Liquidity",
-    "Network Status",
-  ])
-    expect(
-      within(dialog).queryByText(text, { exact: true }),
-    ).not.toBeInTheDocument();
+  ).toEqual(["Qwalla Mobile Wallet", "Web Wallet", "Wallet Extension", "Swap", "Bridge", "Rougee", "qWave", "Messenger", "Mail", "Explorer", "Validators"]);
+  expect(within(group).getByText("Arcade").parentElement).toHaveAttribute("aria-disabled", "true");
+  expect(within(group).getByRole("link", { name: /Web Wallet/ })).toHaveAttribute("href", "/wallet");
 });
-it.each(["RougeChain Wallet", "Qwalla"])(
-  "previews %s without fetching or accessing wallet providers",
-  async (source) => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    const providerAccess = vi.fn(() => {
-      throw Error("Provider access forbidden");
-    });
-    Object.defineProperty(window, "rougechain", {
-      configurable: true,
-      get: providerAccess,
-    });
-    Object.defineProperty(window, "ethereum", {
-      configurable: true,
-      get: providerAccess,
-    });
-    try {
-      wrap(<WalletControl />);
-      await connect(source);
-      expect(
-        screen.getByRole("button", {
-          name: `Demo connected account ${DEMO_SHORT_ADDRESS}`,
-        }),
-      ).toBeInTheDocument();
-      expect(
-        JSON.parse(window.sessionStorage.getItem(DEMO_WALLET_KEY)!),
-      ).toEqual({
-        connected: true,
-        address: DEMO_ADDRESS,
-        source: source === "Qwalla" ? "qwalla" : "extension",
-      });
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(providerAccess).not.toHaveBeenCalled();
-    } finally {
-      Reflect.deleteProperty(window, "rougechain");
-      Reflect.deleteProperty(window, "ethereum");
-    }
-  },
-);
-it("shares identity across routed product shells and clears it globally on disconnect", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(Error("offline")));
+
+it("offers create / import / extension while disconnected, without touching a provider or the network", async () => {
+  const { fn } = mockFetch();
+  wrap(<WalletControl />);
+  await userEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+  const dialog = screen.getByRole("dialog", { name: "Connect to RougeChain" });
+  expect(within(dialog).getByRole("button", { name: /Create a new wallet/ })).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: /Import a wallet/ })).toBeInTheDocument();
+  expect(within(dialog).getByText("Browser extension · not detected")).toBeInTheDocument();
+  expect(fn).not.toHaveBeenCalled();
+});
+
+it("connects the injected RougeChain extension", async () => {
+  const pk = "ef".repeat(1952);
+  Object.defineProperty(window, "rougechain", {
+    configurable: true,
+    value: { isRougeChain: true, connect: vi.fn(async () => ({ publicKey: pk, displayName: "Ext" })) },
+  });
+  wrap(<WalletControl />);
+  await userEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+  await userEvent.click(screen.getByRole("button", { name: /RougeChain Wallet/ }));
+  const address = await pubkeyToAddress(pk);
+  expect(await screen.findByRole("button", { name: `Wallet ${address}` })).toBeInTheDocument();
+});
+
+it("shares the real identity across routed shells and locks globally", async () => {
+  const w = seedAppsWebWallet();
+  await lockUnifiedWallet("shell-pass");
+  await unlockUnifiedWallet("shell-pass");
+  const address = await pubkeyToAddress(w.signingPublicKey);
   function Shell() {
     const { pathname } = useLocation();
     return (
       <>
-        {pathname === "/" ? (
-          <MarketingHeader />
-        ) : pathname === "/workspace" ? (
-          <WorkspaceHeader />
-        ) : (
-          <AppHeader
-            product={pathname.startsWith("/swap") ? "Swap" : "Explorer"}
-          />
-        )}
+        {pathname === "/" ? <MarketingHeader /> : pathname === "/workspace" ? <WorkspaceHeader /> : <AppHeader product={pathname.startsWith("/swap") ? "Swap" : "Explorer"} />}
         <nav aria-label="Test route links">
           <Link to="/explorer">Go Explorer</Link>
           <Link to="/swap">Go Swap</Link>
@@ -161,119 +94,102 @@ it("shares identity across routed product shells and clears it globally on disco
     );
   }
   wrap(
-    <QueryClientProvider
-      client={
-        new QueryClient({
-          defaultOptions: { queries: { retry: false, gcTime: 0 } },
-        })
-      }
-    >
-      <NetworkProvider>
-        <Shell />
-      </NetworkProvider>
-    </QueryClientProvider>,
+    <NetworkProvider>
+      <Shell />
+    </NetworkProvider>,
   );
-  await connect();
+  const trigger = `Wallet ${address}`;
+  await screen.findByRole("button", { name: trigger });
   for (const name of ["Go Explorer", "Go Swap", "Go Workspace"]) {
     await userEvent.click(screen.getByRole("link", { name }));
-    expect(
-      screen.getByRole("button", {
-        name: `Demo connected account ${DEMO_SHORT_ADDRESS}`,
-      }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: trigger })).toBeInTheDocument();
   }
-  expect(
-    screen.getByText("Demo connected · synthetic identity"),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Receive" })).toBeDisabled();
-  expect(screen.getAllByText("—")).toHaveLength(3);
-  await userEvent.click(
-    screen.getByRole("button", {
-      name: `Demo connected account ${DEMO_SHORT_ADDRESS}`,
-    }),
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
-  expect(screen.getByText("No wallet connected.")).toBeInTheDocument();
+  expect(screen.getAllByText(formatAddress(address)).length).toBeGreaterThan(0); // workspace preview
+  expect(screen.getByRole("link", { name: "Open Wallet" })).toHaveAttribute("href", "/wallet");
+
+  await userEvent.click(screen.getByRole("button", { name: trigger }));
+  await userEvent.click(screen.getByRole("button", { name: "Lock" }));
+  expect(screen.getByText("Unlock your wallet to see balances.")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("link", { name: "Go Home" }));
-  expect(
-    screen.getByRole("button", { name: "Connect Wallet" }),
-  ).toBeInTheDocument();
-  expect(window.sessionStorage.getItem(DEMO_WALLET_KEY)).toBeNull();
+  expect(screen.getByRole("button", { name: "Wallet locked — unlock" })).toBeInTheDocument();
 });
-it("restores only canonical demo state after a provider remount", async () => {
-  const first = wrap(<WalletControl />);
-  await connect("Qwalla");
-  first.unmount();
-  wrap(<WalletControl />);
-  await userEvent.click(
-    screen.getByRole("button", {
-      name: `Demo connected account ${DEMO_SHORT_ADDRESS}`,
-    }),
-  );
-  expect(screen.getByText("Mainnet · Qwalla")).toBeInTheDocument();
-});
-it("ignores unexpected persisted addresses and sources", () => {
-  window.sessionStorage.setItem(
-    DEMO_WALLET_KEY,
-    JSON.stringify({
-      connected: true,
-      address: "unexpected",
-      source: "extension",
-    }),
-  );
-  wrap(<WalletControl />);
-  expect(
-    screen.getByRole("button", { name: "Connect Wallet" }),
-  ).toBeInTheDocument();
-});
-it("works with unavailable session storage", async () => {
-  vi.stubGlobal("sessionStorage", {
-    getItem: () => {
-      throw Error("denied");
-    },
-    setItem: () => {
-      throw Error("denied");
-    },
-    removeItem: () => {
-      throw Error("denied");
-    },
-  });
-  wrap(<WalletControl />);
-  await connect();
-  expect(
-    screen.getByRole("button", {
-      name: `Demo connected account ${DEMO_SHORT_ADDRESS}`,
-    }),
-  ).toBeInTheDocument();
-});
-it("provides safe account actions and returns focus on cancel", async () => {
+
+it("unlocks from the header and exposes safe account actions, returning focus on cancel", async () => {
+  const w = seedAppsWebWallet();
+  await lockUnifiedWallet("hdr-pass-1");
+  const address = await pubkeyToAddress(w.signingPublicKey);
   const user = userEvent.setup();
   const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
   wrap(<WalletControl />);
-  await connect();
-  const trigger = screen.getByRole("button", {
-    name: `Demo connected account ${DEMO_SHORT_ADDRESS}`,
-  });
+  await user.click(screen.getByRole("button", { name: "Wallet locked — unlock" }));
+  const dialog = screen.getByRole("dialog", { name: "Unlock wallet" });
+  await user.type(within(dialog).getByLabelText("Password"), "hdr-pass-1");
+  await user.click(within(dialog).getByRole("button", { name: "Unlock" }));
+  const trigger = await screen.findByRole("button", { name: `Wallet ${address}` });
+
   await user.click(trigger);
-  await user.click(screen.getByRole("button", { name: "Copy address" }));
-  expect(copy).toHaveBeenCalledWith(DEMO_ADDRESS);
-  expect(screen.getByRole("link", { name: "Open Wallet" })).toHaveAttribute(
-    "href",
-    "/workspace?open=wallet",
-  );
-  await user.click(screen.getByRole("button", { name: "View in Explorer" }));
-  expect(
-    screen.getByText(/Explorer address view not implemented/),
-  ).toBeInTheDocument();
-  fireEvent(
-    screen.getByRole("dialog", { name: "Demo account" }),
-    new Event("cancel", { bubbles: true, cancelable: true }),
-  );
+  const menu = screen.getByRole("dialog", { name: "Your wallet" });
+  await user.click(within(menu).getByRole("button", { name: "Copy address" }));
+  expect(copy).toHaveBeenCalledWith(address);
+  expect(within(menu).getByRole("link", { name: "Open Wallet" })).toHaveAttribute("href", "/wallet");
+  expect(within(menu).getByRole("link", { name: "View in Explorer" })).toHaveAttribute("href", `/address/${address}`);
+  fireEvent(menu, new Event("cancel", { bubbles: true, cancelable: true }));
   await waitFor(() => expect(trigger).toHaveFocus());
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  await user.click(trigger);
-  expect(screen.getByRole("dialog", { name: "Demo account" })).toHaveAttribute(
-    "open",
+});
+
+it("keeps working with unavailable storage (no wallet, no crash)", async () => {
+  const deny = () => {
+    throw Error("denied");
+  };
+  vi.stubGlobal("localStorage", { getItem: deny, setItem: deny, removeItem: deny, key: deny, length: 0, clear: deny });
+  vi.stubGlobal("sessionStorage", { getItem: deny, setItem: deny, removeItem: deny, key: deny, length: 0, clear: deny });
+  wrap(<WalletControl />);
+  expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+});
+
+// The extension injects window.rougechain a moment after the page starts and then fires
+// `rougechain#initialized`; a fast page renders first. Detection must catch up.
+function injectExtensionLater(connect = vi.fn(async () => ({ publicKey: "ab".repeat(1952), displayName: "Ext" }))) {
+  act(() => {
+    Object.defineProperty(window, "rougechain", { configurable: true, value: { isRougeChain: true, connect } });
+    window.dispatchEvent(new Event("rougechain#initialized"));
+  });
+  return connect;
+}
+
+it("detects an extension that loads after the page has rendered", async () => {
+  delete (window as { rougechain?: unknown }).rougechain;
+  wrap(<WalletControl />);
+  await userEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+  const dialog = screen.getByRole("dialog", { name: "Connect to RougeChain" });
+  expect(within(dialog).getByText("Browser extension · not detected")).toBeInTheDocument();
+  injectExtensionLater();
+  expect(await within(dialog).findByText("Extension detected")).toBeInTheDocument();
+  delete (window as { rougechain?: unknown }).rougechain;
+});
+
+it("never prompts the extension on page load — it connects only when the user clicks Connect", async () => {
+  delete (window as { rougechain?: unknown }).rougechain;
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+      <WalletProvider autoRegister>
+        <MemoryRouter>
+          <WalletControl />
+        </MemoryRouter>
+      </WalletProvider>
+    </QueryClientProvider>,
   );
+  const connect = injectExtensionLater();
+  // Loaded, extension present, no local wallet: no approval prompt is opened.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(connect).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+  // The user chooses the extension: now (and only now) it connects.
+  await userEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+  await userEvent.click(screen.getByRole("button", { name: /RougeChain Wallet/ }));
+  const address = await pubkeyToAddress("ab".repeat(1952));
+  expect(await screen.findByRole("button", { name: `Wallet ${address}` })).toBeInTheDocument();
+  expect(connect).toHaveBeenCalledTimes(1);
+  delete (window as { rougechain?: unknown }).rougechain;
 });

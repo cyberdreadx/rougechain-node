@@ -10,7 +10,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["vitest/globals", "@testing-library/jest-dom"],
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
     "baseUrl": ".",
     "paths": {
       "react": ["./node_modules/@types/react"],
@@ -25,6 +25,7 @@
     "vitest.config.ts",
     "../../packages/brand",
     "../../packages/ui",
-    "../../packages/chain-readonly"
+    "../../packages/chain-readonly",
+    "../../packages/core/src"
   ]
 }

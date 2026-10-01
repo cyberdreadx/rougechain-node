@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.11.0
+
+### Fixed
+- `rc.nft.batchMint` / `createSignedNftBatchMint` now sign per-NFT attributes as the payload's `attributes` field, the one the node reads. Up to 1.10.0 they were sent as `batchAttributes`, which the node ignores, so batch-minted NFTs got no attributes.
+- `createSignedTokenCreation` (and `rc.createToken` without `fee`) now defaults to a fee of **100** XRGE, the fixed fee the node charges for `create_token`. It defaulted to 10 (the signed value is informational; the node always charged 100).
+
+### Added
+- `BatchMintNftParams.attributes` (and the `attributes` option of `createSignedNftBatchMint`). `batchAttributes` still works as a deprecated alias.
+
 ## 1.10.0
 
 ### Added

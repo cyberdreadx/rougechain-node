@@ -17,13 +17,13 @@ Open `http://localhost:5173` in your browser.
 
 ## Step 2: Create Your Wallet
 
-Create (or import) a wallet and set a password (min 8 characters) at creation. It includes:
+Create (or import) a wallet and **set a password** when asked (required, min 8 characters — the wallet is saved only once it's encrypted). It includes:
 
 - **Address** (`rouge1...`) — Your compact Bech32m address, share freely
 - **Private Key** (ML-DSA-65) — Never share this!
 - **Encryption Key** (ML-KEM-768) — For secure messaging
 
-Your keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations). The decrypted key lives only in memory (`chrome.storage.session`) and is never written to disk — only the encrypted blob is persisted. (Legacy plaintext wallets are force-migrated to encrypted storage on next unlock.)
+On the web, your keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations): the password is required, and until you set it during create / import the wallet exists only in the tab's `sessionStorage` (it is never written to `localStorage` unencrypted). While unlocked, the decrypted wallet is kept in `sessionStorage` (cleared when the tab closes). In the browser extension, the decrypted key lives in `chrome.storage.session` and only the encrypted vault is persisted (legacy plaintext extension wallets are force-migrated to encrypted storage on next unlock). Your 24-word phrase restores your messaging/mail key only for wallets created or imported from the phrase on the website (since 2026-10-01) or in Qwalla; for older website wallets and extension wallets, export a `.pqcbackup` too ([details](create-wallet.md#backup-your-wallet)).
 
 ## Step 3: Get Test Tokens
 
@@ -65,10 +65,10 @@ Transaction is signed with your ML-DSA-65 key and broadcast to the network.
 
 ### "Insufficient balance"
 
-- Transaction requires amount + 0.1 XRGE fee
+- Transaction requires amount + 1 XRGE fee
 - Use faucet to get more tokens
 
 ### Wallet not loading
 
-- Clear browser cache
+- Clear browser cache (do **not** clear site data / `localStorage` unless you have your seed phrase and `.pqcbackup` — it deletes a wallet stored in the browser)
 - Check browser console for errors

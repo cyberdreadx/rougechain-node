@@ -13,7 +13,8 @@ of total stake, checked against the validator set for that height. A node reject
 valid certificate, and a producer waits for its parent's certificate before building on it. Check any
 height with `GET /api/finality/:height`.
 
-**What Release 2a does not include:** a fallback proposer and slashing (Release 2b). If the designated
+**What Release 2a does not include:** a fallback proposer, skip certificates and the slashing tied to
+them (Release 2b); slashing on equivocation evidence is planned as Release 3. If the designated
 proposer is offline, no block is produced until it returns. Stake is still concentrated in few keys, so
 the ⅔ quorum is currently met by the largest validator alone.
 

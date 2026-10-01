@@ -1,5 +1,14 @@
 # Trellis: interactive ecosystem workspace
 
+> **Implementation note (2026-09-29):** the workspace now runs on **dockview** (`dockview-react`,
+> MIT) instead of Trellis, whose commercial licence was not taken. This document remains the
+> behaviour spec, with these substitutions: `TrellisWorkspace.tsx` → `DockviewWorkspace.tsx`;
+> Trellis V2 keys → new `rougechain-dockview-{embed,workspace}-layout-v1` keys validated by
+> `dockPersistence.ts` (Trellis keys are never read or removed); `navigation.overview()` → exit
+> maximize; the native panel menu → the "…" menu (move to new column, float/dock, open full app,
+> hide). Hide keeps views mounted via workspace-owned portal hosts. The licensing gate below
+> applied to Trellis and no longer blocks the workspace. See [DEPENDENCIES](DEPENDENCIES.md).
+
 Trellis is an interactive ecosystem workspace, not a decorative dashboard grid. Approved capabilities: programmatic opening, focus/overview, dock/tab, hide/restore, keyed block details, view/layout persistence, optional full-workspace floating, shared app previews and launcher.
 
 | Surface                      | Production intent                                                                          |

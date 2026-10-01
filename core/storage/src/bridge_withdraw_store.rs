@@ -199,6 +199,39 @@ impl BridgeWithdrawStore {
         Ok(changed)
     }
 
+    /// Like `mark_fulfilled`, but refuses a payout tx hash that already settled a DIFFERENT
+    /// withdrawal — checked under the same write lock, so two concurrent fulfils cannot both pass.
+    /// For payout rails whose on-chain payment carries no withdrawal id (Bitcoin), this is what
+    /// stops one payment from settling two withdrawals (e.g. two equal withdrawals to one address).
+    pub fn mark_fulfilled_unique_payout(&self, tx_id: &str, payout_tx_hash: &str) -> Result<bool, String> {
+        let payout = payout_tx_hash.trim().to_ascii_lowercase();
+        if payout.is_empty() {
+            return Err("empty payout tx hash".to_string());
+        }
+        let changed = {
+            let mut pending = self.pending.write().map_err(|_| "lock")?;
+            if let Some(other) = pending.iter().find(|w| {
+                w.tx_id != tx_id
+                    && w.payout_tx_hash.as_deref().map(|h| h.trim().eq_ignore_ascii_case(&payout)).unwrap_or(false)
+            }) {
+                return Err(format!("payout {} already settled withdrawal {}", payout, other.tx_id));
+            }
+            match pending.iter_mut().find(|w| w.tx_id == tx_id) {
+                Some(w) if !matches!(w.status, WithdrawalStatus::Fulfilled | WithdrawalStatus::Refunded) => {
+                    w.status = WithdrawalStatus::Fulfilled;
+                    w.payout_tx_hash = Some(payout.clone());
+                    w.updated_at = chrono::Utc::now().timestamp_millis();
+                    true
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            self.persist()?;
+        }
+        Ok(changed)
+    }
+
     /// Remove a non-terminal withdrawal (refund rollback of a pending/failed row).
     /// A Fulfilled row is NEVER deleted — it holds the audited payout tx hash, so erasing it
     /// would destroy the proof a withdrawal was paid. Callers that hit a fulfilled tx_id get
@@ -220,5 +253,50 @@ impl BridgeWithdrawStore {
         let data = serde_json::to_string_pretty(pending.as_slice()).map_err(|e| e.to_string())?;
         drop(pending);
         std::fs::write(&self.path, data).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod unique_payout_tests {
+    use super::*;
+
+    fn store() -> (std::path::PathBuf, BridgeWithdrawStore) {
+        let dir = std::env::temp_dir().join(format!(
+            "qv-unique-payout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = BridgeWithdrawStore::new(&dir).unwrap();
+        (dir, s)
+    }
+    const DEST: &str = "bc1qvt4r5dazmystwspgp62vh9ve5tutw5av4atjcz";
+    const P: &str = "91d306fcedfc15ce8cb8f1c547c5c2d403a20d138a74cc66fbb4a5e104259b84";
+
+    #[test]
+    fn one_bitcoin_payment_cannot_settle_two_withdrawals() {
+        let (dir, s) = store();
+        s.add("wd-a".into(), DEST.into(), 5000, "owner".into(), "qBTC".into()).unwrap();
+        s.add("wd-b".into(), DEST.into(), 5000, "owner".into(), "qBTC".into()).unwrap();
+        assert_eq!(s.mark_fulfilled_unique_payout("wd-a", P).unwrap(), true);
+        // Same payout (any case / whitespace) for the other, identical withdrawal: refused.
+        let err = s.mark_fulfilled_unique_payout("wd-b", &format!(" {} ", P.to_uppercase())).unwrap_err();
+        assert!(err.contains("already settled withdrawal wd-a"), "{err}");
+        assert!(s.list_pending().unwrap().iter().any(|w| w.tx_id == "wd-b"), "wd-b stays pending");
+        // Its own payout settles it.
+        let q = "a".repeat(64);
+        assert_eq!(s.mark_fulfilled_unique_payout("wd-b", &q).unwrap(), true);
+        assert!(s.list_pending().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn repeating_the_same_fulfil_is_idempotent_not_an_error() {
+        let (dir, s) = store();
+        s.add("wd-a".into(), DEST.into(), 5000, "owner".into(), "qBTC".into()).unwrap();
+        assert_eq!(s.mark_fulfilled_unique_payout("wd-a", P).unwrap(), true);
+        assert_eq!(s.mark_fulfilled_unique_payout("wd-a", P).unwrap(), false, "already fulfilled");
+        assert!(s.mark_fulfilled_unique_payout("wd-a", "   ").is_err());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

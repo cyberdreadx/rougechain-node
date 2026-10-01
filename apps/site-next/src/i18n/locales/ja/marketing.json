@@ -1,0 +1,365 @@
+{
+  "hero": {
+    "status": "メインネット",
+    "kicker": "新しい暗号の基盤",
+    "title": "ポスト量子を、<br/><grad>ジェネシスから。</grad>",
+    "lead": "NIST 標準化ポスト量子暗号を<dbr/>基盤とするプログラマブルなレイヤー1。<dbr/>次の時代は、基盤から始まります。",
+    "explore": "RougeChain を見る",
+    "build": "開発を始める",
+    "whitepaper": "ホワイトペーパー",
+    "designedFor": "異なる未来のために設計",
+    "discover": "基盤を知る ↓"
+  },
+  "proof": {
+    "signatures": "署名",
+    "kem": "鍵カプセル化",
+    "contracts": "スマートコントラクト",
+    "programmable": "設計からプログラマブル",
+    "seeNetwork": "ネットワークを見る",
+    "exploreMainnet": "メインネットを見る",
+    "readOnly": "読み取り専用のネットワークエクスプローラー"
+  },
+  "technology": {
+    "eyebrow": "01 / 異なる出発点",
+    "title": "未来は<br/>後付けであってはならない。",
+    "lead": "ポスト量子暗号は中核にあるべきです。<br/>RougeChain はそこから始まり、<br/>プログラマブルなネットワークの可能性を広げます。",
+    "pillars": {
+      "pq": {
+        "title": "ポスト量子を、\nジェネシスから。",
+        "body": "ML-DSA-65 を基盤とするデジタル署名。ポスト量子時代のために設計された暗号の基盤です。"
+      },
+      "programmable": {
+        "title": "設計から\nプログラマブル。",
+        "body": "WASM スマートコントラクトが、アプリ、トークン、まったく新しいオンチェーン体験の余地を生み出します。"
+      },
+      "ecosystem": {
+        "title": "つながる\nエコシステム。",
+        "body": "エクスプローラーやスワップから暗号化通信まで。ひとつのネットワークに、広がり続ける可能性。"
+      }
+    }
+  },
+  "build": {
+    "eyebrow": "02 / 開発者のために",
+    "title": "次のアイデアに、<br/>新しい基盤を。",
+    "lead": "最初のクエリからプログラマブルなアプリケーションまで。<br/>RougeChain を支えるツールをご覧ください。",
+    "sdkHeading": "SDK から始める",
+    "resources": {
+      "sdk": {
+        "title": "SDK と API",
+        "body": "アプリケーションをネットワークに接続します。"
+      },
+      "wasm": {
+        "title": "WASM コントラクト",
+        "body": "プログラマブルなオンチェーン体験を構築します。"
+      },
+      "node": {
+        "title": "ノードを運用する",
+        "body": "ネットワークのインフラを理解します。"
+      },
+      "mcp": {
+        "title": "エージェント向け MCP",
+        "body": "エージェントとネットワークの連携を探ります。"
+      }
+    },
+    "viewSource": "ソースを見る",
+    "allDocs": "すべてのドキュメント"
+  },
+  "security": {
+    "eyebrow": "03 / セキュリティと透明性",
+    "title": "次の時代のための<br/>暗号技術。<br/><muted>オープンに開発。</muted>",
+    "lead": "意図をもって選んだ暗号スタック。公開された技術資料。<br/>プロトコルを支えるプリミティブをご覧ください。",
+    "inspect": "ソースを確認する",
+    "whitepaper": "ホワイトペーパー",
+    "primitives": {
+      "signatures": "ポスト量子デジタル署名",
+      "kem": "ポスト量子鍵カプセル化",
+      "aead": "認証付きデータ暗号化",
+      "hashing": "ハッシュと証明コミットメント"
+    },
+    "note": "ML-KEM-768 は鍵の確立またはラップに、AES-256-GCM はデータの暗号化に使われます。SHA-256 と BLAKE3 はハッシュのプリミティブであり、暗号化ではありません。規格はプリミティブを示すものであり、RougeChain が外部監査を受けたことを意味するものではありません。"
+  },
+  "ecosystem": {
+    "eyebrow": "04 / チェーンの先へ",
+    "title": "ひとつの基盤。<br/>無数の可能性。",
+    "lead": "保有。取引。移動。通信。検証。開発。<br/>RougeChain で広がる可能性をご覧ください。"
+  },
+  "xrge": {
+    "eyebrow": "05 / ネイティブ資産",
+    "logoAlt": "XRGE のマーク",
+    "title": "ネットワークの一部であり、<br/>その実用性の中心。",
+    "lead": "RougeChain のネイティブ資産。ネットワーク手数料、バリデーターのステーキング、そしてエコシステム全体での役割をご覧ください。",
+    "understand": "XRGE について",
+    "swapDemo": "スワップのデザインデモを見る"
+  },
+  "team": {
+    "eyebrow": "06 / プロトコルを支える人々",
+    "title": "次の章を築く。",
+    "lead": "エンジニアリング、クリエイティビティ、そしてコミュニティ。",
+    "about": "{{name}} について",
+    "members": {
+      "brandon": {
+        "role": "創業者 / リード開発者",
+        "bio": "Brandon Menard（活動名 CyberDreadx）は、マイアミを拠点とするアメリカの音楽プロデューサー、AI 開発者、ブロックチェーンイノベーターです。Rougee と RougeCoin の創業者として、Web3 の所有権、ストリーミング、クリエイターのエンパワーメントを融合した次世代の音楽プラットフォームを構築しています。AI とサイバーセキュリティのバックグラウンドを持ち、Rougee の分散型エコシステムの技術ビジョンと開発を率い、アート、テクノロジー、表現の自由をつないでいます。"
+      },
+      "andersen": {
+        "role": "グロース・オペレーション責任者",
+        "bio": "Andersen Scherberger は、15 年以上の経験を持つ音楽業界のベテランです。「Best of Miami」を受賞したナイトクラブを創業し、数多くのフェスティバルやイベントを主催し、EDC などの大型フェスに出演するアーティストのマネジメントを手がけてきました。彼の NFT ギャラリーは CBS の「Destination Miami」で紹介され、Near、Bored Ape Yacht Club、NFT.com といった大手クリプトブランドとのパートナーシップを築きました。"
+      },
+      "elijah": {
+        "role": "マイアミ・デイド郡暗号資産タスクフォース議長",
+        "bio": "Elijah John Bowdre は、マイアミ・デイド郡暗号資産タスクフォースの議長であり、US Crypto Policy Alliance の会長兼共同創業者です。フロリダ州初の州ブロックチェーン法案、マイアミ・デイド郡ブロックチェーン委員会条例、マイアミ市の暗号資産決済ポリシーを起草し、暗号資産ニュース番組 TheBitPoint の司会を務め、2025 年にはマイアミ市長選に立候補しました。"
+      },
+      "teresa": {
+        "role": "Like Group Management CEO 兼共同創業者",
+        "bio": "Teresa Castagnino は、リジェネラティブなプロジェクトに注力するトゥルム拠点のアクセラレーター兼インキュベーター、Like Group Management の CEO 兼共同創業者です。Tulum Crypto Fest の共同創業者であり、Forbes México のカリブ地域責任者も務めています。インダストリアルデザインと建築のバックグラウンドを生かし、マヤ・リビエラ全域で創業者、企業、投資家をつないでいます。"
+      },
+      "ghulam": {
+        "role": "デジタルマーケティングストラテジスト兼プロジェクトマネージャー",
+        "bio": "Ghulam Abbas 博士は、デジタルマーケティングストラテジスト兼プロジェクトマネージャーです。医療分野のバックグラウンドを持つ有資格のホメオパシー医（DHMS）であり、Eco Cure Clinic の創設者でもあります。データドリブンなデジタル戦略、検索最適化されたコンテンツ、部門横断的なプロジェクト管理を専門的な医学知識と組み合わせ、オーガニックなオーディエンス拡大、ブランドポジショニング、効率的な業務フローに注力し、持続的で測定可能な成果を生み出しています。"
+      },
+      "brenda": {
+        "role": "ジャーナリスト、メディア・PR",
+        "bio": "Brenda Miranda は、フロリダ国際大学（FIU）の Caplin News でマルチメディアジャーナリスト兼キャスターを務め、Kopenhaver Center for Women in Communication のメディア寄稿者でもあります。現在はトゥルムを拠点に、コミュニティ、ウェルネス、アート、ヒューマンストーリーを取材しています。今秋、デジタルコミュニケーション・メディアの学士号を取得して FIU を卒業します。"
+      }
+    }
+  },
+  "regenerate": {
+    "eyebrow": "07 / Regenerate",
+    "title": "テクノロジーは、<br/><muted>触れる土地をより良くするべきです。</muted>",
+    "body": "RougeChain Regenerate は、ブロックチェーンインフラと現実世界のコミュニティ開発をつなぎ、エコロジー、インフラ、テクノロジー、アート、コミュニティの分野で、透明かつ測定可能な地域の取り組みに資金を提供します。トゥルムを皮切りに、プロジェクトの資金、マイルストーン、エビデンス、インパクトを RougeChain に記録し、資本から成果までの進捗を可視化できます。",
+    "explore": "Regenerate を見る",
+    "propose": "プロジェクトを提案する"
+  },
+  "finalCta": {
+    "eyebrow": "次の時代はここから",
+    "title": "ポスト量子時代のために<br/>設計されたチェーンで開発を。",
+    "explore": "ネットワークを見る",
+    "docs": "ドキュメントを読む"
+  },
+  "carousel": {
+    "tabsLabel": "RougeChain の可能性",
+    "previous": "前へ",
+    "next": "次へ",
+    "trackLabel": "スクロールできるエコシステムのユースケース",
+    "slideLabel": "{{n}} / {{total}}：{{name}}",
+    "hint": "ドラッグ / スワイプ、または矢印キーで操作",
+    "slides": {
+      "qwalla": {
+        "short": "Qwalla",
+        "label": "保有",
+        "headline": "あなたの資産を、<br/>次の時代へ。",
+        "body": "Qwalla は RougeChain エコシステムをポケットに。ひとつのモバイルアプリで XRGE を保有し、ウォレットを管理し、ネットワークを自由に行き来できます。",
+        "primary": "Qwalla を見る"
+      },
+      "swap": {
+        "short": "スワップ",
+        "label": "取引",
+        "headline": "取引して、流動性を提供。<br/>すべてオンチェーンで。",
+        "body": "ネットワークのために作られたネイティブな DeFi 体験で、資産のスワップ、流動性の発見、RougeChain マーケットへの参加ができます。",
+        "primary": "スワップを見る",
+        "secondary": "流動性プールを見る"
+      },
+      "bridge": {
+        "short": "ブリッジ",
+        "label": "移動",
+        "headline": "資産をチェーン間で移動し、<br/>ポスト量子時代へ。",
+        "body": "RougeChain と接続されたネットワークの間で対応資産を移動し、従来のチェーンの価値を、ポスト量子セキュリティを軸に設計されたネットワークへ持ち込めます。",
+        "technical": "Base メインネット · ETH ↔ qETH · USDC ↔ qUSDC · XRGE",
+        "primary": "ブリッジを見る"
+      },
+      "talk": {
+        "short": "通信",
+        "label": "通信",
+        "headline": "ウォレットは、<br/>プライベートな ID にも。",
+        "emphasis": "メッセージ。メール。暗号化。<br/>ウォレット間のポスト量子通信。",
+        "body": "ウォレット ID 間で、ポスト量子暗号化されたメッセージやメールを直接送信できます。RougeChain はウォレットを取引の手段以上のもの、つまり安全な通信レイヤーに変えます。",
+        "technical": "ML-KEM-768 鍵カプセル化 · AES-256-GCM 認証付き暗号化",
+        "primary": "Messenger を開く",
+        "secondary": "Mail を見る"
+      },
+      "validate": {
+        "short": "検証",
+        "label": "検証",
+        "headline": "使うだけでなく、<br/>ネットワークを守る側へ。",
+        "body": "まっさらな Linux サーバーから、同期中の RougeChain ノードまでコマンドひとつ。{{amount}} XRGE 以上をステークし、バリデーターの状態を確認して、ネットワークのコンセンサスに直接参加しましょう。",
+        "technical": "ワンコマンドインストーラー · systemd サービス · バリデーター状態の組み込みチェック · 控えめな VPS 要件",
+        "primary": "バリデーターを運用する",
+        "secondary": "バリデーターを見る"
+      },
+      "build": {
+        "short": "開発",
+        "label": "開発",
+        "headline": "開発者のために。<br/>エージェントにも対応。",
+        "emphasis": "アプリを作り、エージェントを作り、その両方をチェーンにつなぐ。",
+        "body": "RougeChain は、開発者がアプリケーションと自律型エージェントを並行して構築する世界を想定して設計されています。WASM スマートコントラクトと RougeChain SDK でオンチェーンソフトウェアを構築し、AI エージェントにはネイティブの MCP ツールを与えて、ネットワークの理解、アプリ間の連携、ワークフローの調整、承認されたオンチェーン操作を可能にします。",
+        "technical": "WASM スマートコントラクト · RougeChain SDK · ネイティブ MCP ツール",
+        "primary": "開発を始める",
+        "secondary": "エージェント向け MCP を見る"
+      }
+    },
+    "qwalla": {
+      "caption": "モバイルウォレット · メインネット",
+      "imageAlt": "スマートフォンの枠内に表示された Qwalla ウォレットアプリ",
+      "meta": "ポスト量子ウォレット"
+    },
+    "swap": {
+      "label": "RougeChain スワップ画面のイメージ",
+      "caption": "画面イメージ · ROUGECHAIN DEX",
+      "title": "スワップ",
+      "network": "メインネット",
+      "pay": "支払い",
+      "receive": "受け取り",
+      "route": "ルート",
+      "liquidity": "流動性",
+      "amm": "ネイティブ AMM",
+      "pools": "プール"
+    },
+    "bridge": {
+      "caption": "BASE メインネット ↔ ROUGECHAIN L1 · 対応ルート",
+      "label": "Base と RougeChain 間の対応ブリッジルート",
+      "baseMainnet": "BASE メインネット",
+      "chain": "チェーン {{id}}",
+      "bridge": "ブリッジ",
+      "routes": "ルート",
+      "rougechainL1": "ROUGECHAIN L1",
+      "pqNetwork": "ポスト量子ネットワーク",
+      "asset": "資産",
+      "route": "ルート",
+      "receive": "受け取り",
+      "forward": "BASE → ROUGE",
+      "twoWay": "双方向",
+      "deposit": "入金 · ロック / ミント",
+      "withdraw": "出金 · リリース / 返金保護"
+    },
+    "talk": {
+      "caption": "ウォレット ID · プライベート通信",
+      "yourIdentity": "あなたのウォレット ID",
+      "messenger": "MESSENGER",
+      "encrypted": "暗号化済み",
+      "incoming": "バリデーターの通話に参加しますか？",
+      "you": "あなた",
+      "outgoing": "はい、今メモを送ります。",
+      "mail": "MAIL",
+      "from": "差出人",
+      "subject": "件名",
+      "subjectValue": "バリデーターの提案",
+      "encryptedFor": "暗号化の宛先",
+      "kem": "鍵カプセル化",
+      "aead": "認証付き暗号化"
+    },
+    "validate": {
+      "live": "ライブのネットワークデータ",
+      "stale": "古いネットワークデータ",
+      "snapshot": "保存済みのネットワークスナップショット",
+      "caption": "バリデーター運用ビュー · {{state}}",
+      "label": "RougeChain バリデーターの運用ダッシュボードとセットアップの流れ",
+      "validator": "ROUGECHAIN バリデーター",
+      "ready": "参加の準備ができています。",
+      "operatorFlow": "運用フロー",
+      "targetStatus": "目標ステータス",
+      "producing": "ブロック生成中",
+      "check": "組み込みの <code>validator-status</code> チェックが、稼働前に各前提条件を確認します。",
+      "minStake": "最低ステーク",
+      "peers": "ネットワークピア",
+      "latestBlock": "最新ブロック",
+      "networkHeight": "ネットワークの高さ",
+      "setup": "セットアップ",
+      "installer": "ワンコマンドインストーラー",
+      "steps": {
+        "install": {
+          "title": "ノードをインストール",
+          "detail": "依存関係、ビルド、systemd サービス"
+        },
+        "stake": {
+          "title": "入金とステーク",
+          "detail": "{{amount}} XRGE 以上をステーク"
+        },
+        "verify": {
+          "title": "状態を確認",
+          "detail": "入金済み · ステーク済み · アクティブセット"
+        },
+        "produce": {
+          "title": "ブロックを生成",
+          "detail": "コンセンサスへの参加を開始"
+        }
+      },
+      "validators": "バリデーター {{n}}",
+      "publicRead": "公開読み取り · {{state}}"
+    },
+    "build": {
+      "caption": "実際の SDK + MCP 連携 · メインネット",
+      "label": "RougeChain SDK と MCP の連携コードを入力するターミナル",
+      "footer": "SDK · WASM コントラクト · MCP · ローカル ML-DSA-65 署名"
+    }
+  },
+  "architecture": {
+    "eyebrow": "エコシステム / アーキテクチャ提案",
+    "title": "ひとつの ID。<br/><muted>独立したアプリケーション。</muted>",
+    "lead": "共有の基盤がエコシステムをつなぎます。各アプリケーションは、自らのルート、デプロイ、リリースサイクルを持ちます。",
+    "status": "POC トポロジー · ホスト移行なし",
+    "seeWallet": "ウォレットプロバイダーのアーキテクチャを見る ↓",
+    "comingSoon": "{{name}} · 近日公開",
+    "destinations": {
+      "eyebrow": "01 / 提案する配置先",
+      "title": "アプリケーションのネットワーク。",
+      "root": "マーケティング · 発見 · グローバルアプリメニュー",
+      "proposed": "提案する配置先 · {{status}}"
+    },
+    "beyond": {
+      "eyebrow": "02 / アプリケーションの先へ",
+      "title": "異なる問いに、明確な行き先を。",
+      "build": "開発",
+      "community": "コミュニティ",
+      "utilities": "ユーティリティ",
+      "buildQuestion": "何を開発できますか？",
+      "communityQuestion": "どこで参加できますか？",
+      "utilitiesQuestion": "何を確認できますか？",
+      "note": "マーケティングナビゲーションはプロジェクトを紹介します。アプリメニューは、アプリケーションを保管・取引・遊ぶ・話す・探索に分類します。ローカルナビゲーションは現在の dApp に属します。ワークスペースランチャーは、アプリケーションに加えて開発・セキュリティ・ネットワークなどのツールを開きます。"
+    },
+    "wallet": {
+      "eyebrow": "03 / 共有ウォレットアーキテクチャ",
+      "title": "ひとつの ID。レビュー済みのプロバイダー境界。",
+      "lead": "各 dApp は秘密鍵を自ら保持せず、共通のウォレットプロバイダー契約を利用します。",
+      "figureLabel": "提案するウォレットプロバイダーアーキテクチャ",
+      "extension": "RougeChain ブラウザウォレット",
+      "extensionNote": "拡張機能プロバイダーの候補",
+      "qwallaNote": "モバイル / dApp ブラウザの候補",
+      "contractNote": "提案する契約 · アカウント · ネットワーク · 権限",
+      "caption": "本番アーキテクチャの概念図です。最終的なプロバイダーとセキュリティの設計はリード開発者が担います。",
+      "demonstratesTitle": "POC が示すこと",
+      "demonstrates1": "WalletProvider は @rougechain/core を通じて、実際のブラウザウォレットをルートやワークスペースのプレビュー間で共有します。ストレージキー、保管庫の形式、署名は現在の rougechain.io と同じです。",
+      "demonstrates2": "単一オリジンで動作するため、別々にホストされたアプリ間でのクロスオリジンのウォレット接続を証明するものではありません。",
+      "evaluateTitle": "本番環境で評価すべきこと",
+      "evaluate1": "RougeChain ブラウザ拡張機能、Qwalla、そして正規のウェブウォレットオリジンがプロバイダーの候補です。",
+      "evaluate2": "接続、アカウント/ネットワークの状態、トランザクションの権限には、レビュー済みの契約が必要です。ここでは署名やトランザクションのメソッドは実装していません。",
+      "noteTitle": "ウォレット ID/プロバイダー ≠ 生の秘密鍵ストレージ",
+      "note": "localStorage はオリジンやサブドメインをまたぎません。将来のプロバイダー戦略では、dApp 間で生の保管庫ストレージを共有しようとしてはいけません。計画的な移行が承認されるまで、既存の保管庫へのアクセスを維持してください。"
+    },
+    "boundaries": {
+      "eyebrow": "04 / 境界",
+      "title": "言語は共有し、プロダクトは各自が持つ。",
+      "implementedTitle": "この POC で実装済み",
+      "brand": "@rougechain/brand — トークンとアイデンティティ",
+      "ui": "@rougechain/ui — プリミティブと RougeAppShell",
+      "chainReadonly": "@rougechain/chain-readonly — 許可リスト制の GET データ",
+      "showcase": "Showcase はエコシステムのレジストリ、ルート、ワークスペースのプレビューを担います。",
+      "proposedTitle": "提案する本番パッケージ",
+      "walletProvider": "@rougechain/wallet-provider には、別途承認された信頼モデルとオリジンのアーキテクチャが必要です。",
+      "independent": "独立したデプロイは、バージョン管理されたパッケージを利用します。この POC に共有のランタイムサーバーは不要です。"
+    },
+    "transition": {
+      "eyebrow": "05 / 移行",
+      "title": "計画的に進める。",
+      "steps": {
+        "1": "既存のひとつの画面で、共有のブランドと UI トークンを採用する。",
+        "2": "責任範囲を合意したうえで、アプリシェルとナビゲーションレジストリを切り出す。",
+        "3": "検証済みのデータ契約のもと、エクスプローラーを専用ホストで試験運用する。",
+        "4": "ウォレット、署名、オリジンの境界が承認されてから、スワップを移行する。",
+        "5": "各配置先がデプロイされ安定してから、旧パスをリダイレクトする。"
+      },
+      "note": "グローバルスイッチャーはアプリケーションとホストをまたぎます。ローカルナビゲーションは現在のアプリケーション内にとどまります。POC のルートは、これらの境界をひとつのオリジン上で示しています。",
+      "originTitle": "ウォレットのオリジン境界",
+      "origin": "localStorage はオリジン単位です。rougechain.io 上のウォレット情報が wallet.rougechain.io に自動で引き継がれることはありません。分割の前に、ウォレットプロバイダーの設計、移行ポリシー、セキュリティレビューが必要です。この POC がウォレット情報を読み取ったり保存したりすることはありません。"
+    }
+  }
+}

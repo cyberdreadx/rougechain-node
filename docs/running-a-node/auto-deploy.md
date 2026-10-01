@@ -1,8 +1,8 @@
 # Auto-Deploy Setup
 
 > ⚠️ **Never use auto-deploy on a mainnet validator.** It restarts the daemon
-> whenever `main` changes — an unattended restart can land in your block-proposal
-> slot (missed blocks → slashing) — and it auto-builds and runs **unreviewed
+> whenever `main` changes — an unattended restart while your validator is the
+> designated proposer stalls block production — and it auto-builds and runs **unreviewed
 > upstream code** (a supply-chain risk). Use it only for testnet/dev or
 > non-validating nodes, and upgrade validators deliberately (pull a reviewed tag,
 > build, restart during a quiet window).

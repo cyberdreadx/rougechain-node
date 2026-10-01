@@ -28,6 +28,7 @@ import {
   decryptWallet,
   lockUnifiedWallet 
 } from "@/lib/unified-wallet";
+import { withDerivedMessagingKeys } from "@/lib/pqc-messenger";
 
 interface WalletBackupProps {
   wallet?: UnifiedWallet | null;
@@ -198,7 +199,8 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
 
     setIsProcessing(true);
     try {
-      const decrypted = await decryptWallet(importData.trim(), importPassword);
+      // A backup keeps its own messaging keys; only one without them gets the seed-derived pair.
+      const decrypted = withDerivedMessagingKeys(await decryptWallet(importData.trim(), importPassword));
       onImport(decrypted);
       toast.success("Wallet imported successfully", {
         description: `Welcome back, ${decrypted.displayName}!`
@@ -650,8 +652,8 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
                           return;
                         }
                         const { publicKey, secretKey } = keypairFromMnemonic(trimmed);
-                        const { generateEncryptionKeypair } = await import("@/lib/pqc-messenger");
-                        const encKeys = generateEncryptionKeypair();
+                        const { deriveMessagingKeypair } = await import("@/lib/pqc-messenger");
+                        const encKeys = deriveMessagingKeypair(trimmed, secretKey);
                         const recoveredWallet: UnifiedWallet = {
                           id: `wallet-${Date.now()}`,
                           displayName: "Recovered Wallet",

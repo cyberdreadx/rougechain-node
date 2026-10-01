@@ -1,165 +1,167 @@
 import { useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Wallet } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Dialog, Button } from "@rougechain/ui";
-import {
-  useDemoWallet,
-  DEMO_SHORT_ADDRESS,
-  type DemoSource,
-} from "./DemoWalletProvider";
-export function ConnectWalletDialog({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  const wallet = useDemoWallet();
-  return (
-    <Dialog open={open} onClose={onClose} title="Connect to RougeChain">
-      <p className="muted">Preview one identity across the ecosystem.</p>
-      <div className="provider-options">
-        {(
-          [
-            {
-              source: "extension",
-              name: "RougeChain Wallet",
-              description: "Browser extension",
-            },
-            {
-              source: "qwalla",
-              name: "Qwalla",
-              description: "Mobile / dApp browser",
-            },
-          ] as const
-        ).map((provider) => (
-          <button
-            key={provider.source}
-            className="provider-option"
-            onClick={() => {
-              wallet.connectDemo(provider.source as DemoSource);
-              onClose();
-            }}
-            aria-label={`Preview connection with ${provider.name}`}
-          >
-            <span>
-              <strong>{provider.name}</strong>
-              <small>{provider.description}</small>
-            </span>
-            <span>Preview connection ↗</span>
-          </button>
-        ))}
-      </div>
-      <p className="wallet-disclaimer">
-        Design demonstration only. No wallet connection or signing is performed.
-      </p>
-    </Dialog>
-  );
-}
-export function ConnectedAccountMenu({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  const wallet = useDemoWallet();
-  const [copied, setCopied] = useState(""),
-    [explorer, setExplorer] = useState(false);
-  return (
-    <Dialog open={open} onClose={onClose} title="Demo account">
-      <div className="account-identity">
-        <strong>{DEMO_SHORT_ADDRESS}</strong>
-        <span>
-          Mainnet ·{" "}
-          {wallet.source === "qwalla" ? "Qwalla" : "RougeChain Wallet"}
-        </span>
-        <small>Synthetic identity · no account data</small>
-      </div>
-      <div className="account-actions">
-        <Button
-          variant="outline"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(wallet.address ?? "");
-              setCopied("Synthetic address copied");
-            } catch {
-              setCopied("Clipboard unavailable. Select the address below.");
-            }
-          }}
-        >
-          Copy address
-        </Button>
-        <Link
-          className="button outline"
-          to="/workspace?open=wallet"
-          onClick={onClose}
-        >
-          Open Wallet
-        </Link>
-        <Button variant="ghost" onClick={() => setExplorer(true)}>
-          View in Explorer
-        </Button>
-      </div>
-      {copied && <p role="status">{copied}</p>}
-      <code className="demo-full-address">{wallet.address}</code>
-      {explorer && (
-        <p role="status">
-          Explorer address view not implemented in POC. This synthetic address
-          is not queried on-chain.
-        </p>
-      )}
-      <div className="account-disconnect">
-        <Button
-          variant="ghost"
-          onClick={() => {
-            wallet.disconnectDemo();
-            onClose();
-          }}
-        >
-          Disconnect
-        </Button>
-      </div>
-      <p className="wallet-disclaimer">
-        Demo connection only. No provider permissions, keys or signing.
-      </p>
-    </Dialog>
-  );
-}
+import { formatPubkey } from "@rougechain/core/address";
+import { useWallet } from "./WalletProvider";
+import { networkLabel, useExtensionProvider, useRougeAddress } from "./hooks";
+import { CopyText, UnlockForm } from "./parts";
+import { toast } from "./toast";
+
+/** Header wallet control: connect / create / import / unlock / lock, address + copy, network. */
 export function WalletControl() {
-  const wallet = useDemoWallet();
+  const { t } = useTranslation("wallet");
+  const extensionProvider = useExtensionProvider();
+  const w = useWallet();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const { full, display } = useRougeAddress(w.publicKey);
   const close = () => {
     setOpen(false);
     window.requestAnimationFrame(() => trigger.current?.focus());
   };
+  const go = (path: string) => {
+    close();
+    navigate(path);
+  };
+
+  const label =
+    w.status === "unlocked" ? display || t("control.wallet") : w.status === "locked" ? t("control.locked") : t("control.connectWallet");
+  const compact = w.status === "unlocked" ? t("control.wallet") : w.status === "locked" ? t("control.locked") : t("control.connect");
+  const ariaLabel =
+    w.status === "unlocked"
+      ? t("control.walletAria", { address: full ?? display })
+      : w.status === "locked"
+        ? t("control.lockedAria")
+        : t("control.connectWallet");
+
+  const connectExtension = async () => {
+    setBusy(true);
+    try {
+      await w.connectExtension();
+      toast.success(t("control.extensionConnected"));
+      close();
+    } catch (e) {
+      toast.error(t("welcome.connectFailed"), { description: e instanceof Error ? e.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      await w.create();
+      go("/wallet");
+    } catch (e) {
+      toast.error(t("welcome.createFailed"), { description: e instanceof Error ? e.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="wallet-control">
       <button
         ref={trigger}
-        className="button outline small wallet-trigger"
-        aria-label={
-          wallet.connected
-            ? `Demo connected account ${DEMO_SHORT_ADDRESS}`
-            : "Connect Wallet"
-        }
+        className={`button outline small wallet-trigger ${w.status}`}
+        aria-label={ariaLabel}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
       >
         <Wallet size={15} aria-hidden="true" />
-        <span className="wallet-trigger-label">
-          {wallet.connected ? `Demo · ${DEMO_SHORT_ADDRESS}` : "Connect Wallet"}
-        </span>
+        <span className="wallet-trigger-label">{label}</span>
         <span className="wallet-trigger-compact" aria-hidden="true">
-          {wallet.connected ? "Demo" : "Connect"}
+          {compact}
         </span>
       </button>
-      {wallet.connected ? (
-        <ConnectedAccountMenu open={open} onClose={close} />
-      ) : (
-        <ConnectWalletDialog open={open} onClose={close} />
+
+      {w.status === "none" && (
+        <Dialog open={open} onClose={close} title={t("control.connectTitle")}>
+          <p className="muted">{t("control.connectBody")}</p>
+          <div className="provider-options">
+            <button className="provider-option" onClick={create} disabled={busy}>
+              <span>
+                <strong>{t("control.createTitle")}</strong>
+                <small>{t("control.createBody")}</small>
+              </span>
+              <span>{t("control.createCta")}</span>
+            </button>
+            <button className="provider-option" onClick={() => go("/wallet?import=1")} disabled={busy}>
+              <span>
+                <strong>{t("welcome.importTitle")}</strong>
+                <small>{t("control.importBody")}</small>
+              </span>
+              <span>{t("control.importCta")}</span>
+            </button>
+            <button className="provider-option" onClick={connectExtension} disabled={busy}>
+              <span>
+                <strong>{t("control.extensionTitle")}</strong>
+                <small>{extensionProvider ? t("control.extensionDetected") : t("control.extensionMissing")}</small>
+              </span>
+              <span>{t("control.connectCta")}</span>
+            </button>
+          </div>
+          <p className="wallet-disclaimer">{t("control.disclaimer")}</p>
+        </Dialog>
+      )}
+
+      {w.status === "locked" && (
+        <Dialog open={open} onClose={close} title={t("control.unlockTitle")}>
+          <div className="account-identity">
+            <strong>{w.displayName || t("control.yourWallet")}</strong>
+            <span>{t("control.networkLocked", { network: networkLabel(w.network) })}</span>
+            {w.publicKey && <small className="mono">{formatPubkey(w.publicKey, 12, 6)}</small>}
+          </div>
+          <UnlockForm onUnlocked={close} />
+        </Dialog>
+      )}
+
+      {w.status === "unlocked" && (
+        <Dialog open={open} onClose={close} title={t("control.yourWallet")}>
+          <div className="account-identity">
+            <strong>{w.displayName || t("myWallet")}</strong>
+            <span>
+              {networkLabel(w.network)} · {w.isExtension ? t("welcome.extensionTitle") : t("control.thisBrowser")}
+            </span>
+          </div>
+          {full ? <CopyText value={full} label={t("copy.address")} /> : <small className="muted">{t("dashboard.deriving")}</small>}
+          <div className="account-actions">
+            <Link className="button" to="/wallet" onClick={close}>
+              {t("control.openWallet")}
+            </Link>
+            <Link className="button outline" to="/settings" onClick={close}>
+              {t("page.settings")}
+            </Link>
+            {full && (
+              <Link className="button ghost" to={`/address/${full}`} onClick={close}>
+                {t("control.viewInExplorer")}
+              </Link>
+            )}
+          </div>
+          <div className="account-disconnect">
+            {w.hasPassword ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  w.lock();
+                  toast.info(t("lock.locked"));
+                  close();
+                }}
+              >
+                {t("control.lock")}
+              </Button>
+            ) : (
+              <Link className="text-link" to="/settings#security" onClick={close}>
+                {t("control.setPassword")}
+              </Link>
+            )}
+          </div>
+        </Dialog>
       )}
     </div>
   );

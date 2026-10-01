@@ -127,12 +127,30 @@ _Moved from the public docs site (docs/bridge/btc-bridge.md)._
 | `QV_BRIDGE_BTC_MIN_CONFIRMATIONS` | Confirmations before honoring a deposit/payout (default 2). |
 | `QV_BTC_ESPLORA_PRIMARY` / `QV_BTC_ESPLORA_SECONDARY` | Override the two Esplora bases (network-aware defaults otherwise). |
 | `QV_BTC_ALLOW_SINGLE_PROVIDER` | `true` to honor a deposit on the primary alone if the secondary is down (default false = safer). |
+| `QV_BRIDGE_BTC_MIN_WITHDRAW_SATS` | Minimum qBTC withdrawal admitted by `POST /api/bridge/withdraw` (default 2000). Rejected before any burn. |
+| `QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS` | Largest network fee a payout may deduct from the withdrawer when verifying fulfilment (default 10000). |
 | `BRIDGE_RELAYER_SECRET` | Shared secret; the relayer sends it to fulfill payouts. |
 
 #### Relayer
 Copy `btc-bridge-relayer.env.example` → `btc-bridge-relayer.env`, fill in `BRIDGE_BTC_CUSTODY_WIF`
 and `BRIDGE_RELAYER_SECRET`, then `npm run relayer:btc`. It prints the custody address it derives —
 set the daemon's `QV_BRIDGE_BTC_CUSTODY` to that exact address, and fund it.
+
+#### Fee policy (withdrawer pays the Bitcoin network fee)
+The relayer pays the destination `sats − fee`, where `fee` = ceil(vsize × fee rate) of that payout
+(vsize computed for P2WPKH inputs with a worst-case signature; the signed tx is checked not to
+exceed it). Custody change = inputs − sats, so custody falls by exactly the burned amount.
+- `BTC_MAX_NETWORK_FEE_SATS` (relayer, default 10000): if the fee would exceed it, nothing is built;
+  outcome `fee_too_high`, retried next cycle. Keep it **≤** the daemon's
+  `QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS`, or the daemon will refuse to fulfil.
+- If `sats − fee` ≤ 546 (dust), outcome `below_minimum_after_fee`: the withdrawal is flagged
+  `needsReview` in the state file and never paid automatically.
+- Adopt-scan recognises both the full-amount (legacy) form and the `sats − fee` form.
+- The daemon accepts `paid ≥ owed` (legacy) or `paid + fee ≥ owed` with `fee ≤ cap`, computing
+  `fee` from the provider's tx data (Σinputs − Σoutputs, cross-checked with Esplora's `fee`).
+
+**Upgrade order:** deploy the daemon first (it accepts both forms), then the relayer. A new relayer
+against an old daemon would have its `sats − fee` payouts refused at fulfilment.
 
 #### Go-live checklist
 1. **Testnet first.** `QV_BRIDGE_BTC_NETWORK=testnet` on both daemon and relayer. Run a full

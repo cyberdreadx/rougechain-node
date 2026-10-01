@@ -604,14 +604,17 @@ fn main() {
             // Active
             println!("  {} In active set:   {}", mark(status == "active"), status);
             if status == "jailed" {
-                println!("      → jailed for missed blocks; it clears after the jail window — keep the node online.");
+                println!("      → jailed (slashed); it clears automatically after the jail window. Missed-block");
+                println!("        auto-slashing is frozen under proposer selection, so being offline no longer jails a validator.");
             }
 
             // Producing
             println!("  {} Producing blocks: {} proposed", mark(blocks > 0), blocks);
             if staked >= MIN && blocks == 0 {
-                println!("      → staked but nothing proposed yet. Confirm the node runs with --mine as THIS key");
-                println!("        (node-keys.json) and is synced. Selection is stake-weighted, so low stake is rare.");
+                println!("      → staked but nothing proposed yet. Only the designated proposer (the eligible validator");
+                println!("        with the most stake) seals blocks, so any other validator proposes none — that is expected.");
+                println!("        If this key should be the top staker, confirm the node runs with --mine as THIS key");
+                println!("        (node-keys.json) and is synced; it still votes and earns its stake share either way.");
             }
         }
 

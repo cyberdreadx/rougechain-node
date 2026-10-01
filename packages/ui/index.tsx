@@ -1,10 +1,23 @@
 import {
+  createContext,
+  useContext,
   useEffect,
   useRef,
   type ButtonHTMLAttributes,
   type ReactNode,
 } from "react";
 import { ArrowUpRight, X } from "lucide-react";
+
+/** The few strings these components render themselves. Host apps provide translations. */
+export interface UiText {
+  closeDialog: string;
+  designDemo: string;
+}
+const defaultUiText: UiText = { closeDialog: "Close dialog", designDemo: "DESIGN DEMO" };
+const UiTextContext = createContext<UiText>(defaultUiText);
+export function UiTextProvider({ value, children }: { value: Partial<UiText>; children: ReactNode }) {
+  return <UiTextContext.Provider value={{ ...defaultUiText, ...value }}>{children}</UiTextContext.Provider>;
+}
 export function Button({
   variant = "",
   className = "",
@@ -70,7 +83,8 @@ export function Status({
   return <span className={`status ${state}`}>{children ?? state}</span>;
 }
 export function DemoBadge() {
-  return <span className="demo-badge">DESIGN DEMO</span>;
+  const text = useContext(UiTextContext);
+  return <span className="demo-badge">{text.designDemo}</span>;
 }
 export function Metric({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -99,6 +113,7 @@ export function Dialog({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const text = useContext(UiTextContext);
   useEffect(() => {
     const el = ref.current;
     if (open && !el?.open) el?.showModal();
@@ -118,7 +133,7 @@ export function Dialog({
         <h2>{title}</h2>
         <Button
           variant="ghost icon"
-          aria-label="Close dialog"
+          aria-label={text.closeDialog}
           onClick={onClose}
         >
           <X size={18} />
@@ -177,7 +192,7 @@ export function RougeAppShell({
       {(localNavigation || proposedHost) && (
         <div className="container shell-subnav">
           {localNavigation}
-          <span className="proposed-host">PROPOSED · {proposedHost}</span>
+          {proposedHost && <span className="proposed-host">{proposedHost}</span>}
         </div>
       )}
     </header>

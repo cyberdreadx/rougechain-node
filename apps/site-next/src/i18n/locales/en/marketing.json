@@ -1,0 +1,365 @@
+{
+  "hero": {
+    "status": "Mainnet",
+    "kicker": "A NEW CRYPTOGRAPHIC FOUNDATION",
+    "title": "Post-quantum<br/><grad>from genesis.</grad>",
+    "lead": "A programmable Layer 1 built around<dbr/> NIST-standardized post-quantum cryptography.<dbr/> The next era starts at the foundation.",
+    "explore": "Explore RougeChain",
+    "build": "Start building",
+    "whitepaper": "Whitepaper",
+    "designedFor": "DESIGNED FOR A DIFFERENT FUTURE",
+    "discover": "DISCOVER THE FOUNDATION ↓"
+  },
+  "proof": {
+    "signatures": "SIGNATURES",
+    "kem": "KEY ENCAPSULATION",
+    "contracts": "SMART CONTRACTS",
+    "programmable": "Programmable by design",
+    "seeNetwork": "SEE THE NETWORK",
+    "exploreMainnet": "Explore mainnet",
+    "readOnly": "Read-only network explorer"
+  },
+  "technology": {
+    "eyebrow": "01 / A different starting point",
+    "title": "The future shouldn’t<br/>be a retrofit.",
+    "lead": "Post-quantum cryptography belongs at the core.<br/>RougeChain starts there, then opens the<br/>possibilities of a programmable network.",
+    "pillars": {
+      "pq": {
+        "title": "Post-quantum\nfrom genesis.",
+        "body": "Digital signatures built around ML-DSA-65. A cryptographic foundation designed for the post-quantum era."
+      },
+      "programmable": {
+        "title": "Programmable\nby design.",
+        "body": "WASM smart contracts make room for applications, tokens, and entirely new onchain experiences."
+      },
+      "ecosystem": {
+        "title": "An ecosystem,\nconnected.",
+        "body": "From explorers and swaps to encrypted communication. One network, a growing set of possibilities."
+      }
+    }
+  },
+  "build": {
+    "eyebrow": "02 / Built for builders",
+    "title": "Your next idea.<br/>A new foundation.",
+    "lead": "From the first query to a programmable application.<br/>Explore the tools behind RougeChain.",
+    "sdkHeading": "START WITH THE SDK",
+    "resources": {
+      "sdk": {
+        "title": "SDK & API",
+        "body": "Connect your application to the network."
+      },
+      "wasm": {
+        "title": "WASM contracts",
+        "body": "Build programmable onchain experiences."
+      },
+      "node": {
+        "title": "Run a node",
+        "body": "Understand the network infrastructure."
+      },
+      "mcp": {
+        "title": "MCP for agents",
+        "body": "Explore agent and network integration."
+      }
+    },
+    "viewSource": "View source",
+    "allDocs": "All documentation"
+  },
+  "security": {
+    "eyebrow": "03 / Security & transparency",
+    "title": "Cryptography built<br/>for the next era.<br/><muted>Built in public.</muted>",
+    "lead": "A deliberate cryptographic stack. Open technical materials.<br/>Explore the primitives behind the protocol.",
+    "inspect": "Inspect the source",
+    "whitepaper": "Whitepaper",
+    "primitives": {
+      "signatures": "Post-quantum digital signatures",
+      "kem": "Post-quantum key encapsulation",
+      "aead": "Authenticated data encryption",
+      "hashing": "Hashing & proof commitments"
+    },
+    "note": "ML-KEM-768 establishes or wraps keys; AES-256-GCM encrypts data. SHA-256 and BLAKE3 are hashing primitives, not encryption. Standards identify the primitives; they do not imply an external audit of RougeChain."
+  },
+  "ecosystem": {
+    "eyebrow": "04 / Beyond the chain",
+    "title": "One foundation.<br/>Many possibilities.",
+    "lead": "Hold. Trade. Move. Communicate. Validate. Build.<br/>Explore what becomes possible on RougeChain."
+  },
+  "xrge": {
+    "eyebrow": "05 / The native asset",
+    "logoAlt": "XRGE mark",
+    "title": "Part of the network.<br/>At the heart of its utility.",
+    "lead": "The native asset of RougeChain. Explore its role in network fees, validator staking, and the wider ecosystem.",
+    "understand": "Understand XRGE",
+    "swapDemo": "View Swap design demo"
+  },
+  "team": {
+    "eyebrow": "06 / People behind the protocol",
+    "title": "Building the next chapter.",
+    "lead": "Engineering, creativity, and community.",
+    "about": "About {{name}}",
+    "members": {
+      "brandon": {
+        "role": "Founder / Lead Developer",
+        "bio": "Brandon Menard, professionally known as CyberDreadx, is an American music producer, AI developer, and blockchain innovator based in Miami. As the founder of Rougee and RougeCoin, he’s building the next-generation music platform that merges Web3 ownership, streaming, and creator empowerment. With a background in AI and cybersecurity, Brandon leads the technical vision and development of Rougee’s decentralized ecosystem, bridging art, tech, and freedom of expression."
+      },
+      "andersen": {
+        "role": "Head of Growth and Operations",
+        "bio": "Andersen Scherberger is a veteran music industry professional with over 15 years of experience. He founded a “Best of Miami” award-winning nightclub, hosted countless festivals and events, and managed artists who have performed at major festivals like EDC. His NFT Gallery was featured on CBS’ Destination Miami and solidified partnerships with major crypto brands like Near, Bored Ape Yacht Club, and NFT.com."
+      },
+      "elijah": {
+        "role": "Chairman, Miami-Dade County Cryptocurrency Task Force",
+        "bio": "Elijah John Bowdre chairs the Miami-Dade County Cryptocurrency Task Force and is president and co-founder of the US Crypto Policy Alliance. He authored Florida’s first state blockchain bill, Miami-Dade County’s Blockchain Board ordinance and the City of Miami’s crypto payment policy, hosts the crypto news show TheBitPoint, and was a candidate for Mayor of Miami in 2025."
+      },
+      "teresa": {
+        "role": "CEO & Co-Founder, Like Group Management",
+        "bio": "Teresa Castagnino is CEO and co-founder of Like Group Management, a Tulum-based accelerator and incubator focused on regenerative projects, co-founder of Tulum Crypto Fest, and Head of Forbes México for the Caribbean. With a background in industrial design and architecture, she connects founders, businesses and investors across the Mayan Riviera."
+      },
+      "ghulam": {
+        "role": "Digital Marketing Strategist & Project Manager",
+        "bio": "Dr. Ghulam Abbas is a digital marketing strategist and project manager with a background in healthcare as a qualified homeopathic physician (DHMS) and founder of Eco Cure Clinic. He combines data-driven digital strategy, search-optimized content and cross-functional project management with professional medical knowledge, focusing on organic audience growth, brand positioning and streamlined operational workflows that deliver sustainable, measurable results."
+      },
+      "brenda": {
+        "role": "Journalist, Media & PR",
+        "bio": "Brenda Miranda is a multimedia journalist and anchor at Caplin News at Florida International University and a media contributor at the Kopenhaver Center for Women in Communication. Now based in Tulum, she covers community, wellness, the arts and human-interest stories. She graduates from FIU this fall with a bachelor’s degree in digital communication and media."
+      }
+    }
+  },
+  "regenerate": {
+    "eyebrow": "07 / Regenerate",
+    "title": "Technology should improve<br/><muted>the territory it touches.</muted>",
+    "body": "RougeChain Regenerate connects blockchain infrastructure with real-world community development—funding transparent, measurable local initiatives across ecology, infrastructure, technology, art, and community. Starting in Tulum, project funding, milestones, evidence, and impact can be recorded through RougeChain so progress is visible from capital to outcome.",
+    "explore": "Explore Regenerate",
+    "propose": "Propose a Project"
+  },
+  "finalCta": {
+    "eyebrow": "The next era starts here",
+    "title": "Build on a chain designed<br/>for the post-quantum era.",
+    "explore": "Explore the network",
+    "docs": "Read the docs"
+  },
+  "carousel": {
+    "tabsLabel": "RougeChain possibilities",
+    "previous": "Previous possibility",
+    "next": "Next possibility",
+    "trackLabel": "Scrollable ecosystem use cases",
+    "slideLabel": "{{n}} of {{total}}: {{name}}",
+    "hint": "DRAG / SWIPE OR USE ARROWS",
+    "slides": {
+      "qwalla": {
+        "short": "Qwalla",
+        "label": "HOLD",
+        "headline": "Your assets.<br/>Ready for what’s next.",
+        "body": "Qwalla brings the RougeChain ecosystem into your pocket. Hold XRGE, manage your wallet, and move through the network from one mobile experience.",
+        "primary": "Discover Qwalla"
+      },
+      "swap": {
+        "short": "Swap",
+        "label": "TRADE",
+        "headline": "Trade. Provide liquidity.<br/>Stay onchain.",
+        "body": "Swap assets, discover liquidity, and participate in RougeChain markets through a native DeFi experience built around the network.",
+        "primary": "Explore Swap",
+        "secondary": "View liquidity pools"
+      },
+      "bridge": {
+        "short": "Bridge",
+        "label": "MOVE",
+        "headline": "Move assets between chains.<br/>Bring them into the post-quantum era.",
+        "body": "Move supported assets between RougeChain and connected networks, bringing value from conventional chains into a network designed around post-quantum security.",
+        "technical": "Base mainnet · ETH ↔ qETH · USDC ↔ qUSDC · XRGE",
+        "primary": "Explore Bridge"
+      },
+      "talk": {
+        "short": "Talk",
+        "label": "TALK",
+        "headline": "Your wallet is also<br/>a private identity.",
+        "emphasis": "Message. Email. Encrypt.<br/>Post-quantum communication, wallet to wallet.",
+        "body": "Send post-quantum encrypted messages and email directly between wallet identities. RougeChain turns the wallet into more than a way to transact—it becomes a secure communication layer.",
+        "technical": "ML-KEM-768 key encapsulation · AES-256-GCM authenticated encryption",
+        "primary": "Open Messenger",
+        "secondary": "Explore Mail"
+      },
+      "validate": {
+        "short": "Validate",
+        "label": "VALIDATE",
+        "headline": "Don’t just use the network.<br/>Help secure it.",
+        "body": "From a fresh Linux server to a syncing RougeChain node in one command. Stake at least {{amount}} XRGE, verify your validator status, and start participating directly in network consensus.",
+        "technical": "One-command installer · systemd service · built-in validator status · modest VPS requirements",
+        "primary": "Run a Validator",
+        "secondary": "Explore Validators"
+      },
+      "build": {
+        "short": "Build",
+        "label": "BUILD",
+        "headline": "Built for developers.<br/>Ready for agents.",
+        "emphasis": "Build the application. Build the agent. Connect both to the chain.",
+        "body": "RougeChain was designed for a world where developers build applications and autonomous agents side by side. Use WASM smart contracts and the RougeChain SDK to build onchain software, then give AI agents native MCP tools to understand the network, work across applications, coordinate workflows, and perform authorized onchain actions.",
+        "technical": "WASM smart contracts · RougeChain SDK · native MCP tooling",
+        "primary": "Start Building",
+        "secondary": "Explore MCP for Agents"
+      }
+    },
+    "qwalla": {
+      "caption": "MOBILE WALLET · MAINNET",
+      "imageAlt": "Qwalla wallet application shown in a phone frame",
+      "meta": "POST-QUANTUM WALLET"
+    },
+    "swap": {
+      "label": "Illustrative RougeChain swap interface",
+      "caption": "ILLUSTRATIVE UI · ROUGECHAIN DEX",
+      "title": "SWAP",
+      "network": "MAINNET",
+      "pay": "PAY",
+      "receive": "RECEIVE",
+      "route": "Route",
+      "liquidity": "Liquidity",
+      "amm": "Native AMM",
+      "pools": "POOLS"
+    },
+    "bridge": {
+      "caption": "BASE MAINNET ↔ ROUGECHAIN L1 · SUPPORTED ROUTES",
+      "label": "Supported Base and RougeChain bridge routes",
+      "baseMainnet": "BASE MAINNET",
+      "chain": "CHAIN {{id}}",
+      "bridge": "BRIDGE",
+      "routes": "ROUTES",
+      "rougechainL1": "ROUGECHAIN L1",
+      "pqNetwork": "POST-QUANTUM NETWORK",
+      "asset": "ASSET",
+      "route": "ROUTE",
+      "receive": "RECEIVE",
+      "forward": "BASE → ROUGE",
+      "twoWay": "TWO-WAY",
+      "deposit": "DEPOSIT · LOCK / MINT",
+      "withdraw": "WITHDRAW · RELEASE / REFUND PROTECTION"
+    },
+    "talk": {
+      "caption": "WALLET IDENTITY · PRIVATE COMMUNICATION",
+      "yourIdentity": "YOUR WALLET IDENTITY",
+      "messenger": "MESSENGER",
+      "encrypted": "ENCRYPTED",
+      "incoming": "Are you joining the validator call?",
+      "you": "YOU",
+      "outgoing": "Yep — sending the notes now.",
+      "mail": "MAIL",
+      "from": "FROM",
+      "subject": "SUBJECT",
+      "subjectValue": "Validator proposal",
+      "encryptedFor": "ENCRYPTED FOR",
+      "kem": "KEY ENCAPSULATION",
+      "aead": "AUTHENTICATED ENCRYPTION"
+    },
+    "validate": {
+      "live": "LIVE NETWORK DATA",
+      "stale": "STALE NETWORK READ",
+      "snapshot": "SAVED NETWORK SNAPSHOT",
+      "caption": "VALIDATOR OPERATOR VIEW · {{state}}",
+      "label": "RougeChain validator operator dashboard and setup flow",
+      "validator": "ROUGECHAIN VALIDATOR",
+      "ready": "Ready to participate.",
+      "operatorFlow": "OPERATOR FLOW",
+      "targetStatus": "TARGET STATUS",
+      "producing": "Producing blocks",
+      "check": "The built-in <code>validator-status</code> check confirms each prerequisite before you go live.",
+      "minStake": "MINIMUM STAKE",
+      "peers": "NETWORK PEERS",
+      "latestBlock": "LATEST BLOCK",
+      "networkHeight": "NETWORK HEIGHT",
+      "setup": "SETUP",
+      "installer": "ONE-COMMAND INSTALLER",
+      "steps": {
+        "install": {
+          "title": "Install node",
+          "detail": "Dependencies, build, systemd service"
+        },
+        "stake": {
+          "title": "Fund & stake",
+          "detail": "Stake at least {{amount}} XRGE"
+        },
+        "verify": {
+          "title": "Verify status",
+          "detail": "Funded · Staked · Active set"
+        },
+        "produce": {
+          "title": "Produce blocks",
+          "detail": "Start participating in consensus"
+        }
+      },
+      "validators": "VALIDATORS {{n}}",
+      "publicRead": "PUBLIC READ · {{state}}"
+    },
+    "build": {
+      "caption": "REAL SDK + MCP INTEGRATION · MAINNET",
+      "label": "Terminal typing a RougeChain SDK and MCP integration",
+      "footer": "SDK · WASM CONTRACTS · MCP · LOCAL ML-DSA-65 SIGNING"
+    }
+  },
+  "architecture": {
+    "eyebrow": "Ecosystem / Architecture proposal",
+    "title": "One identity.<br/><muted>Independent applications.</muted>",
+    "lead": "Shared foundations connect the ecosystem. Each application owns its routes, deployment and release cycle.",
+    "status": "POC topology · No host migration",
+    "seeWallet": "See the wallet-provider architecture ↓",
+    "comingSoon": "{{name}} · Coming soon",
+    "destinations": {
+      "eyebrow": "01 / Proposed destinations",
+      "title": "A network of applications.",
+      "root": "Marketing · discovery · global Apps menu",
+      "proposed": "Proposed destination · {{status}}"
+    },
+    "beyond": {
+      "eyebrow": "02 / Beyond applications",
+      "title": "Different questions. Clear destinations.",
+      "build": "Build",
+      "community": "Community",
+      "utilities": "Utilities",
+      "buildQuestion": "What can I build?",
+      "communityQuestion": "Where can I participate?",
+      "utilitiesQuestion": "What can I inspect?",
+      "note": "The marketing navigation introduces the project. Apps groups applications under Hold, Trade, Play, Talk and Explore. Local navigation belongs to the current dApp. The workspace launcher opens applications plus tools such as Build, Security and Network."
+    },
+    "wallet": {
+      "eyebrow": "03 / Shared wallet architecture",
+      "title": "One identity. A reviewed provider boundary.",
+      "lead": "Each dApp consumes a common wallet-provider contract rather than owning private keys itself.",
+      "figureLabel": "Proposed wallet-provider architecture",
+      "extension": "RougeChain Browser Wallet",
+      "extensionNote": "Extension provider candidate",
+      "qwallaNote": "Mobile / dApp browser candidate",
+      "contractNote": "Proposed contract · account · network · permissions",
+      "caption": "Conceptual production architecture. Final provider and security design belongs to the lead developer.",
+      "demonstratesTitle": "What the POC demonstrates",
+      "demonstrates1": "WalletProvider shares the real browser wallet across routes and workspace previews, through @rougechain/core: the same storage keys, vault format and signing as the current rougechain.io.",
+      "demonstrates2": "It is single-origin: this does not prove cross-origin wallet connectivity for separately hosted apps.",
+      "evaluateTitle": "What production must evaluate",
+      "evaluate1": "RougeChain browser extension, Qwalla and an authoritative web wallet origin are provider candidates.",
+      "evaluate2": "Connection, account/network state and transaction permissions need a reviewed contract. No signing or transaction methods are implemented here.",
+      "noteTitle": "Wallet identity/provider ≠ raw private-key storage",
+      "note": "localStorage does not cross origins/subdomains. The future provider strategy must not attempt to share raw vault storage between dApps. Preserve access to existing vaults until a deliberate migration is approved."
+    },
+    "boundaries": {
+      "eyebrow": "04 / Boundaries",
+      "title": "Share the language. Own the product.",
+      "implementedTitle": "Implemented in this POC",
+      "brand": "@rougechain/brand — tokens and identity",
+      "ui": "@rougechain/ui — primitives and RougeAppShell",
+      "chainReadonly": "@rougechain/chain-readonly — allowlisted GET data",
+      "showcase": "Showcase owns the ecosystem registry, routes and workspace previews.",
+      "proposedTitle": "Proposed production packages",
+      "walletProvider": "@rougechain/wallet-provider requires a separately approved trust and origin architecture.",
+      "independent": "Independent deployments consume versioned packages. No shared runtime server is required for this POC."
+    },
+    "transition": {
+      "eyebrow": "05 / Transition",
+      "title": "Move deliberately.",
+      "steps": {
+        "1": "Adopt shared brand and UI tokens in one existing surface.",
+        "2": "Extract the app shell and navigation registry with ownership agreed.",
+        "3": "Pilot Explorer on its own host with verified data contracts.",
+        "4": "Move Swap only after wallet, signing and origin boundaries are approved.",
+        "5": "Redirect old paths only after each destination is deployed and stable."
+      },
+      "note": "The global switcher crosses applications and hosts. Local navigation stays inside the current application. POC routes demonstrate these boundaries on one origin.",
+      "originTitle": "Wallet origin boundary",
+      "origin": "localStorage is origin-scoped. Wallet material on rougechain.io will not automatically transfer to wallet.rougechain.io. A wallet-provider design, migration policy and security review are required before any split. This POC never reads or stores wallet material."
+    }
+  }
+}

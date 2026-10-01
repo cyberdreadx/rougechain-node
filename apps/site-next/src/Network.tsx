@@ -13,16 +13,23 @@ import {
 } from "@rougechain/chain-readonly";
 import { Status, Metric, Button } from "@rougechain/ui";
 import { RefreshCw } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { useChain } from "./explorer/chain";
+import { fmtDateTime, fmtInt } from "./i18n/format";
 function useNetworkData() {
-  const [mode, setMode] = useState<"LIVE" | "DEMO">("LIVE");
+  const chain = useChain();
+  // The saved snapshot is a MAINNET capture: it is never offered for another network.
+  const snapshotAllowed = chain.network === "mainnet";
+  const [requestedMode, setMode] = useState<"LIVE" | "DEMO">("LIVE");
+  const mode = snapshotAllowed ? requestedMode : "LIVE";
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15000);
     return () => window.clearInterval(timer);
   }, []);
   const query = useQuery({
-    queryKey: ["network"],
-    queryFn: getNetwork,
+    queryKey: ["network", chain.network],
+    queryFn: () => getNetwork(chain.network),
     enabled: mode === "LIVE",
     retry: false,
     networkMode: "always",
@@ -30,18 +37,24 @@ function useNetworkData() {
     refetchInterval: 60000,
     refetchOnWindowFocus: true,
   });
-  const state = deriveNetworkState({
+  const derived = deriveNetworkState({
     mode,
     loading: query.isPending,
     error: query.isError,
     hasData: !!query.data,
     expired: !!query.data && now - query.dataUpdatedAt > 90000,
   });
+  const state: "demo" | "loading" | "stale" | "live" | "unavailable" =
+    derived === "demo" && !snapshotAllowed ? "unavailable" : derived;
   const data =
-    mode === "DEMO" || (!query.data && query.isError)
+    state === "demo"
       ? demoSnapshot
-      : query.data;
+      : state === "unavailable"
+        ? undefined
+        : query.data;
   return {
+    network: chain.config,
+    snapshotAllowed,
     mode,
     setMode,
     data,
@@ -65,29 +78,42 @@ export function useNetwork() {
   if (!context) throw new Error("NetworkProvider is required");
   return context;
 }
+/** Header status pill: data state + network name ("Live API · Mainnet"). */
+export function NetworkStatus() {
+  const n = useNetwork();
+  const { t } = useTranslation("common");
+  return (
+    <Status state={n.state}>
+      {t(`network.state.${n.state}`)} · {t(`network.names.${n.network.id}`)}
+    </Status>
+  );
+}
 export function NetworkControls() {
   const n = useNetwork();
+  const { t } = useTranslation("common");
   return (
     <div className="network-controls">
-      <div className="mode-switch" aria-label="Network data mode">
+      <div className="mode-switch" aria-label={t("network.controls.mode")}>
         <Button
           variant={n.mode === "LIVE" ? "secondary small" : "ghost small"}
           aria-pressed={n.mode === "LIVE"}
           onClick={() => n.setMode("LIVE")}
         >
-          Live data
+          {t("network.controls.live")}
         </Button>
-        <Button
-          variant={n.mode === "DEMO" ? "secondary small" : "ghost small"}
-          aria-pressed={n.mode === "DEMO"}
-          onClick={() => n.setMode("DEMO")}
-        >
-          Snapshot
-        </Button>
+        {n.snapshotAllowed && (
+          <Button
+            variant={n.mode === "DEMO" ? "secondary small" : "ghost small"}
+            aria-pressed={n.mode === "DEMO"}
+            onClick={() => n.setMode("DEMO")}
+          >
+            {t("network.controls.snapshot")}
+          </Button>
+        )}
       </div>
       <Button
         variant="ghost icon"
-        aria-label="Refresh network data"
+        aria-label={t("network.controls.refresh")}
         disabled={n.mode === "DEMO" || n.isFetching}
         onClick={n.refresh}
       >
@@ -98,49 +124,48 @@ export function NetworkControls() {
 }
 export function DataNote() {
   const n = useNetwork();
+  const { t } = useTranslation("common");
+  const sentences = [
+    n.error && n.mode === "LIVE"
+      ? t("network.note.unavailable", {
+          network: t(`network.names.${n.network.id}`),
+        })
+      : "",
+    n.data
+      ? t(n.state === "demo" ? "network.note.captured" : "network.note.lastRead", {
+          date: fmtDateTime(n.data.capturedAt),
+        })
+      : "",
+    n.state === "live" ? t("network.note.liveness") : "",
+  ].filter(Boolean);
   return (
     <div className="data-note" role="status">
-      <Status state={n.state}>
-        {n.state === "live"
-          ? "Live API data"
-          : n.state === "demo"
-            ? "Demo · saved snapshot"
-            : n.state === "stale"
-              ? "Stale · last successful read"
-              : "Loading network data"}
-      </Status>
-      <span>
-        {n.error && n.mode === "LIVE" ? "Network data unavailable. " : ""}
-        {n.data
-          ? `${n.state === "demo" ? "Captured" : "Last read"} ${new Date(n.data.capturedAt).toLocaleString()}.`
-          : ""}{" "}
-        {n.state === "live"
-          ? "API reachability does not establish chain liveness."
-          : ""}
-      </span>
+      <Status state={n.state}>{t(`network.dataState.${n.state}`)}</Status>
+      <span>{sentences.join(" ")}</span>
     </div>
   );
 }
 export function NetworkMetrics() {
   const n = useNetwork();
+  const { t } = useTranslation("common");
   return (
     <div className="metrics">
       <Metric
-        label="Block height"
-        value={n.data?.height.toLocaleString() ?? "—"}
+        label={t("network.metrics.height")}
+        value={n.data ? fmtInt(n.data.height) : "—"}
       />
-      <Metric label="Validators reported" value={n.data?.validators ?? "—"} />
-      <Metric label="Connected peers" value={n.data?.peers ?? "—"} />
       <Metric
-        label="Data source"
+        label={t("network.metrics.validators")}
+        value={n.data ? fmtInt(n.data.validators) : "—"}
+      />
+      <Metric
+        label={t("network.metrics.peers")}
+        value={n.data ? fmtInt(n.data.peers) : "—"}
+      />
+      <Metric
+        label={t("network.metrics.source")}
         value={
-          <Status state={n.state}>
-            {n.state === "live"
-              ? "Live API"
-              : n.state === "demo"
-                ? "Snapshot"
-                : n.state}
-          </Status>
+          <Status state={n.state}>{t(`network.source.${n.state}`)}</Status>
         }
       />
     </div>

@@ -1,0 +1,424 @@
+{
+  "meta": {
+    "title": "RougeChain — Post-quantum from genesis.",
+    "description": "RougeChain — a post-quantum Layer 1 blockchain built on NIST-standardized lattice cryptography.",
+    "explorerTitle": "RougeChain Explorer — blocks, transactions, addresses and tokens",
+    "explorerDescription": "Explore RougeChain, the post-quantum Layer 1: blocks, transactions, addresses, tokens, NFTs and contracts."
+  },
+  "language": {
+    "label": "Language"
+  },
+  "loading": "Loading…",
+  "skipToContent": "Skip to content",
+  "ui": {
+    "closeDialog": "Close dialog",
+    "designDemo": "DESIGN DEMO"
+  },
+  "header": {
+    "mainNav": "Main navigation",
+    "docs": "Docs",
+    "localNav": "{{name}} navigation",
+    "workspace": "Workspace"
+  },
+  "sections": {
+    "technology": "Technology",
+    "build": "Build",
+    "security": "Security",
+    "ecosystem": "Ecosystem",
+    "regenerate": "Regenerate",
+    "explore": "Explore"
+  },
+  "footer": {
+    "tagline": "Built for what comes next.",
+    "docs": "Documentation",
+    "community": "Community",
+    "designSystem": "Design system",
+    "architecture": "Architecture",
+    "motto": "Post-quantum from genesis."
+  },
+  "explorerSite": {
+    "wordmark": "RougeChain Explorer",
+    "tagline": "Every block, transaction and address on RougeChain."
+  },
+  "notFound": {
+    "title": "Page not found.",
+    "body": "Use Apps to explore the available review routes.",
+    "home": "Return to RougeChain",
+    "explorerBody": "Search for a block, transaction, address, token or contract.",
+    "explorerHome": "Explorer home"
+  },
+  "projectNav": {
+    "label": "Project navigation",
+    "title": "Explore RougeChain",
+    "sections": "Project sections",
+    "home": "RougeChain Home",
+    "walletConnected": "Wallet connected · {{address}}",
+    "walletDisconnected": "Wallet disconnected · use Connect Wallet in the header."
+  },
+  "switcher": {
+    "apps": "Apps",
+    "dialog": "RougeChain apps",
+    "home": "RougeChain home",
+    "closeLabel": "Close apps",
+    "close": "Close",
+    "localNav": "{{name}} mobile navigation",
+    "global": "Global applications",
+    "comingSoon": "Coming soon",
+    "extensionLabel": "RougeChain Wallet Extension ↗",
+    "workspace": "Full workspace"
+  },
+  "appStatus": {
+    "live": "Live",
+    "preview": "Preview",
+    "demo": "Demo",
+    "external": "External",
+    "future": "Planned"
+  },
+  "appGroups": {
+    "Hold": "Hold",
+    "Trade": "Trade",
+    "Play": "Play",
+    "Talk": "Talk",
+    "Explore": "Explore",
+    "Build": "Build",
+    "Community": "Community"
+  },
+  "appNav": {
+    "wallet": "Wallet",
+    "settings": "Settings",
+    "swap": "Swap",
+    "pools": "Pools",
+    "positions": "Positions",
+    "overview": "Overview",
+    "blocks": "Blocks",
+    "transactions": "Transactions",
+    "tokens": "Tokens",
+    "nfts": "NFTs",
+    "contracts": "Contracts",
+    "bridgeActivity": "Bridge",
+    "validators": "Validators",
+    "genesis": "Genesis program",
+    "status": "Status"
+  },
+  "apps": {
+    "qwalla": {
+      "name": "Qwalla Mobile Wallet",
+      "description": "Explore the Qwalla ecosystem."
+    },
+    "wallet": {
+      "name": "Web Wallet",
+      "description": "Your assets, secured for tomorrow."
+    },
+    "wallet-extension": {
+      "name": "Wallet Extension",
+      "description": "RougeChain Wallet browser extension."
+    },
+    "rougee": {
+      "name": "Rougee",
+      "description": "Discover Rougee."
+    },
+    "qwave": {
+      "name": "qWave",
+      "description": "Discover qWave."
+    },
+    "arcade": {
+      "name": "Arcade",
+      "description": "Games coming soon."
+    },
+    "messenger": {
+      "name": "Messenger",
+      "description": "Post-quantum encrypted chats, groups and payments."
+    },
+    "mail": {
+      "name": "Mail",
+      "description": "Encrypted mail at @rouge.quant and @qwalla.mail."
+    },
+    "swap": {
+      "name": "Swap",
+      "description": "Exchange assets. Explore possibilities."
+    },
+    "bridge": {
+      "name": "Bridge",
+      "description": "A connection between networks."
+    },
+    "liquidity": {
+      "name": "Liquidity",
+      "description": "Provide liquidity and earn swap fees."
+    },
+    "explorer": {
+      "name": "Explorer",
+      "description": "The network, in detail."
+    },
+    "validators": {
+      "name": "Validators",
+      "description": "The participants securing the network."
+    },
+    "network": {
+      "name": "Network Status",
+      "description": "Read-only public API telemetry."
+    },
+    "build": {
+      "name": "Developer Portal",
+      "description": "Tools to build on RougeChain."
+    },
+    "docs": {
+      "name": "Documentation",
+      "description": "Read the current documentation."
+    },
+    "sdk": {
+      "name": "SDK",
+      "description": "Developer tooling preview."
+    },
+    "mcp": {
+      "name": "MCP / Agents",
+      "description": "Let AI agents read and use the chain."
+    },
+    "node": {
+      "name": "Run a Node",
+      "description": "Commands, prerequisites and live nodes."
+    },
+    "regenerate": {
+      "name": "Regenerate",
+      "description": "Discover the community mission."
+    },
+    "community": {
+      "name": "RougeChain Community",
+      "description": "Connect with the community."
+    }
+  },
+  "network": {
+    "names": {
+      "mainnet": "Mainnet",
+      "testnet": "Testnet"
+    },
+    "state": {
+      "live": "Live API",
+      "demo": "demo",
+      "loading": "loading",
+      "stale": "stale",
+      "unavailable": "unavailable"
+    },
+    "dataState": {
+      "live": "Live API data",
+      "demo": "Demo · saved snapshot",
+      "stale": "Stale · last successful read",
+      "unavailable": "Unavailable",
+      "loading": "Loading network data"
+    },
+    "source": {
+      "live": "Live API",
+      "demo": "Snapshot",
+      "unavailable": "Unavailable",
+      "loading": "loading",
+      "stale": "stale"
+    },
+    "controls": {
+      "mode": "Network data mode",
+      "live": "Live data",
+      "snapshot": "Snapshot",
+      "refresh": "Refresh network data"
+    },
+    "note": {
+      "unavailable": "{{network}} data unavailable.",
+      "captured": "Captured {{date}}.",
+      "lastRead": "Last read {{date}}.",
+      "liveness": "API reachability does not establish chain liveness."
+    },
+    "metrics": {
+      "height": "Block height",
+      "validators": "Validators reported",
+      "peers": "Connected peers",
+      "source": "Data source"
+    }
+  },
+  "workspacePage": {
+    "eyebrow": "Your ecosystem / Workspace",
+    "title": "Make room for possibility.",
+    "lead": "Open an app. Bring the network into focus.",
+    "unknownPreview": "That preview is not available. Choose an app below."
+  },
+  "explore": {
+    "eyebrow": "08 / Explore RougeChain",
+    "title": "Explore RougeChain",
+    "subtitle": "The network. The tools. The possibilities. Make it your own.",
+    "openWorkspace": "Open full workspace",
+    "paneNote": "Start with three panes. Open more from the launcher."
+  },
+  "workspace": {
+    "views": {
+      "Network": "Network",
+      "Explorer": "Explorer",
+      "Ecosystem": "Ecosystem",
+      "Wallet": "Wallet",
+      "Swap": "Swap",
+      "Bridge": "Bridge",
+      "Messenger": "Messenger",
+      "Mail": "Mail",
+      "Validators": "Validators",
+      "Build": "Build",
+      "Security": "Security"
+    },
+    "groups": {
+      "Network": "Network",
+      "Use": "Use",
+      "Trade": "Trade",
+      "Build": "Build"
+    },
+    "state": {
+      "notOpened": "Not opened",
+      "hidden": "Hidden",
+      "focused": "Focused",
+      "open": "Open"
+    },
+    "launcher": "Workspace launcher",
+    "developer": "Developer",
+    "openView": "Open {{name}}",
+    "hideView": "Hide {{name}}",
+    "panels": "Workspace panels",
+    "reset": "Reset workspace",
+    "compactNote": "Compact workspace · Panel state lasts for this visit.",
+    "unavailable": "Workspace unavailable. Use the compact workspace below.",
+    "toolbar": "OPEN · ARRANGE · TAB · FOCUS · HIDE · RESTORE",
+    "interactive": "Interactive view",
+    "simple": "Simple view"
+  },
+  "dock": {
+    "menu": "Panel menu",
+    "menuFor": "{{name}} panel menu",
+    "panel": "{{name}} panel",
+    "openApp": "Open full app",
+    "restoreLayout": "Restore layout",
+    "maximize": "Maximize",
+    "newColumn": "Move to new column",
+    "dock": "Dock",
+    "float": "Float",
+    "hide": "Hide",
+    "close": "Close",
+    "restoreView": "Restore {{name}}",
+    "maximizeView": "Maximize {{name}}",
+    "closeView": "Close {{name}}",
+    "dockToMaximize": "Dock this panel to maximize it",
+    "maximizePanel": "Maximize panel",
+    "hideTitle": "Hide panel (restore from the launcher)",
+    "watermark": "Choose an app in the launcher to restore your workspace.",
+    "status": {
+      "mainnet": "MAINNET",
+      "open_one": "{{count}} OPEN",
+      "open_other": "{{count}} OPEN",
+      "saveOn": "LAYOUT AUTO-SAVE ON",
+      "saveOff": "LAYOUT STORAGE UNAVAILABLE"
+    },
+    "overview": "Overview",
+    "region": "Explore RougeChain interactive workspace"
+  },
+  "block": {
+    "title": "Block #{{height}}",
+    "liveAtSelection": "Live API at selection",
+    "dataAtSelection": "{{source}} data at selection",
+    "hash": "Hash",
+    "transactions": "Transactions",
+    "timestamp": "Timestamp",
+    "note": "Captured from the current block list. No detail endpoint requested.",
+    "openExplorer": "Open full Explorer"
+  },
+  "views": {
+    "network": {
+      "kicker": "ROUGECHAIN MAINNET",
+      "connected": "API connected",
+      "latest": "LATEST REPORTED BLOCK",
+      "validators": "Validators",
+      "noteDemo": "Saved public API snapshot.",
+      "noteLive": "A read-only view of public network data.",
+      "noteStale": "Last successful data; refresh unavailable.",
+      "noteLoading": "Requesting public network data."
+    },
+    "explorer": {
+      "kicker": "LATEST BLOCKS",
+      "open": "Open Explorer",
+      "txs_one": "{{count}} tx",
+      "txs_other": "{{count}} txs",
+      "loading": "Loading network data…",
+      "publicData": "Public GET data",
+      "note": "Inspect the network, without connecting a wallet."
+    },
+    "ecosystem": {
+      "intro": "Your ecosystem. One workspace.",
+      "openPreview": "Open preview",
+      "architecture": "Explore ecosystem architecture"
+    },
+    "build": {
+      "intro": "Build on a new foundation.",
+      "sdk": "SDK & documentation",
+      "wasm": "WASM contracts",
+      "agents": "MCP / Agents & Run a Node",
+      "source": "Source code"
+    },
+    "security": {
+      "intro": "Post-quantum primitives.",
+      "signatures": "Post-quantum signatures",
+      "kem": "Post-quantum key encapsulation",
+      "aead": "Authenticated encryption",
+      "hashing": "Hashing / proof commitments",
+      "stack": "The cryptographic stack"
+    }
+  },
+  "previews": {
+    "account": "Account: {{address}}",
+    "noWallet": "No wallet connected.",
+    "compose": "Compose unavailable",
+    "developer": "SDK · WASM · MCP / Agents · Run a Node",
+    "wallet": {
+      "connected": "Wallet connected",
+      "locked": "Wallet locked",
+      "none": "No wallet",
+      "title": "Your assets",
+      "unlock": "Unlock your wallet to see balances.",
+      "open": "Open Wallet",
+      "note": "Keys stay in this browser; signing happens on the Wallet page."
+    },
+    "swap": {
+      "status": "Synthetic quote",
+      "title": "Swap assets",
+      "connect": "Connect Wallet in the header to use your identity.",
+      "pay": "Pay",
+      "receive": "Receive",
+      "unavailable": "Swap unavailable",
+      "note": "Illustrative rate. No quote or transaction service.",
+      "open": "Open full Swap"
+    },
+    "bridge": {
+      "status": "Bridge preview",
+      "reverse": "Reverse direction",
+      "assets": "Assets",
+      "activity": "Bridge activity",
+      "unavailable": "Bridge unavailable",
+      "note": "No approvals, deposits or withdrawals."
+    },
+    "messenger": {
+      "status": "Messenger preview",
+      "conversations": "Conversations",
+      "contacts": "Contacts",
+      "noContacts": "No contacts yet",
+      "yours": "Your conversations",
+      "connected": "Wallet connected. Messaging is not available on this site yet.",
+      "disconnected": "No account connected. Messages would appear here.",
+      "note": "No messages sent or encryption performed."
+    },
+    "mail": {
+      "status": "Mail preview",
+      "inbox": "Inbox",
+      "sent": "Sent",
+      "empty": "{{folder}} is empty",
+      "noAccount": "No mail account connected.",
+      "note": "No mail is fetched or sent."
+    },
+    "validators": {
+      "title": "Network validators",
+      "connected": "Wallet connected · no staking account loaded",
+      "reported": "Reported by the public API · mainnet",
+      "nodeDocs": "Run a node documentation",
+      "staking": "Staking architecture proposal",
+      "unavailable": "Stake unavailable"
+    }
+  }
+}

@@ -32,8 +32,8 @@ Content-Type: application/json
 | `amount` | number | Yes | Amount to send |
 | `token` | string | No | Token symbol (default: "XRGE") |
 
-> **Fee:** The transaction fee is enforced by the server; any client-supplied `fee` in
-> the payload is ignored.
+> **Fee:** The transaction fee is fixed at **1 XRGE** and enforced by the server; any
+> client-supplied `fee` in the payload is ignored.
 >
 > **Security:** Private keys never leave your application. The transaction is signed client-side using ML-DSA-65 and the server verifies the signature before processing.
 
@@ -42,16 +42,18 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "txId": "abc123..."
+  "message": "Transfer transaction submitted"
 }
 ```
+
+The response does not include a transaction id.
 
 ### Error Response
 
 ```json
 {
   "success": false,
-  "error": "insufficient balance: have 50.0000 XRGE, need 100.1000 XRGE"
+  "error": "insufficient XRGE balance: have 50.0000, need 101.0000"
 }
 ```
 
@@ -95,7 +97,7 @@ snake_case.
           "to_pub_key_hex": "def...",
           "amount": 100
         },
-        "fee": 0.1,
+        "fee": 1.0,
         "sig": "ghi..."
       }
     }
@@ -137,7 +139,7 @@ known but not yet executed). The example below is a real mainnet transfer
       "amount": 50,
       "token_name": "XRGE"
     },
-    "fee": 0.001,
+    "fee": 1.0,
     "sig": "…",
     "signed_payload": "{…}"
   },
@@ -149,7 +151,7 @@ known but not yet executed). The example below is a real mainnet transfer
     "tx_type": "transfer",
     "from": "df255dbd…",
     "status": "Success",
-    "fee_paid": 0.001,
+    "fee_paid": 1.0,
     "timestamp": 1790297628272,
     "logs": [
       { "event_type": "transfer", "data": { "amount": 50, "to": "rouge1cd3mkuu…", "token": "XRGE" } }
@@ -186,7 +188,7 @@ Returns execution receipt for contract calls and other complex transactions.
 
 ## Request Faucet (v2)
 
-Get free testnet XRGE tokens.
+Get free testnet XRGE tokens. The faucet is only enabled on test networks; elsewhere it returns `403`.
 
 ```http
 POST /api/v2/faucet
@@ -212,16 +214,13 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "amount": 1000,
-  "txId": "abc123..."
+  "message": "Faucet: 10000 XRGE sent"
 }
 ```
 
-### Rate Limit
+### Limits
 
-The faucet has additional rate limiting:
-- 1 request per address per hour
-- Whitelisted addresses bypass rate limits
+The faucet refuses a request with `429` while you already have a faucet transfer pending, if your balance is already above the faucet threshold, or during the 24-hour per-key cooldown (shared with `POST /api/faucet`; the response then also carries `retryAfterSecs`). When the node sets `--faucet-whitelist`, keys that are not listed get `403`.
 
 ---
 
@@ -229,8 +228,7 @@ The faucet has additional rate limiting:
 
 | Type | Description |
 |------|-------------|
-| `transfer` | Standard XRGE or token transfer |
-| `faucet` | Faucet distribution |
+| `transfer` | Standard XRGE or token transfer (faucet payouts are `transfer`s with `payload.faucet = true`) |
 | `stake` | Stake tokens to become validator |
 | `unstake` | Unstake tokens |
 | `create_token` | Create custom token |

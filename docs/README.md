@@ -52,7 +52,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **SDK** | `@rougechain/sdk` npm package for building dApps |
 | **EIP-1559 Dynamic Fees** | Base fee auto-adjusts per block, fee burning for deflationary pressure |
 | **Token Mint Authority** | Ongoing minting for custom tokens with supply cap enforcement |
-| **Validator Slashing** | Slash penalties for misbehavior, unbonding queue with 500-block delay |
+| **Validator Unbonding** | Unbonding queue with 500-block delay. Missed-block auto-slashing has been frozen since proposer selection activated (block 100); equivocation slashing is planned, not live |
 | **Finality** | Verified BFT finality (FINALITY_V2) is live since block 150: every block carries its parent's ≥⅔-stake certificate — see [Finality](staking/finality.md) |
 | **WebSocket Subscriptions** | Topic-based real-time event streaming (blocks, txs, accounts, tokens) |
 | **HD Wallet Derivation** | BIP-44-like PQC key derivation from master seed (HMAC-SHA256) |
@@ -94,7 +94,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | Role | How it works |
 |------|-------------|
 | **Gas Token** | Every transaction pays fees in XRGE. 50% of the base fee is burned; the remaining tip pool is split proposer 20% / validators 70% (stake-weighted) / treasury 10%. |
-| **Staking Primitive** | Validators must stake XRGE to propose blocks. More stake = more proposals = more rewards. |
+| **Staking Primitive** | Validators must stake XRGE to propose blocks. Each block's designated proposer is the eligible validator with the most stake; every staked validator earns a stake-weighted share of fees, whoever proposes. |
 | **DeFi Base Pair** | AMM liquidity pools trade against XRGE. It's the default quote currency on the built-in DEX. |
 | **Bridge Asset** | XRGE exists on both RougeChain (native) and Base (ERC-20) via the cross-chain bridge. |
 
@@ -129,10 +129,10 @@ authorization on the Base side. The post-quantum **V3** XRGE bridge is built but
 
 | Action | Fee |
 |--------|-----|
-| Transfer | ~0.1 XRGE (base fee, adjusts per block) |
+| Transfer | 1 XRGE (fixed for wallet/API-signed transfers) |
 | Token Creation | 100 XRGE |
 | Pool Creation | 10 XRGE |
-| Swap | 0.3% (to LPs) |
+| Swap | 0.3% of input (to LPs) + 1 XRGE |
 | Minimum Stake | 10,000 XRGE |
 | Unbonding Period | 500 blocks |
 

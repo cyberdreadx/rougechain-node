@@ -22,10 +22,13 @@ Response:
 ```json
 {
   "success": true,
-  "amount": 10000,
-  "txId": "abc123..."
+  "txId": "abc123...",
+  "tx": { "...": "the faucet transfer (TxV1)" },
+  "error": null
 }
 ```
+
+The signed `POST /api/v2/faucet` endpoint (used by the SDK) instead returns `{ "success": true, "message": "Faucet: 10000 XRGE sent" }`, without a transaction id.
 
 ## Rate Limits
 
@@ -33,11 +36,11 @@ Response:
 |-----------|-------|
 | Per address | 1 request / 24 hours |
 
-There is no per-IP rate limit. A request is also rejected if the recipient already has a pending faucet transaction, or if their balance exceeds the faucet threshold.
+The cooldown is shared by `POST /api/faucet` and `POST /api/v2/faucet` (one claim per key per 24 hours, whichever endpoint is used) and starts only after a successful payout. There is no per-IP rate limit. A request is also rejected if the recipient already has a pending faucet transaction, or if their balance exceeds the faucet threshold.
 
 ## Whitelisting
 
-The whitelist **gates** faucet access — it does not grant a higher rate. When `QV_FAUCET_WHITELIST` is set, only the listed addresses may use the faucet; everyone else is blocked. Leave it unset to allow any address (subject to the 24-hour cooldown).
+The whitelist **gates** faucet access — it does not grant a higher rate. When `QV_FAUCET_WHITELIST` is set, only the listed addresses may use the faucet (both `/api/faucet` and the signed `/api/v2/faucet`, which returns `403`); everyone else is blocked. Leave it unset to allow any address (subject to the 24-hour cooldown).
 
 ```bash
 # Start node with the faucet enabled and a whitelist

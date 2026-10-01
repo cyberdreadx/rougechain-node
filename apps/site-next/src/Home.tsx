@@ -11,9 +11,10 @@ import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { Section, Status, TextLink } from "@rougechain/ui";
 import { GITHUB } from "./Shell";
 import { NetworkMetrics, DataNote } from "./Network";
-import Explore from "./explore/Explore";
 import MarketingSections from "./MarketingSections";
+import { Trans, useTranslation } from "react-i18next";
 export default function Home() {
+  const { t } = useTranslation("marketing");
   const reduced = useReducedMotion();
   const page = useRef<HTMLElement>(null);
   // Page scroll starts at the first pixel, including the header above the hero.
@@ -32,31 +33,34 @@ export default function Home() {
             transition={{ duration: 0.5 }}
           >
             <div className="hero-kicker">
-              <Status state="demo">Mainnet</Status>
+              <Status state="demo">{t("hero.status")}</Status>
               <span className="kicker-sep" />
-              <span className="mono muted">A NEW CRYPTOGRAPHIC FOUNDATION</span>
+              <span className="mono muted">{t("hero.kicker")}</span>
             </div>
             <h1>
-              Post-quantum
-              <br />
-              <span className="gradient-text">from genesis.</span>
+              <Trans
+                t={t}
+                i18nKey="hero.title"
+                components={{ br: <br />, grad: <span className="gradient-text" /> }}
+              />
             </h1>
             <p>
-              A programmable Layer 1 built around
-              <br className="desktop" /> NIST-standardized post-quantum
-              cryptography.
-              <br className="desktop" /> The next era starts at the foundation.
+              <Trans
+                t={t}
+                i18nKey="hero.lead"
+                components={{ dbr: <br className="desktop" /> }}
+              />
             </p>
             <div className="actions">
               <a className="button" href="#explore">
-                Explore RougeChain <ArrowRight size={16} />
+                {t("hero.explore")} <ArrowRight size={16} />
               </a>
               <a className="button outline" href="#build">
-                Start building
+                {t("hero.build")}
               </a>
             </div>
             <div className="hero-links">
-              <TextLink href={WHITEPAPER_URL}>Whitepaper</TextLink>
+              <TextLink href={WHITEPAPER_URL}>{t("hero.whitepaper")}</TextLink>
               <TextLink href={GITHUB}>GitHub</TextLink>
             </div>
           </motion.div>
@@ -97,42 +101,39 @@ export default function Home() {
               />
             </motion.svg>
             <img className="hero-mark" src="/xrge-logo.webp" alt="" />
-            <span className="art-caption mono">
-              01 / CRYPTOGRAPHY, RECONSIDERED
-            </span>
             <span className="art-coordinate mono">ML-DSA-65 · ML-KEM-768</span>
           </div>
         </div>
         <div className="container hero-foot">
-          <span className="mono">DESIGNED FOR A DIFFERENT FUTURE</span>
+          <span className="mono">{t("hero.designedFor")}</span>
           <a href="#technology" className="mono muted">
-            DISCOVER THE FOUNDATION ↓
+            {t("hero.discover")}
           </a>
         </div>
       </section>
       <section className="proof">
         <div className="container proof-grid">
           <div>
-            <span className="proof-label">SIGNATURES</span>
+            <span className="proof-label">{t("proof.signatures")}</span>
             <strong>ML-DSA-65</strong>
             <span>FIPS 204</span>
           </div>
           <div>
-            <span className="proof-label">KEY ENCAPSULATION</span>
+            <span className="proof-label">{t("proof.kem")}</span>
             <strong>ML-KEM-768</strong>
             <span>FIPS 203</span>
           </div>
           <div>
-            <span className="proof-label">SMART CONTRACTS</span>
+            <span className="proof-label">{t("proof.contracts")}</span>
             <strong>WASM</strong>
-            <span>Programmable by design</span>
+            <span>{t("proof.programmable")}</span>
           </div>
           <a href="/explorer">
-            <span className="proof-label">SEE THE NETWORK</span>
+            <span className="proof-label">{t("proof.seeNetwork")}</span>
             <strong>
-              Explore mainnet <ArrowUpRight size={21} />
+              {t("proof.exploreMainnet")} <ArrowUpRight size={21} />
             </strong>
-            <span>Read-only network explorer</span>
+            <span>{t("proof.readOnly")}</span>
           </a>
         </div>
       </section>
@@ -140,39 +141,21 @@ export default function Home() {
         <DataNote />
         <NetworkMetrics />
       </div>
-      <Section id="technology" eyebrow="01 / A different starting point">
+      <Section id="technology" eyebrow={t("technology.eyebrow")}>
         <div className="section-heading">
           <h2>
-            The future shouldn’t
-            <br />
-            be a retrofit.
+            <Trans t={t} i18nKey="technology.title" components={{ br: <br /> }} />
           </h2>
           <p>
-            Post-quantum cryptography belongs at the core.
-            <br />
-            RougeChain starts there, then opens the
-            <br />
-            possibilities of a programmable network.
+            <Trans t={t} i18nKey="technology.lead" components={{ br: <br /> }} />
           </p>
         </div>
         <div className="pillars">
-          {[
-            [
-              "01",
-              "Post-quantum\nfrom genesis.",
-              "Digital signatures built around ML-DSA-65. A cryptographic foundation designed for the post-quantum era.",
-            ],
-            [
-              "02",
-              "Programmable\nby design.",
-              "WASM smart contracts make room for applications, tokens, and entirely new onchain experiences.",
-            ],
-            [
-              "03",
-              "An ecosystem,\nconnected.",
-              "From explorers and swaps to encrypted communication. One network, a growing set of possibilities.",
-            ],
-          ].map(([n, title, copy]) => (
+          {(["pq", "programmable", "ecosystem"] as const).map((id, i) => [
+            `0${i + 1}`,
+            t(`technology.pillars.${id}.title`),
+            t(`technology.pillars.${id}.body`),
+          ]).map(([n, title, copy]) => (
             <article key={n}>
               <span className="mono muted">{n}</span>
               <h3>{title}</h3>
@@ -181,7 +164,6 @@ export default function Home() {
           ))}
         </div>
       </Section>
-      <Explore />
       <MarketingSections />
     </main>
   );

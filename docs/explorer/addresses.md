@@ -30,6 +30,6 @@ List of all NFTs currently owned by this address, grouped by collection.
 ```
 GET /api/balance/:public_key                    — XRGE balance
 GET /api/balance/:public_key/:token_symbol      — Token balance
-GET /api/address/:public_key/transactions       — Transaction history (paginated)
-GET /api/nft/owner/:pubkey                      — NFTs owned
+GET /api/address/:public_key/transactions       — Transaction history (paginated; covers the most recent 500 blocks)
+GET /api/nft/owner/:pubkey                      — NFTs owned (hex public key)
 ```

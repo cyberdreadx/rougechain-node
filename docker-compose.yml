@@ -4,8 +4,10 @@ services:
     image: rougechain/node:latest
     container_name: rougechain-node
     restart: unless-stopped
+    # Published on loopback only by default — put a reverse proxy in front for a public node.
+    # Set API_BIND=0.0.0.0 to expose the API on every host interface.
     ports:
-      - "${API_PORT:-8900}:8900"
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8900}:8900"
     volumes:
       - chain-data:/data/rougechain
     environment:
@@ -22,10 +24,9 @@ services:
       - "--api-port"
       - "8900"
       - "--mine"
+      # Mainnet genesis: it sets the chain id (rougechain-mainnet-1); --chain-id would be ignored.
       - "--genesis"
       - "/etc/rougechain/genesis.json"
-      - "--chain-id"
-      - "${CHAIN_ID:-rougechain-mainnet-1}"
       - "--peers"
       - "${QV_PEERS:-}"
     healthcheck:
@@ -40,7 +41,7 @@ services:
     container_name: rougechain-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus

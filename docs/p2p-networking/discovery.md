@@ -1,6 +1,6 @@
 # Peer Discovery
 
-RougeChain nodes automatically discover other nodes on the network through a gossip-based peer exchange protocol.
+RougeChain nodes automatically discover other nodes on the network through peer exchange over the HTTP API: each node polls `GET /api/peers` on the peers it knows.
 
 ## How Discovery Works
 

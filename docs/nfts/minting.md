@@ -17,10 +17,12 @@ Mint multiple NFTs at once:
 
 1. Open a collection page
 2. Click **Batch Mint**
-3. Provide a list of names (and optional URIs/attributes for each)
+3. Provide a list of names (and optional URIs for each)
 4. Click **Mint All**
 
 Fee is 5 XRGE per NFT in the batch.
+
+> Per-token attributes in a batch mint are applied once the client signs them as the payload's `attributes` field (one entry per name). `@rougechain/sdk` **1.11.0** and later do this (`rc.nft.batchMint(wallet, { ..., attributes: [...] })`); SDK 1.10.0 and earlier, and site builds before this fix, sent them under `batchAttributes`, which the node ignores, so those batch-minted tokens have no attributes. Upgrade the SDK (or mint individually) if a token needs on-chain attributes.
 
 ## Token Properties
 

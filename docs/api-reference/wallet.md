@@ -14,20 +14,22 @@ GET /api/balance/:publicKey
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `publicKey` | string | The wallet's ML-DSA-65 public key (hex) |
+| `publicKey` | string | The wallet's ML-DSA-65 public key (hex) or its `rouge1…` address |
 
 ### Response
 
 ```json
 {
+  "success": true,
   "balance": 1500.5,
-  "publicKey": "abc123...",
-  "tokens": {
-    "XRGE": 1500.5,
+  "token_balances": {
     "qETH": 0.5
-  }
+  },
+  "lp_balances": {}
 }
 ```
+
+`balance` is the XRGE balance; `token_balances` maps token symbol → balance; `lp_balances` maps pool id → LP-token balance.
 
 ---
 
@@ -55,16 +57,18 @@ Content-Type: application/json
 }
 ```
 
-The transaction is signed client-side using ML-DSA-65. The server verifies the signature before processing.
+The transaction is signed client-side using ML-DSA-65. The server verifies the signature before processing. The fee is fixed at **1 XRGE**.
 
 ### Response
 
 ```json
 {
   "success": true,
-  "txId": "abc123..."
+  "message": "Transfer transaction submitted"
 }
 ```
+
+The response does not include a transaction id; watch the sender's history (`/api/address/:pubkey/transactions`) or the WebSocket feed to see the transaction land in a block.
 
 ---
 
@@ -94,12 +98,11 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "amount": 1000,
-  "txId": "abc123..."
+  "message": "Faucet: 10000 XRGE sent"
 }
 ```
 
-See [Get Test Tokens](../getting-started/faucet.md) for details on rate limits.
+The faucet is only enabled on test networks; elsewhere it returns `403`. It applies the node's `--faucet-whitelist` (`403` for unlisted keys) and the same 24-hour per-key cooldown as `POST /api/faucet` (`429`). See [Get Test Tokens](../getting-started/faucet.md) for details.
 
 ---
 
@@ -113,7 +116,8 @@ GET /api/burn-address
 
 ```json
 {
-  "burnAddress": "XRGE_BURN_0x000000000000000000000000000000000000000000000000000000000000DEAD"
+  "burn_address": "XRGE_BURN_0x000000000000000000000000000000000000000000000000000000000000DEAD",
+  "description": "Official burn address. Tokens sent here are permanently destroyed and tracked on-chain."
 }
 ```
 
@@ -148,7 +152,9 @@ Input can be either a `rouge1…` address or a hex public key. The endpoint auto
 
 ## Account Nonce
 
-Get the current and next sequential nonce for a wallet. Used for replay protection in v2 signed transactions.
+Get the current and next sequential nonce for a wallet. A v2 signed payload may include an optional `account_nonce`; when present it must equal `next_nonce`.
+
+The path parameter is the **hex public key** or a `rouge1…` address. An address is resolved to its public key through the node's address index; an address that has never sent a transaction returns nonce `0`, and a malformed `rouge1…` string returns `400` with `{"success": false, "error": "..."}`. The JSON-RPC `rouge_getTransactionCount` / `eth_getTransactionCount` methods resolve addresses the same way (`-32602` for a malformed address).
 
 ```http
 GET /api/account/:publicKey/nonce
@@ -159,7 +165,6 @@ GET /api/account/:publicKey/nonce
 ```json
 {
   "success": true,
-  "publicKey": "a1b2c3d4...",
   "nonce": 5,
   "next_nonce": 6
 }

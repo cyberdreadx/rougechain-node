@@ -112,7 +112,7 @@ Get burned token statistics.
 ```bash
 #!/bin/bash
 while true; do
-  HEIGHT=$(curl -s http://127.0.0.1:5100/api/health | jq '.height')
+  HEIGHT=$(curl -s http://127.0.0.1:5101/api/health | jq '.height')
   echo "$(date): Block height = $HEIGHT"
   sleep 10
 done
@@ -121,7 +121,7 @@ done
 ### Compare with Testnet
 
 ```bash
-LOCAL=$(curl -s http://127.0.0.1:5100/api/health | jq '.height')
+LOCAL=$(curl -s http://127.0.0.1:5101/api/health | jq '.height')
 TESTNET=$(curl -s https://testnet.rougechain.io/api/health | jq '.height')
 echo "Local: $LOCAL, Testnet: $TESTNET, Behind: $((TESTNET - LOCAL))"
 ```

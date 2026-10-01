@@ -2,6 +2,10 @@ export type AppGroup =
   "Hold" | "Trade" | "Play" | "Talk" | "Explore" | "Build" | "Community";
 export type EcosystemItemKind =
   "app" | "developer-resource" | "community" | "utility";
+/**
+ * Display text is translated at render: common:apps.<id>.name / .description, common:appGroups.<group>
+ * and common:appNav.<key>. `name` / `description` here are the English reference (ids stay stable).
+ */
 export interface EcosystemApp {
   kind: EcosystemItemKind;
   id: string;
@@ -10,11 +14,17 @@ export interface EcosystemApp {
   description: string;
   proposedHost: string;
   icon: string;
-  status: "demo" | "preview" | "future" | "external";
+  status: "live" | "demo" | "preview" | "future" | "external";
   pocRoute?: string;
   externalUrl?: string;
   workspaceView?: string;
-  localNavigation?: { label: string; path: string }[];
+  /** `key` → common:appNav.<key> (the display label); `label` is the English reference. */
+  localNavigation?: {
+    key: string;
+    label: string;
+    path: string;
+    match?: string[];
+  }[];
 }
 export const DOCS_URL = "https://docs.rougechain.io/";
 export const WHITEPAPER_URL = "https://rougechain.io/RougeChain-Whitepaper.pdf";
@@ -39,8 +49,13 @@ export const apps: EcosystemApp[] = [
     description: "Your assets, secured for tomorrow.",
     proposedHost: "wallet.rougechain.io",
     icon: "wallet",
-    status: "preview",
+    status: "live",
+    pocRoute: "/wallet",
     workspaceView: "Wallet",
+    localNavigation: [
+      { key: "wallet", label: "Wallet", path: "/wallet" },
+      { key: "settings", label: "Settings", path: "/settings" },
+    ],
   },
   {
     id: "wallet-extension",
@@ -83,10 +98,11 @@ export const apps: EcosystemApp[] = [
     kind: "app",
     name: "Messenger",
     group: "Talk",
-    description: "A private conversation preview.",
+    description: "Post-quantum encrypted chats, groups and payments.",
     proposedHost: "messenger.rougechain.io",
     icon: "message",
-    status: "preview",
+    status: "live",
+    pocRoute: "/messenger",
     workspaceView: "Messenger",
   },
   {
@@ -94,10 +110,11 @@ export const apps: EcosystemApp[] = [
     kind: "app",
     name: "Mail",
     group: "Talk",
-    description: "A new home for your inbox.",
+    description: "Encrypted mail at @rouge.quant and @qwalla.mail.",
     proposedHost: "mail.rougechain.io",
     icon: "mail",
-    status: "preview",
+    status: "live",
+    pocRoute: "/mail",
     workspaceView: "Mail",
   },
   {
@@ -108,13 +125,14 @@ export const apps: EcosystemApp[] = [
     description: "Exchange assets. Explore possibilities.",
     proposedHost: "swap.rougechain.io",
     icon: "arrows",
-    status: "demo",
+    status: "live",
     pocRoute: "/swap",
     workspaceView: "Swap",
+    // apps/web paths (/pools, /pool/:id, /buy) plus the /swap/* views; `match` lights the section.
     localNavigation: [
-      { label: "Swap", path: "/swap" },
-      { label: "Pools", path: "/swap/pools" },
-      { label: "Positions", path: "/swap/positions" },
+      { key: "swap", label: "Swap", path: "/swap", match: ["/swap", "/buy"] },
+      { key: "pools", label: "Pools", path: "/pools", match: ["/pools", "/pool", "/swap/pools"] },
+      { key: "positions", label: "Positions", path: "/swap/positions", match: ["/swap/positions"] },
     ],
   },
   {
@@ -125,7 +143,8 @@ export const apps: EcosystemApp[] = [
     description: "A connection between networks.",
     proposedHost: "bridge.rougechain.io",
     icon: "bridge",
-    status: "preview",
+    status: "live",
+    pocRoute: "/bridge",
     workspaceView: "Bridge",
   },
   {
@@ -133,11 +152,11 @@ export const apps: EcosystemApp[] = [
     kind: "utility",
     name: "Liquidity",
     group: "Trade",
-    description: "Explore pool designs.",
+    description: "Provide liquidity and earn swap fees.",
     proposedHost: "swap.rougechain.io/pools",
     icon: "layers",
-    status: "demo",
-    pocRoute: "/swap/pools",
+    status: "live",
+    pocRoute: "/pools",
     workspaceView: "Swap",
   },
   {
@@ -148,20 +167,46 @@ export const apps: EcosystemApp[] = [
     description: "The network, in detail.",
     proposedHost: "explorer.rougechain.io",
     icon: "box",
-    status: "demo",
+    status: "live",
     pocRoute: "/explorer",
     workspaceView: "Explorer",
+    // Legacy rougechain.io paths; `match` marks the section active on its detail pages too.
     localNavigation: [
-      "Overview",
-      "Blocks",
-      "Transactions",
-      "Tokens",
-      "NFTs",
-      "Contracts",
-    ].map((label, i) => ({
-      label,
-      path: i ? "/explorer/" + label.toLowerCase() : "/explorer",
-    })),
+      {
+        key: "overview",
+        label: "Overview",
+        path: "/explorer",
+        match: ["/explorer", "/blockchain"],
+      },
+      {
+        key: "blocks",
+        label: "Blocks",
+        path: "/explorer/blocks",
+        match: ["/explorer/blocks", "/block"],
+      },
+      {
+        key: "transactions",
+        label: "Transactions",
+        path: "/transactions",
+        match: ["/transactions", "/tx"],
+      },
+      { key: "tokens", label: "Tokens", path: "/tokens", match: ["/tokens", "/token"] },
+      { key: "nfts", label: "NFTs", path: "/nfts", match: ["/nfts"] },
+      {
+        key: "contracts",
+        label: "Contracts",
+        path: "/contracts",
+        match: ["/contracts", "/contract"],
+      },
+      {
+        key: "bridgeActivity",
+        label: "Bridge",
+        path: "/explorer/bridge",
+        // "/bridge" only lights this up on explorer.rougechain.io; on the main site /bridge is
+        // the Bridge app, which never renders the Explorer header.
+        match: ["/explorer/bridge", "/bridge-activity", "/bridge"],
+      },
+    ],
   },
   {
     id: "validators",
@@ -171,8 +216,13 @@ export const apps: EcosystemApp[] = [
     description: "The participants securing the network.",
     proposedHost: "validators.rougechain.io",
     icon: "network",
-    status: "preview",
+    status: "live",
+    pocRoute: "/validators",
     workspaceView: "Validators",
+    localNavigation: [
+      { key: "validators", label: "Validators", path: "/validators" },
+      { key: "genesis", label: "Genesis program", path: "/genesis-validators" },
+    ],
   },
   {
     id: "network",
@@ -182,8 +232,10 @@ export const apps: EcosystemApp[] = [
     description: "Read-only public API telemetry.",
     proposedHost: "status.rougechain.io",
     icon: "activity",
-    status: "preview",
+    status: "live",
+    pocRoute: "/status",
     workspaceView: "Network",
+    localNavigation: [{ key: "status", label: "Status", path: "/status" }],
   },
   {
     id: "build",
@@ -207,15 +259,30 @@ export const apps: EcosystemApp[] = [
     status: "external",
     externalUrl: DOCS_URL,
   },
-  ...["SDK", "MCP / Agents", "Run a Node"].map((name, i): EcosystemApp => ({
-    id: ["sdk", "mcp", "node"][i],
+  {
+    id: "sdk",
     kind: "developer-resource",
-    name,
+    name: "SDK",
     group: "Build",
     description: "Developer tooling preview.",
     proposedHost: "build.rougechain.io",
     icon: "code",
     status: "preview",
+    workspaceView: "Build",
+  },
+  ...[
+    { id: "mcp", name: "MCP / Agents", route: "/agents", description: "Let AI agents read and use the chain." },
+    { id: "node", name: "Run a Node", route: "/node", description: "Commands, prerequisites and live nodes." },
+  ].map(({ id, name, route, description }): EcosystemApp => ({
+    id,
+    kind: "developer-resource",
+    name,
+    group: "Build",
+    description,
+    proposedHost: `rougechain.io${route}`,
+    icon: "code",
+    status: "live",
+    pocRoute: route,
     workspaceView: "Build",
   })),
   {
@@ -226,8 +293,8 @@ export const apps: EcosystemApp[] = [
     description: "Discover the community mission.",
     proposedHost: "rougechain.io",
     icon: "leaf",
-    status: "demo",
-    pocRoute: "/#community",
+    status: "live",
+    pocRoute: "/regenerate",
   },
   {
     id: "community",

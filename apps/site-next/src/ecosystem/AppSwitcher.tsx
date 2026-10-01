@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   globalApps,
   globalAppGroups,
@@ -7,6 +8,7 @@ import {
   type EcosystemApp,
 } from "./apps";
 export function AppSwitcher({ current }: { current?: EcosystemApp }) {
+  const { t } = useTranslation("common");
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -27,7 +29,7 @@ export function AppSwitcher({ current }: { current?: EcosystemApp }) {
         aria-controls={menuId}
         onClick={() => setOpen(!open)}
       >
-        Apps <span aria-hidden="true">⌄</span>
+        {t("switcher.apps")} <span aria-hidden="true">⌄</span>
       </button>
       {open && (
         <div className="switcher-backdrop" onClick={close}>
@@ -36,7 +38,7 @@ export function AppSwitcher({ current }: { current?: EcosystemApp }) {
             ref={panel}
             className="switcher-panel"
             role="dialog"
-            aria-label="RougeChain apps"
+            aria-label={t("switcher.dialog")}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
@@ -62,33 +64,35 @@ export function AppSwitcher({ current }: { current?: EcosystemApp }) {
           >
             <div className="switcher-top">
               <Link to="/" onClick={close}>
-                RougeChain home
+                {t("switcher.home")}
               </Link>
               <button
                 className="button ghost small"
                 onClick={close}
-                aria-label="Close apps"
+                aria-label={t("switcher.closeLabel")}
               >
-                Close ×
+                {t("switcher.close")} ×
               </button>
             </div>
             {current?.localNavigation && (
               <nav
                 className="switcher-local"
-                aria-label={`${current.name} mobile navigation`}
+                aria-label={t("switcher.localNav", {
+                  name: t(`apps.${current.id}.name`),
+                })}
               >
-                <strong>{current.name}</strong>
+                <strong>{t(`apps.${current.id}.name`)}</strong>
                 {current.localNavigation.map((n) => (
                   <Link key={n.path} to={n.path} onClick={close}>
-                    {n.label}
+                    {t(`appNav.${n.key}`)}
                   </Link>
                 ))}
               </nav>
             )}
-            <div className="switcher-groups" aria-label="Global applications">
+            <div className="switcher-groups" aria-label={t("switcher.global")}>
               {globalAppGroups.map((group) => (
                 <section key={group}>
-                  <h2>{group}</h2>
+                  <h2>{t(`appGroups.${group}`)}</h2>
                   {globalApps
                     .filter((a) => a.group === group)
                     .map((a) =>
@@ -98,8 +102,8 @@ export function AppSwitcher({ current }: { current?: EcosystemApp }) {
                           key={a.id}
                           aria-disabled="true"
                         >
-                          <span>{a.name}</span>
-                          <small>Coming soon</small>
+                          <span>{t(`apps.${a.id}.name`)}</span>
+                          <small>{t("switcher.comingSoon")}</small>
                         </div>
                       ) : (
                         <Link
@@ -107,7 +111,7 @@ export function AppSwitcher({ current }: { current?: EcosystemApp }) {
                           to={appHref(a)}
                           aria-label={
                             a.id === "wallet-extension"
-                              ? "RougeChain Wallet Extension ↗"
+                              ? t("switcher.extensionLabel")
                               : undefined
                           }
                           onClick={close}
@@ -116,17 +120,11 @@ export function AppSwitcher({ current }: { current?: EcosystemApp }) {
                             : {})}
                         >
                           <span>
-                            {a.name}
+                            {t(`apps.${a.id}.name`)}
                             {a.externalUrl ? " ↗" : ""}
                           </span>
                           <small>
-                            {a.status === "preview"
-                              ? "Preview"
-                              : a.status === "demo"
-                                ? "Demo"
-                                : a.status === "external"
-                                  ? "External"
-                                  : "Planned"}
+                            {t(`appStatus.${a.status}`)}
                           </small>
                         </Link>
                       ),
@@ -136,13 +134,13 @@ export function AppSwitcher({ current }: { current?: EcosystemApp }) {
             </div>
             <div className="switcher-utilities">
               <Link to="/workspace" onClick={close}>
-                Full workspace
+                {t("switcher.workspace")}
               </Link>
               <Link to="/architecture" onClick={close}>
-                Architecture
+                {t("footer.architecture")}
               </Link>
               <Link to="/design-system" onClick={close}>
-                Design system
+                {t("footer.designSystem")}
               </Link>
             </div>
           </div>

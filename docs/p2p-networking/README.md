@@ -1,6 +1,6 @@
 # P2P Networking
 
-RougeChain uses a peer-to-peer network for block propagation, transaction broadcasting, and peer discovery.
+RougeChain uses a peer-to-peer network for block propagation, transaction broadcasting, and peer discovery. All peer traffic runs over each node's HTTP REST API (`--api-port`, usually behind an HTTPS proxy); there is no separate P2P port.
 
 ## How It Works
 

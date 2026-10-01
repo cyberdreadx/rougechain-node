@@ -1,0 +1,736 @@
+{
+  "common": {
+    "loading": "読み込み中…",
+    "mainnet": "メインネット",
+    "testnet": "テストネット",
+    "devnet": "デブネット",
+    "mainnetLower": "メインネット",
+    "testnetLower": "テストネット",
+    "copied": "コピーしました",
+    "copyWhat": "{{what}}をコピー",
+    "command": "コマンド",
+    "refresh": "更新",
+    "openWallet": "ウォレットを開く",
+    "unknown": "不明",
+    "apiUnavailable": "{{network}}のノード API を読み取れませんでした。推測で表示せず、何も表示していません。"
+  },
+  "seo": {
+    "validators": {
+      "title": "バリデータ — RougeChain",
+      "description": "XRGE をステークして耐量子ネットワークの保護に参加しましょう。バリデータセット、ステーク、ファイナリティをライブで表示します。"
+    },
+    "genesis": {
+      "title": "ジェネシスバリデータ — RougeChain",
+      "description": "初の耐量子 Layer 1 の創設独立バリデータになりましょう。"
+    },
+    "node": {
+      "title": "ノードを運用 — RougeChain",
+      "description": "RougeChain ノードの運用：前提条件、コマンド、ノードのライブ状態。"
+    },
+    "agents": {
+      "title": "AI エージェント（MCP）— RougeChain",
+      "description": "RougeChain 用 Model Context Protocol サーバー：AI エージェントがチェーンを読み取り、トランザクションに署名できます。"
+    },
+    "status": {
+      "title": "ネットワーク状態 — RougeChain",
+      "description": "RougeChain ネットワークのライブ数値、コンセンサスルール、ブリッジの状態。"
+    },
+    "regenerate": {
+      "title": "RougeChain Regenerate — あなたの住む場所の未来に資金を",
+      "description": "RougeChain Regenerate は RougeChain 上の再生プログラム兼トレジャリーで、透明で測定可能な地域プロジェクトに資金を提供します。最初の拠点はメキシコのトゥルムです。"
+    },
+    "privacy": {
+      "title": "プライバシーポリシー — RougeChain",
+      "description": "RougeChain ウォレット拡張機能と rougechain.io が収集するもの、収集しないもの。"
+    }
+  },
+  "validators": {
+    "eyebrow": "探索 / ステーキング · コンセンサス",
+    "title": "バリデータ",
+    "lead": "RougeChain を守る参加者を、ノードからライブで読み取っています。XRGE をステークして参加しましょう。",
+    "testnetNotice": "テストネットを表示しています。ここに表示されるステークとバリデータはテストネットのものです。テストネットの XRGE に価値はありません。",
+    "stats": {
+      "total": "バリデータ",
+      "active": "稼働中 {{count}}",
+      "staked": "総ステーク",
+      "entropy": "量子エントロピー",
+      "entropySub": "件の貢献",
+      "participation": "投票参加率",
+      "height": "ブロック高 {{height}}"
+    },
+    "tiers": {
+      "title": "ティア分布",
+      "standard": "スタンダード",
+      "operator": "オペレーター",
+      "genesis": "ジェネシス"
+    },
+    "tierBenefits": {
+      "standard": {
+        "b0": "ブロック検証に参加",
+        "b1": "検証報酬を獲得"
+      },
+      "operator": {
+        "b0": "スタンダードの全特典",
+        "b1": "プロポーザー選出で優先"
+      },
+      "genesis": {
+        "b0": "オペレーターの全特典",
+        "b1": "最高のプロポーザー優先度"
+      }
+    },
+    "proposer": {
+      "title": "現在のプロポーザー",
+      "height": "ブロック高",
+      "proposer": "指定プロポーザー",
+      "you": "あなたが指定プロポーザーです",
+      "weight": "選出ウェイト",
+      "totalStake": "総ステーク",
+      "entropy": "エントロピー",
+      "unavailable": "このノードからはプロポーザー選出情報を取得できません。"
+    },
+    "finality": {
+      "title": "ファイナリティ",
+      "finalized": "最終確定",
+      "tip": "最新",
+      "lag": "最新との差",
+      "quorum": "クォーラムステーク",
+      "unavailable": "このノードからはファイナリティの状態を取得できません。"
+    },
+    "list": {
+      "title": "バリデータランキング",
+      "total": "全 {{count}} 件",
+      "empty": "まだバリデータはいません",
+      "emptyBody": "最初に XRGE をステークしてバリデータになりましょう。",
+      "loading": "バリデータを読み込み中",
+      "votes": "投票 {{pct}}%",
+      "seen": "最終確認 #{{height}}",
+      "power": "投票力 {{pct}}%",
+      "powerLabel": "投票力 {{pct}}%",
+      "slashed": "スラッシュ {{count}} 回",
+      "jailedUntil": "#{{height}} まで拘束",
+      "you": "あなた"
+    },
+    "status": {
+      "active": "稼働中",
+      "pending": "保留中",
+      "jailed": "拘束中",
+      "unbonding": "アンボンディング中",
+      "inactive": "停止中"
+    },
+    "mine": {
+      "title": "あなたのステーク",
+      "notConnected": "ウォレットを接続すると、ステークの確認と XRGE のステークができます。",
+      "locked": "ウォレットがロックされています。ステークまたはアンステークするにはロックを解除してください。",
+      "available": "ステーク可能",
+      "staked": "ステーク中",
+      "tier": "ティア",
+      "status": "状態",
+      "notValidator": "このウォレットはまだバリデータではありません。",
+      "youAre": "あなたは{{tier}}バリデータです",
+      "needMore": "最低 10,000 XRGE に達するには、あと {{amount}} XRGE 必要です。",
+      "stake": "XRGE をステーク",
+      "addStake": "ステークを追加",
+      "unstake": "アンステーク",
+      "pending": "ステークを送信しました",
+      "pendingBody": "ステークトランザクションがブロックに含まれるのを待っています。",
+      "extension": "各署名は RougeChain 拡張機能で承認します。",
+      "slashed": "スラッシュ {{count}} 回",
+      "slashedJailed": "スラッシュ {{count}} 回 · ブロック #{{height}} まで拘束",
+      "missed": "指定プロポーザーのときにブロックを逃すと順番が凍結され、50 ブロック逃すと自動でスラッシュされます。ノードをオンラインに保ってください。"
+    },
+    "how": {
+      "title": "バリデーションの仕組み",
+      "stakedTitle": "ノードの鍵がバリデータです",
+      "stakedBody": "ステークした鍵が検証する鍵です。ノードは node-keys.json の ID 鍵でブロックに署名するため、その鍵そのものからステークしてください（例：rougechain --node-keys <path> stake 10000）。または、ここでステークする前にその鍵をウォレットにインポートしてください。別のウォレットからステークしても、ノードはバリデータになりません。",
+      "steps": {
+        "stake": {
+          "title": "XRGE をステーク",
+          "body": "バリデータ鍵から 10,000 XRGE 以上をロックします（スタンダード 10k · オペレーター 100k · ジェネシス 1M）。"
+        },
+        "run": {
+          "title": "--mine でノードを起動",
+          "body": "node-keys.json がそのステーク済みの鍵であるノードを --mine 付きで起動し、ピアとつながった状態でオンラインを保ちます。"
+        },
+        "propose": {
+          "title": "提案と投票",
+          "body": "各ブロック高の指定プロポーザーはステーク加重のセットから選ばれ、ブロックは ML-DSA-65 で署名されます。"
+        },
+        "reliable": {
+          "title": "安定運用",
+          "body": "順番を逃すとプロポーザーは凍結され、繰り返し逃したり二重署名したりするとスラッシュと拘束の対象になります。"
+        }
+      },
+      "guide": "バリデータガイド"
+    },
+    "tierBenefitsTitle": "ステーキングティア",
+    "runNode": {
+      "title": "ノードを運用",
+      "body": "自分のノードを運用してネットワークを強化しましょう。XRGE をステークするとコンセンサスに参加し、トランザクション手数料の分配を受けられます。",
+      "guide": "完全ガイド",
+      "nodePage": "ノードの設定と状態",
+      "genesis": "ジェネシスバリデータプログラムに参加"
+    },
+    "securityBody": "すべてのバリデータ署名に ML-DSA-65（CRYSTALS-Dilithium、NIST セキュリティレベル 3）を使用しています。"
+  },
+  "staking": {
+    "stakeTitle": "XRGE をステーク",
+    "unstakeTitle": "XRGE をアンステーク",
+    "reviewTitle": "確認して署名",
+    "amount": "数量",
+    "max": "最大 {{amount}} XRGE",
+    "tier": "バリデータティア",
+    "minimum": "{{tier}}ティアの最低ステークは {{amount}} XRGE です。",
+    "insufficient": "XRGE の残高が不足しています。",
+    "insufficientFee": "ネットワーク手数料として {{fee}} XRGE を残してください。",
+    "overStaked": "ステーク中の XRGE は {{amount}} XRGE です。",
+    "wholeNumber": "XRGE は整数で入力してください。",
+    "enterAmount": "数量を入力してください。",
+    "balances": "ステーク可能：{{available}} XRGE · ステーク中：{{staked}} XRGE · {{network}}",
+    "review": "確認",
+    "back": "戻る",
+    "sign": "署名してステーク",
+    "signUnstake": "署名してアンステーク",
+    "signing": "署名中…",
+    "cancel": "キャンセル",
+    "rows": {
+      "action": "操作",
+      "stake": "ステーク",
+      "unstake": "アンステーク",
+      "amount": "数量",
+      "from": "送信元",
+      "tier": "変更後のティア",
+      "remaining": "残りのステーク",
+      "fee": "ネットワーク手数料",
+      "network": "ネットワーク"
+    },
+    "localSign": "このブラウザ内で ML-DSA-65 鍵により署名します。鍵がこのページの外に出ることはありません。",
+    "extensionSign": "RougeChain 拡張機能がこのトランザクションの承認を求めます。",
+    "nodeKeyWarning": "node-keys.json にこの鍵を保持するノードだけが、このステークで検証を行います。",
+    "unstakeWarning": "10,000 XRGE を下回ると、この鍵はバリデータセットから外れます。",
+    "staked": "{{amount}} XRGE をステークしました",
+    "unstaked": "{{amount}} XRGE をアンステークしました",
+    "submitted": "送信しました。次のブロックに含まれると有効になります。",
+    "failed": "トランザクションに失敗しました"
+  },
+  "genesis": {
+    "eyebrow": "RougeChain · バリデータプログラム",
+    "title": "初の耐量子 L1 の<em>ジェネシスバリデータ</em>になろう。",
+    "lead": "RougeChain は稼働中で、耐量子かつパーミッションレスです。しかし、ネットワークの分散度はそれを守る人々次第です。私たちは独立バリデータの創設メンバーを募集しています。求めているのは投機家ではなく運用者です。",
+    "facts": {
+      "network": { "k": "ネットワーク", "v": "mainnet-1 · 稼働中" },
+      "cohort": { "k": "募集枠", "v": "10 オペレーター" },
+      "stake": { "k": "参加に必要なステーク", "v": "10,000 XRGE" },
+      "signatures": { "k": "署名", "v": "ML-DSA-65" }
+    },
+    "honestTitle": "まずお読みください — 正直なところ",
+    "honestBody": "現時点では、RougeChain のバリデーションで得られる収益はほぼありません。トークンの新規発行はなく、報酬準備金は空で、若いチェーンのため手数料もほぼゼロです。利回り目的で参加しないでください。参加するのは、他のすべてのチェーンが見過ごしている唯一のこと — 量子コンピュータが現在の暗号を破る日 — のために作られたチェーンの創設運用者になるためです。経済的なリターンは、チェーンがそれを勝ち取ったときに後から来ます。役割、評価、ポジションは今すぐ手に入ります。",
+    "getsTitle": "ジェネシスバリデータが得られるもの",
+    "getsLead": "このためにインフレは生み出していません。評価、既存の手数料分配、トレジャリーからの XRGE 助成金で運営しており、新たに発行したトークンは使いません。",
+    "perks": {
+      "recognition": {
+        "tag": "評価",
+        "title": "オンチェーンの創設者ステータス",
+        "body": "永続的なジェネシスバリデータバッジ、ネットワークマップへのノード名の掲載、公開バリデータランキングへの掲載。"
+      },
+      "weight": {
+        "tag": "実質的な重み",
+        "title": "名ばかりではない、本物のステーク",
+        "body": "コンセンサスの重みは自己ステークした XRGE から生まれます。そのためジェネシスバリデータには自分のステークとして使えるトレジャリーの XRGE 助成金が付与され、チームは自らのステークを段階的に減らします。あなたの投票と手数料分配は本当に意味を持ちます。"
+      },
+      "grant": {
+        "tag": "立ち上げ助成金",
+        "title": "コストをカバー",
+        "body": "手数料が少ない間、サーバー代と gas をまかなうため、最初の 6 か月間は毎月 XRGE 助成金を支給します。本格的な手数料収入までのつなぎであり、給与ではありません。"
+      },
+      "support": {
+        "tag": "サポート",
+        "title": "直接のオンボーディング支援",
+        "body": "ハンズオンのセットアップ、非公開のオペレーターチャンネル、アップグレードの先行案内。一人でデバッグすることはありません。"
+      },
+      "voice": {
+        "tag": "発言権",
+        "title": "次の方向性に関与",
+        "body": "ジェネシスバリデータは重要な決定について最初に意見を述べられます。RougeChain が持続可能なステーキング発行を採用するかどうかも含みます。"
+      },
+      "mission": {
+        "tag": "ミッション",
+        "title": "大切なものを守る",
+        "body": "すでに耐量子化された初の本番 L1 のコンセンサスを担います。それが私たちの提案です。心が動かなければ、これはあなた向けではありません。それで構いません。"
+      }
+    },
+    "asksTitle": "お願いしたいこと",
+    "asks": {
+      "stake": { "k": "ステーク", "v": "バリデータ鍵から 10,000 XRGE 以上を保有・ステークしてください。入手は容易で、ハードルは資本ではなくコミットメントです。" },
+      "node": { "k": "実際のノード", "v": "公開 URL を持ち、常時オンラインで到達可能なノード（1 vCPU / 1 GB / 5 GB で十分）。" },
+      "uptime": { "k": "稼働率", "v": "目標 95% 以上。50 ブロック逃すと自動でスラッシュされるため、インフラとして扱ってください。" },
+      "keys": { "k": "鍵の管理", "v": "専用のバリデータ鍵（トレジャリーの鍵は厳禁）をバックアップし、2 つのノードで同時に運用しないでください。二重署名はスラッシュの対象です。" },
+      "independence": { "k": "独立性", "v": "あなたは創設チームではありません。別の誰かであることこそが重要です。" },
+      "commitment": { "k": "コミットメント", "v": "メンバーが意味を持つほど安定するよう、6 か月間運用してください。" }
+    },
+    "joinTitle": "参加方法",
+    "steps": {
+      "apply": { "t": "応募", "body": "あなたが誰で、どこで運用するかを教えてください。" },
+      "spin": { "t": "ノードを立ち上げる", "body": "<link>バリデータガイド</link>に従ってください。初回起動時に ID 鍵（node-keys.json）が生成されます。" },
+      "fund": { "t": "資金を入れてステーク", "body": "ノードがブロック署名に使う鍵そのものでステークします。" },
+      "live": { "t": "稼働させて確認", "body": "--mine で起動し、すべてのチェックが ✓ になるまで validator-status を実行してください。ステーク助成金を支給し、バッジを付与すれば参加完了です。" }
+    },
+    "fyi": "補足 — 「まだ利回りがない」のは意図的なもので、怠慢ではありません。持続可能なステーキング発行は、保有者に見える形での慎重な決定として検討中であり、ジェネシスバリデータもその判断に加わります。",
+    "ctaTitle": "耐量子チェーンを守る",
+    "ctaBody": "10 のオペレーター。本物の独立性。稼働中の初の耐量子 L1 の創設バリデータセット。あなたのことだと思ったら、ぜひ名乗りを上げてください。",
+    "ctaGuide": "バリデータガイドを始める",
+    "ctaValidators": "バリデータを見る"
+  },
+  "node": {
+    "eyebrow": "開発 / ノードを運用",
+    "title": "ノードを運用",
+    "lead": "ネットワークを支えましょう。前提条件、コマンド、そしてこのページから到達できるノードのライブ状態です。",
+    "dashboardTitle": "稼働中のノード",
+    "scanning": "ノードを検索中…",
+    "scanningBody": "ネットワーク API とローカルポート 5100–5104 を確認しています。",
+    "none": "ノードが見つかりません",
+    "noneBody": "ノードを起動するとここに表示されます。ポート 5100–5104 のローカルノードは自動で検出されます。",
+    "online": "ネットワーク稼働中 · バリデータ {{count}}",
+    "summary": {
+      "validators": "バリデータ",
+      "peers": "総ピア数",
+      "tip": "最新ブロック高",
+      "finalized": "最終確定",
+      "mining": "マイニングノード"
+    },
+    "card": {
+      "core": "ノード {{n}}",
+      "mining": "マイニング",
+      "peers": "ピア",
+      "tip": "最新ブロック高",
+      "finalized": "最終確定",
+      "chain": "チェーン",
+      "port": "ポート",
+      "fees": "手数料",
+      "lastBlock": "直近ブロック",
+      "yes": "はい",
+      "no": "いいえ"
+    },
+    "chains": "検出されたチェーン ID：{{ids}}",
+    "needTitle": "必要なもの",
+    "needs": {
+      "computer": "PC または VPS（1 vCPU / 1 GB / 5 GB）",
+      "tooling": "Docker、またはソースからビルドするための Rust",
+      "internet": "インターネット接続"
+    },
+    "stepsTitle": "コマンド",
+    "steps": {
+      "docker": {
+        "title": "オプション A：Docker（最速）",
+        "body": "Rust は不要です。コマンド 1 つで起動します。起動したらステップ 3 に進んでください。"
+      },
+      "rust": {
+        "title": "オプション B、ステップ 1：Rust をインストール",
+        "body": "Rust がまだない場合は、ターミナルでこれを実行してください。約 2 分かかります。"
+      },
+      "build": {
+        "title": "ステップ 2：ダウンロードしてビルド",
+        "body": "GitHub からコードをクローンしてビルドします。初回は数分かかります。"
+      },
+      "start": {
+        "title": "ステップ 3：ノードを起動",
+        "body": "ノードがネットワークに接続し、チェーンを同期して稼働を開始します。メインネットに参加するには --genesis と --chain-id が必須です。指定しないとノードは独自のジェネシスを作成し、同期を拒否します。"
+      },
+      "name": {
+        "title": "任意：ノードに名前を付ける",
+        "body": "--node-name を使うと、ネットワークマップに名前付きで表示されます。"
+      }
+    },
+    "optionsTitle": "その他のオプション",
+    "options": {
+      "mine": "ブロックをマイニング",
+      "dataDir": "データディレクトリを指定",
+      "apiKeys": "API キー認証",
+      "publicUrl": "公開 URL"
+    },
+    "validatorTitle": "バリデータになる",
+    "validatorLead": "バリデータはブロックを提案し投票するノードです。ノードの ID 鍵がバリデータであり、10,000 XRGE 以上のステークを保持している必要があります。",
+    "validatorSteps": {
+      "find": {
+        "title": "ノード鍵を確認",
+        "body": "初回起動時、ノードはデータディレクトリ内の node-keys.json に ID 鍵を書き込みます。ノードが提案するすべてのブロックはこの鍵で署名されます。"
+      },
+      "fund": {
+        "title": "その鍵に資金を入れる",
+        "body": "ノード鍵のアドレスに 10,000 XRGE 以上（手数料別）を送金してください。必要に応じて、先に Base からブリッジするか XRGE を購入してください。"
+      },
+      "stake": {
+        "title": "その鍵からステーク",
+        "body": "rougechain --node-keys <path> stake 10000 を実行するか、その鍵をウォレットにインポートしてバリデータページでステークしてください。他のウォレットからステークしても、ノードはバリデータになりません。"
+      },
+      "mine": {
+        "title": "マイニングを有効化",
+        "body": "--mine を付けてノードを再起動し、ピアとつながった状態でオンラインを保ってください。すべてのチェックに合格するまで validator-status を確認してください。"
+      }
+    },
+    "validatorsLink": "バリデータへ",
+    "guideLink": "バリデータガイド",
+    "testnetHint": "これらのコマンドはメインネットに参加します。テストネットの場合は、ノードの README にあるテストネットのジェネシスとチェーン ID を使用してください。"
+  },
+  "agents": {
+    "eyebrow": "開発 / MCP ネイティブ",
+    "title": "RougeChain の AI エージェント",
+    "lead": "RougeChain は Model Context Protocol サーバーを提供しています。AI エージェントはチェーンの状態の照会、DeFi の利用、コントラクトのデプロイ、ウォレットの管理を、すべて標準プロトコルで行えます。",
+    "howTitle": "仕組み",
+    "flow": {
+      "agent": { "label": "AI エージェント", "sub": "Claude、GPT、カスタム" },
+      "server": { "label": "MCP サーバー", "sub": "{{count}} 個のブロックチェーンツール" },
+      "api": { "label": "ノード API", "sub": "REST + JSON-RPC" },
+      "chain": { "label": "RougeChain L1", "sub": "ML-DSA + ML-KEM" }
+    },
+    "flowNote": "エージェントは MCP プロトコルにより stdio で通信します。すべてのオンチェーン操作で耐量子性（ML-DSA-65 / ML-KEM-768）が保たれます。",
+    "toolsTitle": "エージェントにできること",
+    "toolsLead": "{{cats}} カテゴリに {{total}} 個のツール。読み取り専用が {{read}} 個、実際のトランザクションに署名するものが {{write}} 個です。書き込みツールは、サーバーにウォレットを設定すると有効になります。",
+    "signsTx": "tx に署名",
+    "toolsCount_other": "{{count}} ツール",
+    "quickTitle": "クイックスタート",
+    "install": "MCP サーバーをインストール",
+    "installNote": "または npx @rougechain/mcp-server を直接使用できます。グローバルインストールは不要です。",
+    "configTitle": "エージェントの設定に追加",
+    "configLabel": "設定",
+    "readOnly": "Claude Desktop — 読み取り専用",
+    "recommended": "推奨",
+    "readWrite": "読み取り + 書き込み",
+    "writeNote": "ROUGECHAIN_MNEMONIC を追加すると {{count}} 個の署名ツールが使えるようになります。すべてのトランザクションは ML-DSA-65 でローカルに署名され、シードフレーズがサーバーの外に出ることはありません。残高の少ないエージェント専用ウォレットを使用してください。generate_wallet ツールで作成できます。",
+    "talkTitle": "チェーンと話し始める",
+    "prompts": {
+      "height": "現在のブロック高と、稼働中のバリデータ数を教えて",
+      "balance": "rouge1q8f3x... の残高を確認して、最近のトランザクションを一覧表示して",
+      "quote": "1000 XRGE を QSHIB にスワップする見積もりをスリッページ 2% で取得して",
+      "social": "ソーシャルタイムラインの最新投稿と人気アーティストを見せて",
+      "launch": "AGENT というトークンを作成し、XRGE/AGENT プールを用意して、ローンチについて投稿して",
+      "deploy": "この WASM コントラクトをデプロイして init 関数を呼び出して",
+      "resolve": "rougeboss@rouge.quant を解決して、保有トークンを見せて"
+    },
+    "needsWallet": "ウォレットが必要 — 実際のトランザクションに署名します",
+    "compatibleTitle": "対応エージェント",
+    "compatible": {
+      "claude": { "name": "Claude Desktop", "desc": "MCP ネイティブ対応、設定を追加するだけ" },
+      "cursor": { "name": "Cursor IDE", "desc": "エージェントモードで MCP ツールを利用可能" },
+      "custom": { "name": "カスタムエージェント", "desc": "stdio 経由の MCP 対応クライアントなら何でも" }
+    },
+    "supported": "対応",
+    "resourcesTitle": "リソース",
+    "resources": {
+      "source": { "title": "MCP サーバーのソース", "sub": "GitHub で見る" },
+      "docs": { "title": "ドキュメント", "sub": "セットアップと API の完全ガイド" },
+      "sdk": { "title": "@rougechain/sdk", "sub": "npm の TypeScript SDK" },
+      "spec": { "title": "MCP 仕様", "sub": "Model Context Protocol のドキュメント" }
+    },
+    "categories": {
+      "keys": "ウォレット鍵",
+      "chain": "チェーン",
+      "wallet": "ウォレット",
+      "tokens": "トークン",
+      "defi": "DeFi",
+      "nfts": "NFT",
+      "staking": "ステーキングとフォーセット",
+      "validators": "バリデータ",
+      "contracts": "スマートコントラクト",
+      "social": "ソーシャル",
+      "messaging": "メッセージ",
+      "names": "名前と ID",
+      "bridge": "ブリッジ",
+      "governance": "ガバナンスと手数料"
+    },
+    "tools": {
+      "generate_wallet": "新しい ML-DSA-65 ウォレットとニーモニックを作成",
+      "wallet_info": "設定済みの署名者、アドレス、残高、書き込み状態",
+      "get_chain_stats": "ブロック高、バリデータ、供給量、手数料",
+      "get_block": "ブロック高で任意のブロックを取得",
+      "get_latest_blocks": "最新ブロックを取得",
+      "get_balance": "XRGE とトークンの残高を確認",
+      "get_transaction": "ハッシュで任意のトランザクションを検索",
+      "send_transaction": "XRGE または任意のトークンをアドレスに送金",
+      "burn_tokens": "XRGE またはトークンを永久にバーン",
+      "list_tokens": "ネットワーク上の全トークン",
+      "get_token": "トークンのメタデータ、供給量、作成者",
+      "get_token_holders": "上位保有者と供給の内訳",
+      "create_token": "新しいカスタムトークンを発行",
+      "mint_tokens": "ミント可能なトークンを追加発行",
+      "update_token_metadata": "ロゴ、リンク、説明を更新",
+      "claim_token_metadata": "作成者のメタデータ権限を取得",
+      "list_pools": "全 AMM 流動性プール",
+      "get_swap_quote": "スリッページ込みでトークンスワップを見積もり",
+      "swap": "AMM DEX でスワップを実行",
+      "create_pool": "新しい流動性プールを作成",
+      "add_liquidity": "流動性を追加して LP トークンを受け取る",
+      "remove_liquidity": "LP トークンをバーンして引き出す",
+      "list_nft_collections": "NFT コレクションを閲覧",
+      "get_nft_collection": "コレクションのメタデータとトークン",
+      "nft_create_collection": "新しい NFT コレクションを公開",
+      "nft_mint": "NFT を 1 つミント",
+      "nft_batch_mint": "1 回の tx で複数の NFT をミント",
+      "nft_transfer": "NFT を移転（販売価格の指定も可）",
+      "nft_burn": "NFT を永久にバーン",
+      "nft_lock": "NFT をロック / ロック解除",
+      "nft_freeze_collection": "コレクションを凍結 / 凍結解除",
+      "stake": "XRGE をステークしてチェーンを保護",
+      "unstake": "XRGE をアンステークしてウォレットに戻す",
+      "request_faucet": "テストネット XRGE を受け取る（テストネットのみ）",
+      "list_validators": "稼働中のバリデータとステーク",
+      "list_contracts": "デプロイ済みの WASM コントラクト",
+      "get_contract": "コントラクトのメタデータとバイトコード",
+      "get_contract_state": "コントラクトのストレージを読み取る",
+      "get_contract_events": "コントラクトのイベント履歴",
+      "query_contract": "コントラクトのメソッドを無料で読み取り専用ドライラン",
+      "get_tx_receipt": "取り込まれたトランザクションのレシート(成功/失敗)",
+      "publish_contract": "新しい WASM コントラクトをデプロイ",
+      "execute_contract": "状態を変更するコントラクトのメソッドを実行",
+      "get_global_timeline": "グローバルフィード — 全投稿を新しい順に",
+      "get_post": "エンゲージメント統計付きの単一投稿",
+      "get_user_posts": "特定ユーザーの投稿",
+      "get_post_replies": "投稿へのスレッド返信",
+      "get_track_stats": "楽曲の再生数、いいね、コメント",
+      "get_artist_stats": "アーティストのフォロワーとフォロー状態",
+      "create_post": "オンチェーンに投稿を公開",
+      "delete_post": "自分の投稿を削除",
+      "repost": "他のユーザーの投稿をリポスト",
+      "follow": "アカウントをフォロー / フォロー解除",
+      "like_track": "楽曲や NFT にいいね / 取り消し",
+      "comment_on_track": "楽曲や NFT にコメント",
+      "list_messenger_wallets": "表示名付きの登録済みウォレット",
+      "resolve_name": "rouge.quant / qwalla.mail の名前を解決",
+      "reverse_lookup_name": "ウォレットや公開鍵から名前を逆引き",
+      "register_name": "ウォレットに名前を登録",
+      "release_name": "登録した名前を解放",
+      "bridge_withdraw": "ブリッジ資産を EVM アドレスへ引き出す",
+      "list_proposals": "ガバナンス提案",
+      "get_fee_info": "現在の EIP-1559 動的手数料データ"
+    }
+  },
+  "status": {
+    "eyebrow": "探索 / ネットワーク状態",
+    "title": "ネットワーク状態",
+    "lead": "公開ノード API から取得した{{network}}のライブ数値と、稼働中／未有効化の機能一覧。",
+    "autoRefresh": "15 秒ごとに更新",
+    "apiError": "API に接続できません",
+    "height": "ブロック高",
+    "finalized": "最終確定",
+    "validators": "バリデータ（稼働 / 合計）",
+    "peers": "ピア数",
+    "totalStake": "総ステーク",
+    "baseFee": "基本手数料",
+    "burned": "バーン済み手数料",
+    "chainId": "チェーン ID",
+    "consensusTitle": "コンセンサス",
+    "stateRoot": "ステートルート",
+    "designatedProposer": "指定プロポーザー（次ブロック）",
+    "rule": "ルール",
+    "activation": "有効化ブロック高",
+    "state": "状態",
+    "validatorsTitle": "バリデータとノードリリース",
+    "active": "稼働中",
+    "inactive": "停止中",
+    "noValidators": "報告されたバリデータはありません。",
+    "nodeRelease": "現在のノードリリース",
+    "mandatory": "必須アップグレード",
+    "bridgeTitle": "ブリッジ",
+    "audits": "監査",
+    "footer": "稼働中と構築済み未有効化の一覧はこちらで管理：",
+    "updated": "情報更新日",
+    "factsMainnet": "リリース、コンセンサス、ブリッジの情報はメインネットのものです。",
+    "factsUnavailable": "リリース情報を読み込めませんでした。"
+  },
+  "regen": {
+    "kicker": "RougeChain Regenerate",
+    "sub": "RougeChain 上の再生プログラム兼トレジャリー",
+    "title": "あなたの住む場所の<em>未来に資金を。</em>",
+    "lead": "RougeChain Regenerate はデジタルインフラと現実世界の再生をつなぎ、私たちの身近な地域社会と生態系をより良くする、透明で測定可能なプロジェクトに資金を提供します。",
+    "viewProjects": "プロジェクトを見る",
+    "propose": "プロジェクトを提案",
+    "statement": "テクノロジーは、<em>触れる土地をより良くするべきです。</em>",
+    "statementBody": "地球規模の問題は現実ですが、変化が実感できるのは地域のレベルです。RougeChain Regenerate は、実際に見て、測って、改善できる地域社会、生態系、インフラから始めます。",
+    "solarpunk": "ソーラーパンクの姿勢：テクノロジー、建築、アート、コミュニティで、ただ生き延びるだけでなく、生きる価値のある未来をつくります。",
+    "categoriesLabel": "カテゴリ",
+    "categories": {
+      "ecology": { "title": "地域の生態系", "blurb": "マングローブ、水の再生、生物多様性、植林。" },
+      "infrastructure": { "title": "再生型インフラ", "blurb": "太陽光、集水、菜園、堆肥化、地域エネルギー。" },
+      "technology": { "title": "オープンテクノロジー", "blurb": "環境センサー、マッピングツール、公共インフラ向けソフトウェア、オープンソースの気候テック。" },
+      "art": { "title": "アート + コミュニティ", "blurb": "パブリックインスタレーション、教育、ワークショップ、コミュニティスペース、ソーラーパンクのプロジェクト。" }
+    },
+    "projectStatus": {
+      "proposed": "提案済み",
+      "reviewing": "審査中",
+      "funded": "資金提供済み",
+      "in_progress": "進行中",
+      "completed": "完了"
+    },
+    "projects": {
+      "tulum-mangrove-01": {
+        "name": "マングローブ回廊の再生",
+        "description": "海岸線を守り、水をろ過し、炭素を蓄える劣化したマングローブ区域を植え直し、モニタリングします。地域の管理者とオープンな調査データを伴います。",
+        "m0": "現地調査とベースライン",
+        "m1": "地域の管理者を迎え入れ",
+        "m2": "植え直し フェーズ 1",
+        "m3": "公開モニタリングダッシュボード"
+      },
+      "tulum-cenote-water-02": {
+        "name": "セノーテ水質センサーネットワーク",
+        "description": "低コストのオープンソースセンサーでセノーテと帯水層を監視し、測定値を公開して、地域の人々が水の健全性を長期的に確認できるようにします。",
+        "m0": "オープンハードウェア仕様",
+        "m1": "パイロットセンサーを設置",
+        "m2": "オープンデータフィードを公開"
+      },
+      "tulum-community-solar-03": {
+        "name": "コミュニティ太陽光 + 集水",
+        "description": "コミュニティスペース向けの共有屋上太陽光と雨水集水。送電網が止まっても動き続ける、しなやかな地域インフラです。",
+        "m0": "設置場所との合意",
+        "m1": "設置",
+        "m2": "公開計測"
+      }
+    },
+    "territoryKicker": "最初の拠点",
+    "territoryName": "TULUM",
+    "territoryBody": "再生は現実の場所から始めるべきです。RougeChain Regenerate はまず、テクノロジー、生態系、文化、急速な開発が交差するトゥルムでプロジェクトを探ります。",
+    "funded": "資金提供中 — 下のプロジェクトとオンチェーンの助成をご覧ください。",
+    "notFunded": "プロジェクトを探索中 — まだ資金提供はありません。",
+    "treasuryTitle": "トレジャリーとインパクト",
+    "treasuryLive": "RougeChain からライブで取得",
+    "treasuryPending": "トレジャリーアドレスの公開後に稼働します",
+    "treasuryUnreachable": "現在ノードに接続できません。",
+    "stat": {
+      "balance": "トレジャリー残高",
+      "funded": "資金提供したプロジェクト",
+      "deployed": "総拠出額",
+      "territories": "活動中の拠点",
+      "notLive": "未稼働"
+    },
+    "wallet": "トレジャリーウォレット",
+    "copyAddress": "アドレスをコピー",
+    "donate": "誰でもこのアドレスに XRGE を寄付できます。すべての寄付と助成はオンチェーンで公開されます。",
+    "donations": "受け取った寄付",
+    "viewExplorer": "エクスプローラーで見る",
+    "recent": "最近のアクティビティ",
+    "donation": "寄付",
+    "grant": "助成",
+    "noTxs": "まだトランザクションはありません。",
+    "testnet": "テストネットを使用中です。Regenerate のトレジャリーはメインネットのウォレットのため、ここでは数値を表示しません。表示される投票はテストネットのノードのものです。",
+    "proofKicker": "インパクトの証明",
+    "proofBody": "資金提供を受けたすべてのプロジェクトには、永続的なオンチェーンのインパクト記録が残ります。資金の行き先、約束した内容、完了した内容、そして成果の証拠です。チャリティーのブランディングではなく、プロトコルです。",
+    "protocol": {
+      "project": "プロジェクト",
+      "location": "場所",
+      "funding": "資金",
+      "milestones": "マイルストーン",
+      "evidence": "証拠",
+      "verification": "検証"
+    },
+    "projectsTitle": "プロジェクト",
+    "illustrative": "例示の候補案です — まだ資金提供されたプロジェクトはありません。プロセスが始まると、実際の提案とオンチェーン記録がカードに反映されます。",
+    "milestones": "マイルストーン",
+    "evidence": "証拠",
+    "evidencePending": "証拠：未提出",
+    "fundingNone": "資金：まだなし",
+    "fundingTbd": "資金：未定",
+    "requested": "{{amount}} XRGE を申請",
+    "fundedOnChain": "オンチェーンで {{amount}} XRGE 提供済み",
+    "proposeTitle": "この地域のためのプロジェクトはありますか？",
+    "proposeLead": "私たちはトゥルムで最初の拠点をつくっています。地域の生態系、インフラ、オープンテクノロジー、コミュニティに取り組んでいる方は、ぜひ送ってください。すべての提案を確認し、返信します。"
+  },
+  "proposalForm": {
+    "name": "お名前または団体名",
+    "contact": "メールまたは Telegram",
+    "contactPh": "返信先",
+    "project": "プロジェクト名",
+    "location": "場所",
+    "locationPh": "例：Tulum, Quintana Roo",
+    "category": "カテゴリ",
+    "choose": "選択してください",
+    "amount": "申請額（XRGE）",
+    "amountPh": "未定なら空欄のまま",
+    "payout": "支払い先の RougeChain アドレス（任意）",
+    "description": "何をしますか？その場所に何が変わりますか？",
+    "milestones": "マイルストーンと成果の確認方法",
+    "milestonesPh": "1 行に 1 つ：何を行うかと、その証拠（写真、データ、領収書）",
+    "links": "リンク（任意）",
+    "linksPh": "ウェブサイト、SNS、過去の実績",
+    "submit": "提案を送信",
+    "sending": "送信中…",
+    "discord": "先に質問したい方は Discord へ",
+    "error": "送信できませんでした。接続を確認して再試行するか、Discord に投稿してください。",
+    "sentTitle": "提案を受け付けました",
+    "sentBody": "ありがとうございます。すべての提案を確認し、いただいた連絡先に返信します。採択されたプロジェクトはこのページに掲載され、資金提供はトレジャリーウォレットからオンチェーンで確認できます。",
+    "another": "別の提案を送る"
+  },
+  "votes": {
+    "title": "コミュニティ投票",
+    "lead": "トレジャリーがどのプロジェクトに資金を出すかは XRGE 保有者が決めます。重みは投票開始時の残高で、対象供給量の {{cap}}% が上限です。チーム、トレジャリー、取引所のウォレットは投票しません。提案は投票率 {{turnout}}% 以上で、賛成が反対を上回れば可決されます。",
+    "signed": "すべての票は投票者のウォレットで署名され、署名とともに公開されるため、誰でも再集計できます。",
+    "open": "提案を作成",
+    "empty": "まだ提案はありません。採択されたプロジェクト提案は、ここでコミュニティ投票にかけられます。",
+    "unavailable": "現在、このノードではコミュニティ投票を利用できません。",
+    "loading": "コミュニティ投票を読み込み中…",
+    "status": {
+      "open": "投票受付中",
+      "passed": "可決 · 支払い待ち",
+      "paid": "可決 · 支払い済み",
+      "failed": "否決",
+      "cancelled": "取り消し"
+    },
+    "choice": {
+      "yes": "賛成",
+      "no": "反対",
+      "abstain": "棄権"
+    },
+    "choiceLower": {
+      "yes": "賛成",
+      "no": "反対",
+      "abstain": "棄権"
+    },
+    "tallyLabel": "賛成 {{yes}}、反対 {{no}}、棄権 {{abstain}} XRGE",
+    "turnout": "投票率 {{have}} / 必要 {{need}}",
+    "requests": "申請額",
+    "to": "宛先",
+    "closed": "{{date}} に終了",
+    "timeLeftDays": "残り {{count}} 日",
+    "timeLeftHours": "残り {{count}} 時間",
+    "timeLeftMinutes": "残り {{count}} 分",
+    "timeLeftClosed": "終了",
+    "voters_other": "投票者 {{count}} 人 · ブロック {{height}} 時点のスナップショット",
+    "details": "詳細",
+    "connect": "投票するにはウォレットを接続してください。",
+    "locked": "投票するにはウォレットのロックを解除してください。",
+    "excluded": "このウォレットはチーム、トレジャリー、または取引所のウォレットのため投票できません。",
+    "noWeight": "投票開始時にこのウォレットは XRGE を保有していなかったため、この提案への投票権はありません。",
+    "weight": "あなたの重み {{weight}} XRGE",
+    "weightVoted": "あなたの重み {{weight}} XRGE · {{vote}}に投票済み（変更できます）",
+    "reviewTitle": "投票を確認して署名",
+    "reviewRows": {
+      "proposal": "提案",
+      "choice": "あなたの投票",
+      "weight": "あなたの重み",
+      "voter": "署名者",
+      "network": "ネットワーク"
+    },
+    "reviewNote": "投票はトランザクションではなく署名付きメッセージです。手数料はかからず、残高も動きません。投票受付中は票を変更できます。",
+    "sign": "投票に署名",
+    "cancel": "キャンセル",
+    "recorded": "投票を記録しました：{{choice}}",
+    "paidFrom": "トレジャリーから {{amount}} を支払い済み",
+    "payoutPh": "トレジャリー支払いの tx ID",
+    "recordPayout": "支払いを記録",
+    "payoutRecorded": "支払いを記録しました",
+    "form": {
+      "intro": "提案を作成すると、その時点の対象残高がすべてスナップショットされ、投票期間は {{days}} 日間です。キュレーター権限または {{min}} XRGE が必要です。",
+      "title": "タイトル",
+      "summary": "概要",
+      "territory": "地域",
+      "requested": "申請 XRGE",
+      "recipient": "受取人（rouge1…）",
+      "link": "詳細リンク（https://）",
+      "submit": "投票を開始",
+      "opened": "提案の投票を開始しました"
+    }
+  },
+  "privacy": {
+    "eyebrow": "法務",
+    "title": "プライバシーポリシー",
+    "lastUpdated": "最終更新日：{{date}}",
+    "englishOnly": "このポリシーは英語で提供されています。英語の本文が正式な版です。"
+  }
+}

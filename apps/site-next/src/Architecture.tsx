@@ -1,48 +1,57 @@
 import { Section, Status } from "@rougechain/ui";
+import { Trans, useTranslation } from "react-i18next";
 import { apps, globalApps, globalAppGroups, appHref } from "./ecosystem/apps";
 export default function Architecture() {
+  const { t } = useTranslation("marketing");
+  // App names, groups and statuses are shared reference data (common namespace).
+  const { t: tc } = useTranslation("common");
+  const appName = (a: { id: string; name: string }) =>
+    tc(`apps.${a.id}.name`, { defaultValue: a.name });
   return (
     <main id="main">
       <div className="container page-intro">
-        <div className="eyebrow">Ecosystem / Architecture proposal</div>
+        <div className="eyebrow">{t("architecture.eyebrow")}</div>
         <h1>
-          One identity.
-          <br />
-          <span className="muted">Independent applications.</span>
+          <Trans
+            t={t}
+            i18nKey="architecture.title"
+            components={{ br: <br />, muted: <span className="muted" /> }}
+          />
         </h1>
-        <p>
-          Shared foundations connect the ecosystem. Each application owns its
-          routes, deployment and release cycle.
-        </p>
-        <Status state="demo">POC topology · No host migration</Status>
+        <p>{t("architecture.lead")}</p>
+        <Status state="demo">{t("architecture.status")}</Status>
         <p>
           <a className="text-link" href="#wallet-architecture">
-            See the wallet-provider architecture ↓
+            {t("architecture.seeWallet")}
           </a>
         </p>
       </div>
       <Section
-        eyebrow="01 / Proposed destinations"
-        title="A network of applications."
+        eyebrow={t("architecture.destinations.eyebrow")}
+        title={t("architecture.destinations.title")}
       >
         <div className="topology-root">
-          rougechain.io <span>Marketing · discovery · global Apps menu</span>
+          rougechain.io <span>{t("architecture.destinations.root")}</span>
         </div>
         <div className="topology-groups">
           {globalAppGroups.map((group) => (
             <section key={group}>
-              <h3>{group}</h3>
+              <h3>{tc(`appGroups.${group}`)}</h3>
               {globalApps
                 .filter((a) => a.group === group)
                 .map((a) => (
                   <article key={a.id}>
                     {a.status === "future" ? (
-                      <span>{a.name} · Coming soon</span>
+                      <span>{t("architecture.comingSoon", { name: appName(a) })}</span>
                     ) : (
-                      <a href={appHref(a)}>{a.name} ↗</a>
+                      <a href={appHref(a)}>{appName(a)} ↗</a>
                     )}
                     <code>{a.proposedHost}</code>
-                    <small>Proposed destination · {a.status}</small>
+                    <small>
+                      {t("architecture.destinations.proposed", {
+                        status: tc(`appStatus.${a.status}`),
+                      })}
+                    </small>
                   </article>
                 ))}
             </section>
@@ -50,8 +59,8 @@ export default function Architecture() {
         </div>
       </Section>
       <Section
-        eyebrow="02 / Beyond applications"
-        title="Different questions. Clear destinations."
+        eyebrow={t("architecture.beyond.eyebrow")}
+        title={t("architecture.beyond.title")}
       >
         <div className="specimen-grid">
           {(["developer-resource", "community", "utility"] as const).map(
@@ -59,26 +68,26 @@ export default function Architecture() {
               <article className="surface" key={kind}>
                 <h3>
                   {kind === "developer-resource"
-                    ? "Build"
+                    ? t("architecture.beyond.build")
                     : kind === "community"
-                      ? "Community"
-                      : "Utilities"}
+                      ? t("architecture.beyond.community")
+                      : t("architecture.beyond.utilities")}
                 </h3>
                 <p className="pane-note">
                   {kind === "developer-resource"
-                    ? "What can I build?"
+                    ? t("architecture.beyond.buildQuestion")
                     : kind === "community"
-                      ? "Where can I participate?"
-                      : "What can I inspect?"}
+                      ? t("architecture.beyond.communityQuestion")
+                      : t("architecture.beyond.utilitiesQuestion")}
                 </p>
                 {apps
                   .filter((a) => a.kind === kind)
                   .map((a) => (
                     <p key={a.id}>
                       {a.status === "future" ? (
-                        <span>{a.name} · Coming soon</span>
+                        <span>{t("architecture.comingSoon", { name: appName(a) })}</span>
                       ) : (
-                        <a href={appHref(a)}>{a.name} ↗</a>
+                        <a href={appHref(a)}>{appName(a)} ↗</a>
                       )}
                     </p>
                   ))}
@@ -86,33 +95,25 @@ export default function Architecture() {
             ),
           )}
         </div>
-        <p>
-          The marketing navigation introduces the project. Apps groups
-          applications under Hold, Trade, Play, Talk and Explore. Local
-          navigation belongs to the current dApp. The workspace launcher opens
-          applications plus tools such as Build, Security and Network.
-        </p>
+        <p>{t("architecture.beyond.note")}</p>
       </Section>
       <Section
         id="wallet-architecture"
-        eyebrow="03 / Shared wallet architecture"
-        title="One identity. A reviewed provider boundary."
+        eyebrow={t("architecture.wallet.eyebrow")}
+        title={t("architecture.wallet.title")}
       >
-        <p>
-          Each dApp consumes a common wallet-provider contract rather than
-          owning private keys itself.
-        </p>
+        <p>{t("architecture.wallet.lead")}</p>
         <figure
           className="wallet-flow"
-          aria-label="Proposed wallet-provider architecture"
+          aria-label={t("architecture.wallet.figureLabel")}
         >
           <div className="wallet-flow-providers">
             <div>
-              RougeChain Browser Wallet
-              <small>Extension provider candidate</small>
+              {t("architecture.wallet.extension")}
+              <small>{t("architecture.wallet.extensionNote")}</small>
             </div>
             <div>
-              Qwalla<small>Mobile / dApp browser candidate</small>
+              Qwalla<small>{t("architecture.wallet.qwallaNote")}</small>
             </div>
           </div>
           <div className="wallet-flow-connector" aria-hidden="true">
@@ -120,7 +121,7 @@ export default function Architecture() {
           </div>
           <div className="wallet-flow-contract">
             <code>@rougechain/wallet-provider</code>
-            <small>Proposed contract · account · network · permissions</small>
+            <small>{t("architecture.wallet.contractNote")}</small>
           </div>
           <div className="wallet-flow-connector" aria-hidden="true">
             ↓
@@ -129,110 +130,61 @@ export default function Architecture() {
             {globalApps
               .filter((a) => a.workspaceView)
               .map((a) => (
-                <span key={a.id}>{a.name}</span>
+                <span key={a.id}>{appName(a)}</span>
               ))}
           </div>
-          <figcaption>
-            Conceptual production architecture. Final provider and security
-            design belongs to the lead developer.
-          </figcaption>
+          <figcaption>{t("architecture.wallet.caption")}</figcaption>
         </figure>
         <div className="specimen-grid">
           <article className="surface">
-            <h3>What the POC demonstrates</h3>
-            <p>
-              DemoWalletProvider shares one synthetic identity across routes and
-              workspace previews. Session storage retains only a demo flag,
-              synthetic address and selected source.
-            </p>
-            <p>
-              No provider, permissions, keys or signing are involved. This
-              single-origin demo does not prove cross-origin wallet
-              connectivity.
-            </p>
+            <h3>{t("architecture.wallet.demonstratesTitle")}</h3>
+            <p>{t("architecture.wallet.demonstrates1")}</p>
+            <p>{t("architecture.wallet.demonstrates2")}</p>
           </article>
           <article className="surface">
-            <h3>What production must evaluate</h3>
-            <p>
-              RougeChain browser extension, Qwalla and an authoritative web
-              wallet origin are provider candidates.
-            </p>
-            <p>
-              Connection, account/network state and transaction permissions need
-              a reviewed contract. No signing or transaction methods are
-              implemented here.
-            </p>
+            <h3>{t("architecture.wallet.evaluateTitle")}</h3>
+            <p>{t("architecture.wallet.evaluate1")}</p>
+            <p>{t("architecture.wallet.evaluate2")}</p>
           </article>
         </div>
         <div className="architecture-note">
-          <strong>Wallet identity/provider ≠ raw private-key storage</strong>
-          <p>
-            localStorage does not cross origins/subdomains. The future provider
-            strategy must not attempt to share raw vault storage between dApps.
-            Preserve access to existing vaults until a deliberate migration is
-            approved.
-          </p>
+          <strong>{t("architecture.wallet.noteTitle")}</strong>
+          <p>{t("architecture.wallet.note")}</p>
         </div>
       </Section>
       <Section
-        eyebrow="04 / Boundaries"
-        title="Share the language. Own the product."
+        eyebrow={t("architecture.boundaries.eyebrow")}
+        title={t("architecture.boundaries.title")}
       >
         <div className="specimen-grid">
           <article className="surface">
-            <h3>Implemented in this POC</h3>
-            <p>@rougechain/brand — tokens and identity</p>
-            <p>@rougechain/ui — primitives and RougeAppShell</p>
-            <p>@rougechain/chain-readonly — allowlisted GET data</p>
-            <p>
-              Showcase owns the ecosystem registry, routes and workspace
-              previews.
-            </p>
+            <h3>{t("architecture.boundaries.implementedTitle")}</h3>
+            <p>{t("architecture.boundaries.brand")}</p>
+            <p>{t("architecture.boundaries.ui")}</p>
+            <p>{t("architecture.boundaries.chainReadonly")}</p>
+            <p>{t("architecture.boundaries.showcase")}</p>
           </article>
           <article className="surface">
-            <h3>Proposed production packages</h3>
+            <h3>{t("architecture.boundaries.proposedTitle")}</h3>
             <p>app-shell · chain-client · network-config · i18n</p>
-            <p>
-              @rougechain/wallet-provider requires a separately approved trust
-              and origin architecture.
-            </p>
-            <p>
-              Independent deployments consume versioned packages. No shared
-              runtime server is required for this POC.
-            </p>
+            <p>{t("architecture.boundaries.walletProvider")}</p>
+            <p>{t("architecture.boundaries.independent")}</p>
           </article>
         </div>
       </Section>
-      <Section eyebrow="05 / Transition" title="Move deliberately.">
+      <Section
+        eyebrow={t("architecture.transition.eyebrow")}
+        title={t("architecture.transition.title")}
+      >
         <ol className="migration-steps">
-          <li>Adopt shared brand and UI tokens in one existing surface.</li>
-          <li>
-            Extract the app shell and navigation registry with ownership agreed.
-          </li>
-          <li>Pilot Explorer on its own host with verified data contracts.</li>
-          <li>
-            Move Swap only after wallet, signing and origin boundaries are
-            approved.
-          </li>
-          <li>
-            Redirect old paths only after each destination is deployed and
-            stable.
-          </li>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <li key={n}>{t(`architecture.transition.steps.${n}`)}</li>
+          ))}
         </ol>
-        <p>
-          The global switcher crosses applications and hosts. Local navigation
-          stays inside the current application. POC routes demonstrate these
-          boundaries on one origin.
-        </p>
+        <p>{t("architecture.transition.note")}</p>
         <div className="architecture-note">
-          <strong>Wallet origin boundary</strong>
-          <p>
-            localStorage is origin-scoped. Wallet material on rougechain.io will
-            not automatically transfer to wallet.rougechain.io. A
-            wallet-provider design, migration policy and security review are
-            required before any split. This POC never reads or stores wallet
-            material.
-          </p>
+          <strong>{t("architecture.transition.originTitle")}</strong>
+          <p>{t("architecture.transition.origin")}</p>
         </div>
       </Section>
     </main>

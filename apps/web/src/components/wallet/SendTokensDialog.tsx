@@ -14,7 +14,7 @@ import {
 import { toast } from "sonner";
 import { getWalletBalance, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
 import { secureTransfer, secureShield } from "@/lib/secure-api";
-import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
+import { parseSendAmount, rawToDisplay, formatBalance } from "@/lib/send-amount";
 import PqcQrScanner from "./PqcQrScanner";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { createShieldedNote, type ShieldedNote } from "@/lib/shielded-crypto";
@@ -88,7 +88,6 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   const rawSelectedBalance = balances.find(b => b.symbol === selectedToken)?.balance || 0;
-  const isQeth = selectedToken === "qETH";
   const selectedTokenInfo = balances.find(b => b.symbol === selectedToken);
 
   // Live address validation
@@ -124,17 +123,19 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
       }
     }
 
-    const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      setError("Invalid amount");
+    // Typed amounts are whole tokens; tokens other than XRGE are sent in raw on-chain units
+    // (qBTC 8 decimals, qETH/qUSDC 6, custom tokens 0) — see lib/send-amount.ts.
+    const sendAmount = parseSendAmount(amount, selectedToken);
+    if ("error" in sendAmount) {
+      setError(sendAmount.error);
       return;
     }
-    const amountToSend = isQeth ? humanToQeth(amountNum) : amountNum;
+    const amountToSend = sendAmount.raw;
+    const amountNum = selectedToken === "XRGE" ? sendAmount.raw : Number(rawToDisplay(sendAmount.raw, selectedToken));
 
     // Check token balance (raw units)
     if (amountToSend > rawSelectedBalance) {
-      const displayBal = isQeth ? qethToHuman(rawSelectedBalance) : rawSelectedBalance;
-      setError(`Insufficient ${selectedToken} balance. You have ${isQeth ? displayBal.toString() : rawSelectedBalance.toLocaleString()} ${selectedToken}`);
+      setError(`Insufficient ${selectedToken} balance. You have ${formatBalance(rawSelectedBalance, selectedToken)} ${selectedToken}`);
       return;
     }
 
@@ -359,9 +360,7 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
                 </SelectTrigger>
                 <SelectContent>
                   {balances.map((token) => {
-                    const balStr = token.symbol === "qETH"
-                      ? formatQethForDisplay(token.balance)
-                      : token.balance.toLocaleString();
+                    const balStr = formatBalance(token.balance, token.symbol);
                     return (
                       <SelectItem key={token.symbol} value={token.symbol}>
                         <div className="flex items-center gap-2">
@@ -435,15 +434,11 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
                 size="sm"
                 className="h-8 px-3 text-xs text-primary"
                 onClick={() => {
-                  let maxAmount: number;
                   if (selectedToken === "XRGE") {
-                    maxAmount = Math.max(0, rawSelectedBalance - BASE_TRANSFER_FEE);
-                  } else if (isQeth) {
-                    maxAmount = qethToHuman(rawSelectedBalance);
+                    setAmount(Math.max(0, rawSelectedBalance - BASE_TRANSFER_FEE).toString());
                   } else {
-                    maxAmount = rawSelectedBalance;
+                    setAmount(rawToDisplay(rawSelectedBalance, selectedToken));
                   }
-                  setAmount(maxAmount.toString());
                 }}
               >
                 Max
@@ -463,7 +458,7 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
               </span>
             </div>
             <div className="flex flex-wrap gap-x-2 justify-between text-xs text-muted-foreground mt-1">
-              <span className="truncate">Available: {isQeth ? formatQethForDisplay(rawSelectedBalance) : rawSelectedBalance.toLocaleString()} {selectedToken}</span>
+              <span className="truncate">Available: {formatBalance(rawSelectedBalance, selectedToken)} {selectedToken}</span>
               <span className="shrink-0">Fee: {BASE_TRANSFER_FEE} XRGE</span>
             </div>
           </div>

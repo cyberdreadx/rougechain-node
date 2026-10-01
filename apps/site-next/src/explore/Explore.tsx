@@ -1,14 +1,16 @@
 import { Section } from "@rougechain/ui";
 import { NetworkControls, DataNote } from "../Network";
 import WorkspaceExperience from "./WorkspaceExperience";
+import { useTranslation } from "react-i18next";
 export default function Explore() {
+  const { t } = useTranslation("common");
   return (
-    <Section id="explore" eyebrow="02 / Your window into the network">
+    <Section id="explore" eyebrow={t("explore.eyebrow")}>
       <div className="section-heading">
         <div>
-          <h2>Explore RougeChain</h2>
+          <h2>{t("explore.title")}</h2>
           <p className="explore-subtitle">
-            The network. The tools. The possibilities. Make it your own.
+            {t("explore.subtitle")}
           </p>
         </div>
         <NetworkControls />
@@ -16,10 +18,10 @@ export default function Explore() {
       <WorkspaceExperience embedded />
       <div className="workspace-footer">
         <a className="button outline" href="/workspace">
-          Open full workspace ↗
+          {t("explore.openWorkspace")} ↗
         </a>
         <span className="pane-note">
-          Start with three panes. Open more from the launcher.
+          {t("explore.paneNote")}
         </span>
       </div>
       <DataNote />

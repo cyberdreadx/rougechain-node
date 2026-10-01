@@ -93,7 +93,7 @@ export function createSignedTokenCreation(
   tokenName: string,
   tokenSymbol: string,
   initialSupply: number,
-  fee = 10,
+  fee = 100, // the node charges a fixed 100 XRGE for create_token (v2_binding)
   image?: string
 ): SignedTransaction {
   return buildAndSign(wallet, {
@@ -339,7 +339,13 @@ export function createSignedNftBatchMint(
   wallet: WalletKeys,
   collectionId: string,
   names: string[],
-  opts: { uris?: string[]; batchAttributes?: unknown[] } = {}
+  opts: {
+    uris?: string[];
+    /** Per-NFT attributes, one entry per name (signed as the payload's `attributes` field). */
+    attributes?: unknown[];
+    /** @deprecated Alias of `attributes` (SDK ≤ 1.10.0 sent it under a field the node ignored, so attributes were dropped). */
+    batchAttributes?: unknown[];
+  } = {}
 ): SignedTransaction {
   return buildAndSign(wallet, {
     type: "nft_batch_mint",
@@ -347,7 +353,8 @@ export function createSignedNftBatchMint(
     names,
     fee: 5 * names.length,
     uris: opts.uris,
-    batchAttributes: opts.batchAttributes,
+    // The node reads per-NFT batch attributes only from `attributes` (v2_binding nft_batch_mint).
+    attributes: opts.attributes ?? opts.batchAttributes,
   });
 }
 

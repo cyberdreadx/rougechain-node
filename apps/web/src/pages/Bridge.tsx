@@ -36,6 +36,7 @@ import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
 import { qethToHuman, humanToQeth, formatQethForDisplay, formatTokenAmount } from "@/hooks/use-eth-price";
 import { useTranslation, Trans } from "react-i18next";
+import { btcWithdrawLimits, btcToSats, estimateBtcNetworkFeeSats, btcReceiveEstimateSats, isBtcWithdrawAllowed, fetchRecommendedBtcFeeRate } from "@/lib/btc-withdraw-fee";
 import { TokenIcon } from "@/components/ui/token-icon";
 import { EmptyState } from "@/components/ui/empty-state";
 import BaseApprovalDialog from "@/components/wallet/BaseApprovalDialog";
@@ -94,6 +95,7 @@ const Bridge = () => {
   const [qusdcBalance, setQusdcBalance] = useState(0);
   const [xrgeL1Balance, setXrgeL1Balance] = useState(0);
   const [qbtcBalance, setQbtcBalance] = useState(0); // raw satoshis (8-dec)
+  const [btcFeeRate, setBtcFeeRate] = useState<number | null>(null); // mempool.space sat/vB, for the fee estimate
 
   // BTC deposit is manual (OP_RETURN + txid), so it has its own claim state.
   const [btcTxid, setBtcTxid] = useState("");
@@ -168,6 +170,14 @@ const Bridge = () => {
       setXrgeConfig(xrgeCfg);
     }).finally(() => setConfigLoading(false));
   }, []);
+
+  // qBTC withdrawals: the Bitcoin network fee is deducted from the payout, so show an estimate.
+  useEffect(() => {
+    if (direction !== "withdraw" || asset !== "BTC") return;
+    let cancelled = false;
+    fetchRecommendedBtcFeeRate(config?.btcNetwork).then((r) => { if (!cancelled) setBtcFeeRate(r); });
+    return () => { cancelled = true; };
+  }, [direction, asset, config?.btcNetwork]);
 
   useEffect(() => {
     const tryLoad = () => {
@@ -703,6 +713,7 @@ const Bridge = () => {
       if (btcAddr.length < 14) { toast.error(t("bridge.errors.invalidBtcAddress")); return; }
       const amountUnits = Math.round(amountNum * 1e8); // 1 unit = 1 satoshi
       if (amountUnits <= 0) { toast.error(t("bridge.errors.invalidQbtcAmount")); return; }
+      if (!isBtcWithdrawAllowed(amountUnits, btcLimits)) { toast.error(t("bridge.errors.btcBelowMinimum", { min: (btcLimits.minSats / 1e8).toFixed(8) })); return; }
       if (amountUnits > qbtcBalance) { toast.error(t("bridge.errors.insufficientBalance", { symbol: "qBTC" })); return; }
       setProcessing(true);
       try {
@@ -853,6 +864,10 @@ const Bridge = () => {
   }
 
   const isBtcAsset = asset === "BTC";
+  const btcLimits = btcWithdrawLimits(config);
+  const btcAmountSats = btcToSats(amount);
+  const btcFeeEstSats = estimateBtcNetworkFeeSats(btcFeeRate, btcLimits.maxNetworkFeeSats);
+  const btcBelowMin = direction === "withdraw" && isBtcAsset && btcAmountSats > 0 && !isBtcWithdrawAllowed(btcAmountSats, btcLimits);
   const fromChain = direction === "deposit" ? (isBtcAsset ? "Bitcoin" : chainLabel) : "RougeChain";
   const toChain = direction === "deposit" ? "RougeChain" : (isBtcAsset ? "Bitcoin" : chainLabel);
   const fromToken = direction === "deposit" ? currentAsset.label : currentAsset.l1Label;
@@ -1138,6 +1153,30 @@ const Bridge = () => {
                 </div>
               )}
 
+              {/* qBTC withdraw: minimum + network fee (paid by the withdrawer, deducted from the payout) */}
+              {direction === "withdraw" && isBtcAsset && (
+                <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2 space-y-1 text-xs text-muted-foreground">
+                  <div className="flex justify-between gap-2">
+                    <span>{t("bridge.btcWithdraw.minimum")}</span>
+                    <span className={`font-mono ${btcBelowMin ? "text-destructive" : ""}`}>{(btcLimits.minSats / 1e8).toFixed(8)} BTC</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span>{t("bridge.btcWithdraw.networkFee")}</span>
+                    <span className="font-mono">{btcFeeEstSats === null ? t("bridge.btcWithdraw.feeUnavailable") : `≈ ${(btcFeeEstSats / 1e8).toFixed(8)} BTC`}</span>
+                  </div>
+                  {btcAmountSats > 0 && btcFeeEstSats !== null && (
+                    <div className="flex justify-between gap-2 text-foreground/80">
+                      <span>{t("bridge.btcWithdraw.youReceive")}</span>
+                      <span className="font-mono">≈ {(btcReceiveEstimateSats(btcAmountSats, btcFeeEstSats) / 1e8).toFixed(8)} BTC</span>
+                    </div>
+                  )}
+                  <p className="text-[11px]">{t("bridge.btcWithdraw.feeNote", { max: (btcLimits.maxNetworkFeeSats / 1e8).toFixed(8) })}</p>
+                  {btcBelowMin && (
+                    <p role="alert" className="text-destructive">{t("bridge.errors.btcBelowMinimum", { min: (btcLimits.minSats / 1e8).toFixed(8) })}</p>
+                  )}
+                </div>
+              )}
+
               {/* DeLorean loader during processing */}
               {processing && (
                 <DeloreanLoader text={step || t("bridge.processing")} />
@@ -1193,7 +1232,7 @@ const Bridge = () => {
                 )}
                 <Button
                   onClick={direction === "deposit" ? handleDeposit : handleWithdraw}
-                  disabled={processing || !amount || parseFloat(amount) <= 0 || (direction === "withdraw" && asset === "BTC" && !BTC_WITHDRAW_ENABLED)}
+                  disabled={processing || !amount || parseFloat(amount) <= 0 || (direction === "withdraw" && asset === "BTC" && (!BTC_WITHDRAW_ENABLED || btcBelowMin))}
                   className="w-full h-12 text-base gap-2"
                 >
                   {processing ? (

@@ -60,7 +60,7 @@ brew install openssl
 | Node is running | `curl http://127.0.0.1:5100/api/health` |
 | Peers are correct | Make sure `--peers` includes `/api` (e.g. mainnet `--peers "https://api.rougechain.io/api"`) |
 | Genesis + chain-id match the network | Mainnet needs `--genesis daemon/genesis-mainnet.json --chain-id rougechain-mainnet-1`. A wrong/missing genesis or chain-id makes a fresh node fail to join — its `/api/health` `chain_id` must read `rougechain-mainnet-1` |
-| Firewall isn't blocking | Ensure your `--api-port` / P2P port reachability is correct |
+| Firewall isn't blocking | Peers reach your node through its `--public-url` (the API port behind your reverse proxy); there is no separate P2P port |
 | Network is reachable | mainnet `curl https://api.rougechain.io/api/health` (or testnet `https://testnet.rougechain.io/api/health`) |
 
 **Peers value of 0**
@@ -84,8 +84,9 @@ If your node's chain height isn't advancing:
 If you're mining but other nodes don't see your blocks:
 
 1. **Set `--public-url`** — Without this, your node is invisible to the network. Other nodes can't sync from you.
-2. **Check your firewall** — Your API port must be reachable from the internet
-3. **Verify with peers API:**
+2. **Check your firewall** — Your `--public-url` (the HTTPS reverse proxy in front of your API port) must be reachable from the internet
+3. **Check you are the designated proposer** — only the validator with the most stake proposes blocks (see [Staking Issues](#staked-but-not-producing-blocks))
+4. **Verify with peers API:**
    ```bash
    curl https://testnet.rougechain.io/api/peers
    # Your node's URL should appear in the list
@@ -97,13 +98,13 @@ If you're mining but other nodes don't see your blocks:
 
 ### "Insufficient balance"
 
-Transaction amount + fee must be less than your balance. The fee is **0.1 XRGE** per transfer.
+Transaction amount + fee must not exceed your balance. The fee for a wallet- or API-signed transfer is **1 XRGE**, and the full fee is debited.
 
 ```
-Required: amount + 0.1 XRGE
+Required: amount + 1 XRGE
 ```
 
-Use the faucet to get more tokens:
+On testnet, use the faucet to get more tokens:
 - Website: Go to the **Wallet** page and click "Request Faucet"
 - API: `POST /api/v2/faucet`
 
@@ -131,16 +132,21 @@ Common causes:
 
 ### Wallet not loading
 
-- Clear browser cache and `localStorage`
 - Check the browser console for errors (`F12` → Console)
 - Try a different browser
 - If using the extension, check it's enabled and not suspended
+- As a last resort, clear the site's browser data — **only after** you have your seed phrase or a `.pqcbackup` file, because the web wallet's keys are stored in the browser and clearing it deletes them
 
 ### Lost private key
 
-**There is no recovery mechanism.** Private keys are stored locally in your browser. If you clear browser data, the keys are gone.
+Private keys are stored locally in your browser, so clearing browser data deletes them. You can restore the wallet from:
 
-**Best practice:** Always export and safely store your keys after creating a wallet.
+- your **24-word seed phrase** — restores your signing key, address and funds; it also restores your messaging/mail encryption key if the wallet was created or imported from the phrase on the website since 2026-10-01 or in Qwalla (older website wallets and extension wallets have a random key), or
+- an encrypted **`.pqcbackup`** file and its password — restores both keys.
+
+See [Create a Wallet → Backup](getting-started/create-wallet.md#backup-your-wallet). Without either, the keys cannot be recovered.
+
+**Best practice:** Write down your seed phrase and export an encrypted `.pqcbackup` right after creating a wallet.
 
 ### Extension not connecting
 
@@ -167,12 +173,12 @@ You need at least **10,000 XRGE** plus the transaction fee — the 10,000 XRGE m
   **same key** — see [Becoming a Validator](staking/becoming-validator.md).
 - Ensure the `--mine` flag is set on your node
 - Your node must be synced (height matches the network)
-- Validator selection is stake-weighted — with minimum stake, you'll produce blocks less frequently
+- **Only the designated proposer produces blocks.** Since mainnet height 100 that is the eligible validator with the most stake; every other staked validator never proposes (its log shows `not the designated proposer … — not sealing`), but it still votes and earns a stake-weighted share of fees in every block. Check `designated_proposer_next` in `GET /api/stats` or `proposer` in `GET /api/selection`
 - Check your validator status: `GET /api/validators` — your node's public key should appear with active stake
 
 ### Unstaked but balance not returned
 
-After unstaking, the tokens are returned to your wallet address. Check your balance:
+After unstaking, the tokens enter a **500-block** unbonding period and are then returned to your wallet address. Blocks are only produced when there are transactions, so how long this takes depends on network activity. Check your balance:
 
 ```bash
 curl "https://testnet.rougechain.io/api/balance/YOUR_PUBLIC_KEY"

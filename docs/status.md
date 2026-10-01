@@ -61,8 +61,8 @@ a minute.
 | Verified BFT finality (FINALITY_V2, Release 2a) | **LIVE since block 150** | Every block carries its parent's ≥⅔-stake certificate; see [Finality](staking/finality.md) |
 | Player-signed contracts (GAME_READY) | **LIVE since block 150** | Deploy and call signed by the player; see [Smart Contracts](advanced/smart-contracts.md) |
 | Game-ready contracts (GAME_READY 2) | **LIVE since block 160** | Tokens, NFTs, collections and minting, randomness, multi-hop moves; state root covers NFTs and contract state |
-| Grind-proof game rolls (GAME_READY 3, `host_block_hash`) | **Scheduled: block 170** | Commit-then-settle randomness; one-step `host_random` rolls can be ground by the sender |
-| Payable contract calls (`attach`) | **Scheduled: block 190** | Pay XRGE or tokens with a contract call; moves only if the call succeeds |
+| Grind-proof game rolls (GAME_READY 3, `host_block_hash`) | **LIVE since block 170** | Commit-then-settle randomness; one-step `host_random` rolls can be ground by the sender |
+| Payable contract calls (`attach`) | **LIVE since block 190** | Pay XRGE or tokens with a contract call; moves only if the call succeeds |
 | LP fee collection | **LIVE** | "Collect fees" on Pools withdraws only fee earnings |
 
 The production XRGE bridge **still relies on classical (ECDSA / Safe multisig) authorization on the
@@ -80,7 +80,8 @@ Base side.** It is hardened, capped and monitored, but it is not post-quantum on
 | Post-quantum authority rotation + deterministic authority schedule | Built and tested — not in use |
 | Reproducible V3 contract build / audit candidate | Complete |
 | OP-stack deployment rehearsal (local devnet, throwaway keys and token) | Substantially complete |
-| Consensus Release 2b (fallback proposer, slashing) | Designed — not built |
+| Consensus Release 2b (fallback proposer, skip certificates, slashing tied to them) | Designed — not built |
+| Consensus Release 3 (slashing on equivocation evidence) | Planned — not built |
 
 `FINALITY_V2_ACTIVATION_HEIGHT` is **150** (active). `V3_BRIDGE_ACTIVATION_HEIGHT` is **`None`**: no
 activation height has been chosen for the V3 bridge.

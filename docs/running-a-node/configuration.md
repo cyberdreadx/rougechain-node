@@ -6,18 +6,24 @@ All node configuration is done via command-line flags or environment variables.
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
-| `--host` | - | `127.0.0.1` | Bind address for API/gRPC. Use `0.0.0.0` for public nodes |
-| `--port` | - | `4101` | gRPC port |
-| `--api-port` | - | `5101` | HTTP API port |
-| `--chain-id` | - | `rougechain-devnet-1` | Chain identifier |
-| `--block-time-ms` | - | `400` | Block production interval (ms) |
+| `--host` | - | `127.0.0.1` | Bind address for API/gRPC. For public nodes keep `127.0.0.1` behind a reverse proxy (see [Public Node](../p2p-networking/public-node.md)); `0.0.0.0` exposes the API on every interface |
+| `--port` | - | `4101` | gRPC port (client services; peers do not use it) |
+| `--api-port` | - | `5101` | HTTP API port (also used for all peer traffic) |
+| `--chain-id` | - | `rougechain-devnet-1` | Chain identifier (ignored when `--genesis` is given; the genesis file's `chain_id` wins) |
+| `--genesis` | `QV_GENESIS` | - | Path to a genesis JSON file (e.g. `genesis-mainnet.json`) |
+| `--block-time-ms` | - | `400` | How often the miner checks the mempool (ms). Blocks are only produced when there are transactions |
 | `--mine` | - | `false` | Enable block production |
 | `--node-name` | `QV_NODE_NAME` | - | Human-readable name shown on the network globe |
 | `--data-dir` | - | `~/.quantum-vault/core-node` | Data storage directory |
 | `--peers` | `QV_PEERS` | - | Comma-separated peer URLs |
 | `--public-url` | `QV_PUBLIC_URL` | - | This node's public URL for peer discovery |
-| `--api-keys` | `QV_API_KEYS` | - | Comma-separated API keys |
-| `--rate-limit-per-minute` | - | `0` (unlimited) | Rate limit for API requests |
+| `--api-keys` | `QV_API_KEYS` | - | Comma-separated API keys. When set, every non-exempt route (reads included) requires a key; see [Running a Node](README.md) |
+| `--rate-limit-read-per-minute` | - | `0` (unlimited) | Per-client limit for `GET` requests |
+| `--rate-limit-write-per-minute` | - | `0` (unlimited) | Per-client limit for all other methods |
+| `--rate-limit-validator` | - | `0` (unlimited) | Limit for requests carrying valid signed validator headers |
+| `--rate-limit-peer` | - | `0` (unlimited) | Limit for requests from registered peers (matched by IP) |
+| `--rate-limit-per-minute` | - | `0` | Deprecated alias: used for both read and write limits when neither is set |
+| `--trust-proxy` | `QV_TRUST_PROXY` | `false` | Key rate limits by `X-Real-IP` / rightmost `X-Forwarded-For` for requests from a loopback peer (a local reverse proxy); other peers are always keyed by socket IP |
 | `--dev` | - | `false` | Dev mode: enables legacy v1 unsigned write endpoints **and** allows any CORS origin |
 | — | `QV_CORS_ORIGINS` | *(built-in list)* | Comma-separated origins allowed to call the API from a browser |
 | — | `QV_FAUCET_ENABLED` | `false` | Enable the faucet endpoints (testnet/dev only — never set on mainnet) |
@@ -57,14 +63,13 @@ export QV_CORS_ORIGINS="https://mydapp.example.com,http://localhost:3000"
 ```bash
 ./quantum-vault-daemon \
   --mine \
-  --host 0.0.0.0 \
   --api-port 5100 \
   --node-name "MyNode" \
   --peers "https://testnet.rougechain.io/api" \
   --public-url "https://mynode.example.com"
 ```
 
-Once running, visit `http://localhost:5100` in your browser to see the **built-in node dashboard** with live stats, peer list, and block height.
+Keep the default `--host 127.0.0.1` and serve `--public-url` through a reverse proxy with TLS (see [Public Node](../p2p-networking/public-node.md)). Once running, visit `http://localhost:5100` in your browser to see the **built-in node dashboard** with live stats, peer list, and block height.
 
 ### Multiple Peers
 
@@ -100,11 +105,17 @@ export QV_API_KEYS="key1,key2,key3"
 
 ```
 ~/.quantum-vault/core-node/
-├── chain.jsonl          # Block data (append-only)
-├── tip.json             # Current chain tip
-├── validators-db/       # Validator state (RocksDB)
-└── messenger-db/        # Messenger data (RocksDB)
+├── node-keys.json       # Node / validator identity keypair
+├── chain-db/            # Blocks (sled)
+├── validators-db/       # Validator state (sled)
+├── messenger-db/        # Messenger data (sled)
+├── finality-db/         # Finality certificates (sled)
+├── …-db/                # Other sled trees (mail, pools, NFTs, tokens, nonces, …)
+├── replay_guard.json    # Seen-signature replay guard
+└── finality-signing-journal  # Vote anti-equivocation journal
 ```
+
+All databases are [sled](https://github.com/spacejam/sled) trees. A legacy `chain.jsonl` is only read once, to migrate an old data directory into `chain-db` (it is then renamed to `chain.jsonl.bak`).
 
 ## Running with Systemd (Linux)
 
@@ -118,7 +129,7 @@ After=network.target
 [Service]
 Type=simple
 User=rougechain
-ExecStart=/opt/rougechain/quantum-vault-daemon --mine --host 0.0.0.0 --api-port 5100 --node-name "MyNode" --public-url "https://mynode.example.com" --peers "https://testnet.rougechain.io/api"
+ExecStart=/opt/rougechain/quantum-vault-daemon --mine --api-port 5100 --node-name "MyNode" --public-url "https://mynode.example.com" --peers "https://testnet.rougechain.io/api"
 Restart=always
 RestartSec=5
 

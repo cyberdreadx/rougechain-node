@@ -4,6 +4,36 @@ All notable changes to RougeChain.
 
 ---
 
+## Web wallet: messaging key derived from the recovery phrase — 2026-10-01
+
+- New wallets created on rougechain.io, and wallets imported from a recovery phrase (or private
+  key), now get an ML-KEM-768 messaging/mail key **derived from the phrase**, exactly as Qwalla
+  does: `ml_kem768.keygen(SHA-512("<phrase>|rougee-gram|kem-v1"))` (signing private key hex in place
+  of the phrase when there is none). Restoring from the 24-word phrase on the website or in Qwalla
+  now gives the same messaging key, so old messages and mail stay readable.
+- Existing wallets keep their current key — nothing stored is re-derived. Wallets created on the
+  website before this change have a random key: keep their `.pqcbackup` to read old messages.
+  Importing such a wallet from its phrase gives it the derived key (registered on next messenger /
+  mail visit), as a phrase import already gave it a new key before.
+- A `.pqcbackup` that contains encryption keys keeps them exactly; one without gets the derived pair.
+
+## SDK 1.11.0: NFT batch-mint attributes, create-token fee — 2026-10-01
+
+- Batch mints now sign per-NFT attributes as `attributes`, the field the node reads (SDK, site and
+  core client). Earlier clients sent `batchAttributes`, which the node ignored, so batch-minted NFTs
+  got no attributes. Requires `@rougechain/sdk` **1.11.0**; no node change.
+- The SDK / core `create_token` builders now default the signed fee to 100 XRGE, what the node
+  charges (it was 10).
+
+## Web wallet: keys never stored unencrypted — 2026-10-01
+
+- **Security fix (rougechain.io).** A new or imported wallet was saved to `localStorage` unencrypted
+  before the password step, and stayed there if you left onboarding (the password was optional).
+  Now the wallet is held only in the tab's `sessionStorage` until you set its password, which is
+  **required** (min 8 characters, also during onboarding); only the AES-256-GCM vault is persisted.
+- Existing wallets that an older version stored unencrypted keep working, but the site asks you to
+  set a password before using them (with a backup option); the plaintext copy is then deleted.
+
 ## Payable contract calls (block 190) — 2026-09-28
 
 - A contract call can carry a signed payment: `attach: {"symbol": "XRGE" | TOKEN, "amount": N}` (integer:
@@ -82,7 +112,7 @@ Node release `59478e6` (binary sha256 `9a93d68b…`, non-consensus; installed on
 ## Testnet v0.2.4 — March 2026
 
 ### Added
-- **Social layer** — On-chain social features with plays, likes, comments, follows, and tips. Data is stored server-side in sled with ML-DSA-65 signed writes; tips settle on-chain via `rc.transfer()`
+- **Social layer** — Node-hosted social features (not on-chain) with plays, likes, comments, follows, and tips. Data is stored server-side in sled with ML-DSA-65 signed writes; tips settle on-chain via `rc.transfer()`
 - **Standalone posts** — Create, delete, and fetch posts (max 4000 chars) with threaded replies via `replyToId`. Global timeline and personalized following feed endpoints
 - **Reposts** — Toggle repost on any post; repost counts aggregated per post with viewer state
 - **Post stats** — Aggregate endpoint returns likes, reposts, reply count, and viewer's liked/reposted state for any post

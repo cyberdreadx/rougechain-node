@@ -2,22 +2,22 @@ import { useRef, useState } from "react";
 import { Menu } from "lucide-react";
 import { Dialog } from "@rougechain/ui";
 import { DOCS_URL } from "./apps";
-import {
-  useDemoWallet,
-  DEMO_SHORT_ADDRESS,
-} from "../wallet/DemoWalletProvider";
+import { useWalletIdentity } from "../wallet/WalletProvider";
+import { useTranslation } from "react-i18next";
+/** Homepage section anchors (#id); labels are common:sections.<id>. */
 export const marketingSections = [
-  "Technology",
-  "Explore",
-  "Build",
-  "Ecosystem",
-  "Security",
-  "Community",
+  "technology",
+  "build",
+  "security",
+  "ecosystem",
+  "regenerate",
+  "explore",
 ];
 export function ProjectNavigation() {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const wallet = useDemoWallet();
+  const wallet = useWalletIdentity();
+  const { t } = useTranslation("common");
   const close = () => {
     setOpen(false);
     window.requestAnimationFrame(() => trigger.current?.focus());
@@ -27,27 +27,27 @@ export function ProjectNavigation() {
       <button
         className="button ghost icon"
         ref={trigger}
-        aria-label="Project navigation"
+        aria-label={t("projectNav.label")}
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen(true)}
       >
         <Menu size={18} />
       </button>
-      <Dialog open={open} onClose={close} title="Explore RougeChain">
-        <nav className="project-links" aria-label="Project sections">
+      <Dialog open={open} onClose={close} title={t("projectNav.title")}>
+        <nav className="project-links" aria-label={t("projectNav.sections")}>
           {marketingSections.map((name) => (
-            <a key={name} href={`/#${name.toLowerCase()}`} onClick={close}>
-              {name}
+            <a key={name} href={`/#${name}`} onClick={close}>
+              {t(`sections.${name}`)}
             </a>
           ))}
-          <a href={DOCS_URL}>Documentation ↗</a>
-          <a href="/">RougeChain Home</a>
+          <a href={DOCS_URL}>{t("footer.docs")} ↗</a>
+          <a href="/">{t("projectNav.home")}</a>
         </nav>
         <p className="wallet-disclaimer">
           {wallet.connected
-            ? `Demo connected · ${DEMO_SHORT_ADDRESS}`
-            : "Wallet disconnected · use Connect Wallet in the header."}
+            ? t("projectNav.walletConnected", { address: wallet.short })
+            : t("projectNav.walletDisconnected")}
         </p>
       </Dialog>
     </div>

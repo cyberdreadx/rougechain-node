@@ -526,7 +526,15 @@
       "invalidQbtcAmount": "Enter a valid qBTC amount",
       "invalidEvmAddress": "Enter a valid EVM address",
       "withdrawFailed": "Withdrawal failed",
-      "btcWithdrawPaused": "BTC withdrawals are paused while the Bitcoin payout service is being launched. Your qBTC is safe; deposits and other withdrawals work normally."
+      "btcWithdrawPaused": "BTC withdrawals are paused while the Bitcoin payout service is being launched. Your qBTC is safe; deposits and other withdrawals work normally.",
+      "btcBelowMinimum": "Minimum qBTC withdrawal is {{min}} BTC (the Bitcoin network fee is deducted from the payout)."
+    },
+    "btcWithdraw": {
+      "minimum": "Minimum withdrawal",
+      "networkFee": "Bitcoin network fee",
+      "feeUnavailable": "estimate unavailable",
+      "youReceive": "You receive",
+      "feeNote": "Fee is an estimate; the exact network fee of the payout is deducted from the BTC you receive (max {{max}} BTC)."
     }
   },
   "wallet": {
@@ -902,7 +910,7 @@
       },
       "backup": {
         "title": "Back up — don't lose your messages",
-        "body": "Two things keep you safe, and they are different:\n\n• Recovery phrase restores your wallet and funds — but NOT your chat history.\n• Encrypted backup file (.pqcbackup) restores your wallet, funds AND your messages.\n\nExport a backup in Settings → Security & backup and keep both somewhere safe."
+        "body": "Two things keep you safe:\n\n• Recovery phrase restores your wallet, funds and messages — except chat history of wallets created on this site before October 2026.\n• Encrypted backup file (.pqcbackup) restores your wallet, funds AND messages for any wallet.\n\nExport a backup in Settings → Security & backup and keep both somewhere safe."
       }
     }
   },

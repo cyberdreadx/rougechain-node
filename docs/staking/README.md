@@ -5,8 +5,8 @@ RougeChain uses Proof of Stake (PoS) for consensus. Validators stake XRGE tokens
 ## How It Works
 
 1. **Stake tokens** - Lock XRGE to become a validator
-2. **Propose blocks** - Selected validators propose new blocks
-3. **Earn rewards** - Collect transaction fees from blocks you produce
+2. **Propose and vote** - The designated proposer (the validator with the most stake) proposes blocks; staked validators vote to finalize them
+3. **Earn rewards** - Every staked validator earns a stake-weighted share of the fees in every block
 4. **Unstake** - Wait for unbonding period to withdraw
 
 ## Requirements
@@ -15,7 +15,7 @@ RougeChain uses Proof of Stake (PoS) for consensus. Validators stake XRGE tokens
 |-------------|-------|
 | Minimum stake | 10,000 XRGE (enforced on every stake call) |
 | Unbonding period | 500 blocks |
-| Slashing | 10% per violation; jailed for 20 blocks; auto-slashed after 50 missed blocks |
+| Slashing | 10% per violation; jailed for 20 blocks. Automatic missed-block slashing is frozen since height 100 |
 
 ## Become a Validator
 
@@ -105,11 +105,9 @@ curl -X POST https://testnet.rougechain.io/api/v2/unstake \
 
 ## Validator Selection
 
-Block proposers are selected using:
+Since mainnet height 100, each block has exactly one **designated proposer**: the eligible validator (stake > 0, not jailed) with the **most stake**, ties going to the lowest raw public-key bytes. Selection is deterministic — no randomness and no rotation — and there is no fallback proposer yet. Blocks from any other validator are rejected. See [Becoming a Validator → Proposer selection](becoming-validator.md#proposer-selection).
 
-1. **Stake weight** - Higher stake = higher probability
-2. **Quantum entropy** - Unpredictable randomness
-3. **Round-robin fallback** - Ensures all validators participate
+> `GET /api/selection` reports this designated proposer for the next height (`rule: "designated_max_stake"`).
 
 ## Rewards
 
@@ -117,11 +115,11 @@ Validators earn from an **EIP-1559-inspired fee model**:
 
 | Component | Distribution |
 |-----------|-------------|
-| Base fee | 50% burned; the remaining 50% flows into the block's tip pool |
+| Base fee | Half of the base fee per transaction is burned (capped at the fees collected); everything else flows into the block's tip pool |
 | Tip pool | Proposer 20% · validators 70% (stake-weighted) · treasury 10% |
 | Minimum tip | 0.1 XRGE per block (subsidized from staking reserves if needed) |
 
-Fees are credited immediately when a block is finalized. See [Validator Economics](becoming-validator.md) for detailed reward calculations.
+Fees are credited when a block is applied to state. See [Validator Economics](becoming-validator.md) for detailed reward calculations.
 
 ## PQC Security
 
@@ -133,6 +131,6 @@ All validator operations use **ML-DSA-65** signatures:
 
 Block production and staking are therefore signed with quantum-resistant keys.
 
-> **Finality:** the finality indicator live today is informational. Verified BFT finality
-> (FINALITY_V2 — verified ML-DSA-65 votes, recomputed quorum, anti-equivocation journals) is built
-> and tested but **not activated**. See [Finality](finality.md).
+> **Finality:** verified BFT finality (FINALITY_V2 — verified ML-DSA-65 votes, recomputed quorum,
+> anti-equivocation journals) is **active on mainnet since height 150**. Every block from 151 carries a
+> ⅔-stake commit certificate for its parent. See [Finality](finality.md).

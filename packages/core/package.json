@@ -1,0 +1,20 @@
+{
+  "name": "@rougechain/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-free RougeChain wallet storage, crypto, signing and node-API logic shared by apps/web and apps/site-next. No React.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.0.1",
+    "@noble/post-quantum": "^0.5.4",
+    "@scure/bip39": "^2.2.0",
+    "viem": "^2.46.3"
+  }
+}

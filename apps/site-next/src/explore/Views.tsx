@@ -13,28 +13,33 @@ import { ArrowUpRight, Box } from "lucide-react";
 import { Status, TextLink, CodeBlock } from "@rougechain/ui";
 import { useNetwork } from "../Network";
 import { DOCS, GITHUB } from "../Shell";
+import { useTranslation } from "react-i18next";
+import { fmtInt } from "../i18n/format";
 export function ExploreNetworkView() {
   const n = useNetwork();
+  const { t } = useTranslation("common");
   return (
     <div className="explore-content network-view">
       <div className="pane-kicker">
-        <span>ROUGECHAIN MAINNET</span>
+        <span>{t("views.network.kicker")}</span>
         <Status state={n.state}>
-          {n.state === "live" ? "API connected" : n.state}
+          {n.state === "live"
+            ? t("views.network.connected")
+            : t(`network.state.${n.state}`)}
         </Status>
       </div>
       <div className="network-height">
-        {n.data?.height.toLocaleString() ?? "—"}
+        {n.data ? fmtInt(n.data.height) : "—"}
       </div>
-      <div className="mono muted">LATEST REPORTED BLOCK</div>
+      <div className="mono muted">{t("views.network.latest")}</div>
       <div className="pane-metrics">
         <div>
-          <span>Validators</span>
-          <strong>{n.data?.validators ?? "—"}</strong>
+          <span>{t("views.network.validators")}</span>
+          <strong>{n.data ? fmtInt(n.data.validators) : "—"}</strong>
         </div>
         <div>
-          <span>Connected peers</span>
-          <strong>{n.data?.peers ?? "—"}</strong>
+          <span>{t("network.metrics.peers")}</span>
+          <strong>{n.data ? fmtInt(n.data.peers) : "—"}</strong>
         </div>
       </div>
       <div className="network-line" aria-hidden="true">
@@ -46,12 +51,12 @@ export function ExploreNetworkView() {
       </div>
       <p className="pane-note">
         {n.state === "demo"
-          ? "Saved public API snapshot."
+          ? t("views.network.noteDemo")
           : n.state === "live"
-            ? "A read-only view of public network data."
+            ? t("views.network.noteLive")
             : n.state === "stale"
-              ? "Last successful data; refresh unavailable."
-              : "Requesting public network data."}
+              ? t("views.network.noteStale")
+              : t("views.network.noteLoading")}
       </p>
     </div>
   );
@@ -59,12 +64,13 @@ export function ExploreNetworkView() {
 export function ExploreExplorerView() {
   const n = useNetwork();
   const preview = usePreview();
+  const { t } = useTranslation("common");
   return (
     <div className="explore-content">
       <div className="pane-kicker">
-        <span>LATEST BLOCKS</span>
+        <span>{t("views.explorer.kicker")}</span>
         <a href="/explorer">
-          Open Explorer <ArrowUpRight size={13} />
+          {t("views.explorer.open")} <ArrowUpRight size={13} />
         </a>
       </div>
       {n.data?.blocks.slice(0, 4).map((b) => (
@@ -74,25 +80,28 @@ export function ExploreExplorerView() {
           key={b.hash}
         >
           <Box size={17} />
-          <strong>#{b.height.toLocaleString()}</strong>
+          <strong>#{fmtInt(b.height)}</strong>
           <span className="mono muted">
             {b.hash.slice(0, 8)}…{b.hash.slice(-4)}
           </span>
-          <span>{b.transactions} txs</span>
+          <span>{t("views.explorer.txs", { count: b.transactions })}</span>
         </button>
-      )) ?? <p>Loading network data…</p>}
+      )) ?? <p>{t("views.explorer.loading")}</p>}
       <div className="pane-note">
-        {n.state === "demo" ? "Demo · saved snapshot" : "Public GET data"} ·
-        Inspect the network, without connecting a wallet.
+        {n.state === "demo"
+          ? t("network.dataState.demo")
+          : t("views.explorer.publicData")}{" "}
+        · {t("views.explorer.note")}
       </div>
     </div>
   );
 }
 export function ExploreEcosystemView() {
   const preview = usePreview();
+  const { t } = useTranslation("common");
   return (
     <div className="explore-content">
-      <p className="pane-intro">Your ecosystem. One workspace.</p>
+      <p className="pane-intro">{t("views.ecosystem.intro")}</p>
       <div className="ecosystem-launch-list">
         {apps
           .filter(
@@ -112,54 +121,60 @@ export function ExploreEcosystemView() {
               key={a.id}
               onClick={() => preview.open(a.workspaceView as WorkspaceView)}
             >
-              <span>{a.name}</span>
-              <small>Open preview ↗</small>
+              <span>{t(`apps.${a.id}.name`)}</span>
+              <small>{t("views.ecosystem.openPreview")} ↗</small>
             </button>
           ))}
       </div>
       <a className="pane-note text-link" href="/architecture">
-        Explore ecosystem architecture ↗
+        {t("views.ecosystem.architecture")} ↗
       </a>
     </div>
   );
 }
 export function ExploreBuildView() {
+  const { t } = useTranslation("common");
   return (
     <div className="explore-content">
-      <p className="pane-intro">Build on a new foundation.</p>
+      <p className="pane-intro">{t("views.build.intro")}</p>
       <CodeBlock>
         npm install
         <br />
         @rougechain/sdk
       </CodeBlock>
       <div className="pane-links">
-        <TextLink href={DOCS}>SDK & documentation</TextLink>
-        <TextLink href={DOCS}>WASM contracts</TextLink>
-        <TextLink href={DOCS}>MCP / Agents & Run a Node</TextLink>
-        <TextLink href={GITHUB}>Source code</TextLink>
+        <TextLink href={DOCS}>{t("views.build.sdk")}</TextLink>
+        <TextLink href={DOCS}>{t("views.build.wasm")}</TextLink>
+        <TextLink href={DOCS}>{t("views.build.agents")}</TextLink>
+        <TextLink href={GITHUB}>{t("views.build.source")}</TextLink>
       </div>
     </div>
   );
 }
 export function ExploreSecurityView() {
+  const { t } = useTranslation("common");
   return (
     <div className="explore-content">
-      <p className="pane-intro">Post-quantum primitives.</p>
+      <p className="pane-intro">{t("views.security.intro")}</p>
       <div className="security-primitives">
         <div>
           <strong>ML-DSA-65</strong>
-          <span>Signatures · FIPS 204</span>
+          <span>{t("views.security.signatures")} · FIPS 204</span>
         </div>
         <div>
           <strong>ML-KEM-768</strong>
-          <span>Key encapsulation · FIPS 203</span>
+          <span>{t("views.security.kem")} · FIPS 203</span>
         </div>
         <div>
-          <strong>SHA-256</strong>
-          <span>Hashing · FIPS 180-4</span>
+          <strong>AES-256-GCM</strong>
+          <span>{t("views.security.aead")} · FIPS 197 / SP 800-38D</span>
+        </div>
+        <div>
+          <strong>SHA-256 + BLAKE3</strong>
+          <span>{t("views.security.hashing")} · FIPS 180-4 / BLAKE3</span>
         </div>
       </div>
-      <TextLink href="/#security">The cryptographic stack</TextLink>
+      <TextLink href="/#security">{t("views.security.stack")}</TextLink>
     </div>
   );
 }

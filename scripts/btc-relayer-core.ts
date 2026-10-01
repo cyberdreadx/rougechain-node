@@ -9,7 +9,149 @@
  * for the same withdrawal only after the network has explicitly REJECTED the saved one for a
  * reason that proves it was never accepted. Anything ambiguous stops that withdrawal for
  * manual review instead of paying again.
+ *
+ * Fee policy: the WITHDRAWER pays the Bitcoin network fee. A payout of `sats` owed sends
+ * `sats − fee` to the destination, where `fee` = ceil(vsize × feeRate) of that very payout, and
+ * custody change = inputs − sats. Custody therefore falls by exactly `sats` (what was burned).
+ * The fee is capped (BTC_MAX_NETWORK_FEE_SATS); above the cap nothing is built and the withdrawal
+ * is retried next cycle. If `sats − fee` would be dust, it is flagged for manual review instead.
  */
+
+// ── Fee / amount math (pure) ──
+
+/** Default cap on the network fee deducted from a payout (sats). */
+export const DEFAULT_MAX_NETWORK_FEE_SATS = 10_000n;
+/** scriptPubKey length of a P2WPKH output (custody change is always P2WPKH). */
+export const P2WPKH_SCRIPT_LEN = 22;
+
+function varIntLen(n: number): number {
+  return n < 0xfd ? 1 : n <= 0xffff ? 3 : n <= 0xffffffff ? 5 : 9;
+}
+
+/**
+ * Virtual size of a transaction spending `nInputs` P2WPKH inputs to outputs with the given
+ * scriptPubKey lengths. Uses the worst-case low-S DER signature (71 bytes + sighash = 72), so
+ * the result is an upper bound on the signed tx's real vsize (never an under-payment of fee).
+ *   non-witness: version 4 + locktime 4 + varint(nIn) + varint(nOut)
+ *                + 41 per input (outpoint 36, empty scriptSig 1, sequence 4)
+ *                + per output 8 + varint(len) + len
+ *   witness:     marker+flag 2 + per input (1 item-count + 1+72 sig + 1+33 pubkey = 108)
+ *   vsize = ceil((4 × non-witness + witness) / 4)
+ */
+export function p2wpkhVsize(nInputs: number, outputScriptLens: number[]): number {
+  if (!Number.isInteger(nInputs) || nInputs < 1) throw new Error("need at least one input");
+  const outBytes = outputScriptLens.reduce((a, l) => a + 8 + varIntLen(l) + l, 0);
+  const base = 4 + 4 + varIntLen(nInputs) + varIntLen(outputScriptLens.length) + 41 * nInputs + outBytes;
+  const witness = 2 + 108 * nInputs;
+  return Math.ceil((base * 4 + witness) / 4);
+}
+
+/** Network fee for `vsize` at `feeRate` sat/vB, rounded UP to a whole sat. */
+export function feeForVsize(vsize: number, feeRate: number): bigint {
+  if (!(feeRate > 0) || !Number.isFinite(feeRate)) throw new Error(`invalid fee rate ${feeRate}`);
+  // Round the product to 1e-9 first so float noise (e.g. 141 × 1.1) never adds a phantom sat.
+  return BigInt(Math.ceil(Math.round(vsize * feeRate * 1e9) / 1e9));
+}
+
+export interface PlanUtxo {
+  txid: string;
+  vout: number;
+  value: number;
+}
+
+export type PayoutPlan =
+  | { kind: "ok"; inputs: PlanUtxo[]; pay: bigint; change: bigint; fee: bigint; vsize: number }
+  | { kind: "fee_too_high"; fee: bigint; maxFee: bigint }
+  | { kind: "below_minimum_after_fee"; fee: bigint; pay: bigint }
+  | { kind: "insufficient"; have: bigint; need: bigint };
+
+export interface PlanParams {
+  /** Candidate custody UTXOs (already filtered: confirmed, not reserved). */
+  utxos: PlanUtxo[];
+  /** Sats owed (= qBTC burned). */
+  sats: bigint;
+  /** sat/vB. */
+  feeRate: number;
+  /** scriptPubKey length of the destination output. */
+  destScriptLen: number;
+  maxFee: bigint;
+  dust: bigint;
+}
+
+/**
+ * Plan a payout where the withdrawer pays the fee: select inputs (largest first) until they
+ * cover `sats`; change = inputs − sats (kept only if > dust — if a sub-dust remainder is left
+ * after using every UTXO it goes to the destination rather than to miners); fee = ceil(vsize ×
+ * rate) of the resulting shape; destination receives (sats or sats+remainder) − fee.
+ */
+export function planPayout(p: PlanParams): PayoutPlan {
+  const sorted = [...p.utxos].sort((a, b) => b.value - a.value);
+  const selected: PlanUtxo[] = [];
+  let inSats = 0n;
+  for (const u of sorted) {
+    selected.push(u);
+    inSats += BigInt(u.value);
+    // Stop once covered with either no change or a change output above dust.
+    if (inSats === p.sats || inSats > p.sats + p.dust) break;
+  }
+  if (inSats < p.sats) return { kind: "insufficient", have: inSats, need: p.sats };
+
+  let change = inSats - p.sats;
+  let extraToDest = 0n;
+  if (change > 0n && change <= p.dust) {
+    // Every UTXO used and still a sub-dust remainder: hand it to the withdrawer.
+    extraToDest = change;
+    change = 0n;
+  }
+  const outs = change > 0n ? [p.destScriptLen, P2WPKH_SCRIPT_LEN] : [p.destScriptLen];
+  const vsize = p2wpkhVsize(selected.length, outs);
+  const fee = feeForVsize(vsize, p.feeRate);
+  if (fee > p.maxFee) return { kind: "fee_too_high", fee, maxFee: p.maxFee };
+  const pay = p.sats + extraToDest - fee;
+  if (pay <= p.dust) return { kind: "below_minimum_after_fee", fee, pay };
+  return { kind: "ok", inputs: selected, pay, change, fee, vsize };
+}
+
+/** Esplora tx shape used by the adopt scan. */
+export interface EsploraTxLike {
+  txid: string;
+  fee?: number;
+  vin?: { prevout?: { scriptpubkey_address?: string; value?: number } | null }[];
+  vout: { scriptpubkey_address?: string; value: number }[];
+}
+
+/** A tx's network fee from Esplora data: Σprevout − Σout, cross-checked with `fee` when present. null = unknown. */
+export function esploraTxFee(tx: EsploraTxLike): bigint | null {
+  const vin = tx.vin || [];
+  if (vin.length === 0) return null;
+  let tin = 0n;
+  for (const v of vin) {
+    if (typeof v.prevout?.value !== "number") return null;
+    tin += BigInt(v.prevout.value);
+  }
+  const tout = tx.vout.reduce((a, v) => a + BigInt(v.value), 0n);
+  if (tin < tout) return null;
+  const computed = tin - tout;
+  if (typeof tx.fee === "number" && BigInt(tx.fee) !== computed) return null;
+  return computed;
+}
+
+/**
+ * Whether `tx` is a custody payout that settles `sats` owed to `dest` — the same rule the daemon
+ * verifies: it SPENDS custody, pays dest > 0, and either pays ≥ sats (legacy full-amount form)
+ * or paid + its own fee ≥ sats with fee ≤ maxFee (withdrawer-pays-fee form).
+ */
+export function payoutSettles(tx: EsploraTxLike, custody: string, dest: string, sats: bigint, maxFee: bigint): boolean {
+  // Only a real payout SPENDS custody. A deposit has custody as an OUTPUT and its change can land
+  // on any address — never adopt those.
+  if (!(tx.vin || []).some((v) => v.prevout?.scriptpubkey_address === custody)) return false;
+  const paid = tx.vout.filter((v) => v.scriptpubkey_address === dest).reduce((a, v) => a + BigInt(v.value), 0n);
+  if (paid <= 0n) return false;
+  if (paid >= sats) return true;
+  const fee = esploraTxFee(tx);
+  if (fee === null || fee > maxFee) return false;
+  return paid + fee >= sats;
+}
 
 export interface BtcStateEntry {
   /** Destination and amount the entry was created for (must keep matching the daemon record). */
@@ -20,7 +162,7 @@ export interface BtcStateEntry {
   /** The payout transaction, once the network has it (accepted, seen, or adopted). */
   btcTxid?: string;
   /** Signed payout saved before broadcast; outcome not yet known to be accepted. */
-  planned?: { txid: string; rawHex: string; inputs: string[] };
+  planned?: BuiltPayout;
   /** Fail-closed stop: an operator must look at this withdrawal (reason). */
   needsReview?: string;
   /** Legacy (pre-hardening) crash marker: a broadcast was in flight when the relayer stopped. */
@@ -41,6 +183,21 @@ export type BroadcastResult =
   | { kind: "rejected"; reason: string; inputsSpent: boolean }
   | { kind: "unknown"; reason: string };
 
+/** A signed (not yet broadcast) payout. `pay`/`fee` (sats, decimal strings) are informational. */
+export interface BuiltPayout {
+  txid: string;
+  rawHex: string;
+  inputs: string[];
+  pay?: string;
+  fee?: string;
+}
+
+/** What `build` produced: a signed payout, or a fee-policy refusal (nothing signed). */
+export type BuildResult =
+  | ({ kind: "built" } & BuiltPayout)
+  | { kind: "fee_too_high"; fee: bigint; maxFee: bigint }
+  | { kind: "below_minimum_after_fee"; fee: bigint; pay: bigint };
+
 export interface BtcPayoutDeps {
   live: boolean;
   minConfirmations: number;
@@ -55,10 +212,12 @@ export interface BtcPayoutDeps {
   confirmations(txid: string): Promise<number | null>;
   /** Whether the network knows the txid (mempool or chain); null = could not read. */
   txKnown(txid: string): Promise<boolean | null>;
-  /** A custody tx already paying `dest` ≥ `sats` not in `known`; THROWS if history could not be read. */
+  /** A custody tx not in `known` that settles `sats` to `dest` (see payoutSettles); THROWS if history could not be read. */
   findExistingPayout(dest: string, sats: bigint, known: Set<string>): Promise<string | null>;
-  /** Build + sign (NOT broadcast) a payout, never spending `excludeInputs` ("txid:vout"). */
-  build(dest: string, sats: bigint, excludeInputs: Set<string>): Promise<{ txid: string; rawHex: string; inputs: string[] }>;
+  /** Build + sign (NOT broadcast) a payout of `sats − fee` to dest, never spending `excludeInputs`
+   *  ("txid:vout"). Returns a refusal instead when the fee policy forbids paying now. THROWS on
+   *  other failures (e.g. insufficient custody balance). */
+  build(dest: string, sats: bigint, excludeInputs: Set<string>): Promise<BuildResult>;
   broadcast(rawHex: string, expectedTxid: string): Promise<BroadcastResult>;
   fulfill(txId: string, btcTxid: string): Promise<boolean>;
   save(): void;
@@ -80,7 +239,9 @@ export type BtcOutcome =
   | "build_failed"
   | "broadcast"
   | "broadcast_unknown"
-  | "broadcast_rejected";
+  | "broadcast_rejected"
+  | "fee_too_high"
+  | "below_minimum_after_fee";
 
 /** Every txid the relayer already attributes to some withdrawal (never adopt one of these). */
 export function knownPayoutTxids(state: BtcState): Set<string> {
@@ -249,17 +410,33 @@ export async function processBtcWithdrawal(w: PendingBtcWithdrawal, state: BtcSt
     return "gave_up";
   }
 
-  let built: { txid: string; rawHex: string; inputs: string[] };
+  let res: BuildResult;
   try {
-    built = await deps.build(dest, sats, reservedInputs(state, w.txId));
+    res = await deps.build(dest, sats, reservedInputs(state, w.txId));
   } catch (e) {
     deps.log(`  [build] ${w.txId}: ${(e as Error).message}`);
     return "build_failed";
   }
+  if (res.kind === "fee_too_high") {
+    // Nothing signed, nothing persisted: fees may be lower next cycle.
+    deps.log(`  [fee] ${w.txId}: network fee ${res.fee} sats exceeds BTC_MAX_NETWORK_FEE_SATS ${res.maxFee} — retry next cycle`);
+    return "fee_too_high";
+  }
+  if (res.kind === "below_minimum_after_fee") {
+    const reason = `${sats} sats owed minus ${res.fee} sats network fee leaves ${res.pay} sats (at or below dust ${deps.dust}) — not paid; needs manual handling`;
+    if (deps.live) {
+      entry.needsReview = reason;
+      state[w.txId] = entry;
+      deps.save();
+    }
+    deps.log(`  [review] ${w.txId}: ${reason}`);
+    return "below_minimum_after_fee";
+  }
+  const { kind: _kind, ...built } = res;
 
   if (!deps.live) {
     // Dry-run: show what would be paid; persist NOTHING (no attempts, no plan).
-    deps.log(`  [DRY-RUN] would pay ${w.txId}: ${sats} sats → ${dest} (tx ${built.txid}, ${built.inputs.length} input(s)). Not broadcasting.`);
+    deps.log(`  [DRY-RUN] would pay ${w.txId}: ${sats} sats owed → ${built.pay ?? "?"} sats to ${dest} after ${built.fee ?? "?"} sats network fee (tx ${built.txid}, ${built.inputs.length} input(s)). Not broadcasting.`);
     return "would_pay";
   }
 
@@ -283,7 +460,8 @@ function settleBroadcast(txId: string, entry: BtcStateEntry, res: BroadcastResul
     entry.btcTxid = planned.txid;
     delete entry.planned;
     deps.save();
-    deps.log(`  → broadcast ${txId}: ${entry.btcTxid} (${entry.sats} sats → ${entry.dest})`);
+    const detail = planned.pay ? `${planned.pay} sats to ${entry.dest} + ${planned.fee} sats fee = ${entry.sats} owed` : `${entry.sats} sats → ${entry.dest}`;
+    deps.log(`  → broadcast ${txId}: ${entry.btcTxid} (${detail})`);
     return "broadcast";
   }
   if (res.kind === "unknown") {

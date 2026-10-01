@@ -253,10 +253,11 @@ await rc.nft.mint(wallet, {
   attributes: { rarity: "legendary" },
 });
 
-// Batch mint (up to 50 at once)
+// Batch mint (up to 50 at once); attributes: one entry per name (optional)
 await rc.nft.batchMint(wallet, {
   collectionId: "abc123",
   names: ["#1", "#2", "#3"],
+  attributes: [{ rarity: "common" }, { rarity: "rare" }, { rarity: "legendary" }],
 });
 
 // Transfer with sale price (triggers royalty)

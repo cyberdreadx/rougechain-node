@@ -526,7 +526,15 @@
       "invalidQbtcAmount": "Ingresa un monto de qBTC válido",
       "invalidEvmAddress": "Ingresa una dirección EVM válida",
       "withdrawFailed": "El retiro falló",
-      "btcWithdrawPaused": "Los retiros de BTC están en pausa mientras se lanza el servicio de pagos de Bitcoin. Tus qBTC están seguros; los depósitos y otros retiros funcionan con normalidad."
+      "btcWithdrawPaused": "Los retiros de BTC están en pausa mientras se lanza el servicio de pagos de Bitcoin. Tus qBTC están seguros; los depósitos y otros retiros funcionan con normalidad.",
+      "btcBelowMinimum": "El retiro mínimo de qBTC es {{min}} BTC (la comisión de la red Bitcoin se descuenta del pago)."
+    },
+    "btcWithdraw": {
+      "minimum": "Retiro mínimo",
+      "networkFee": "Comisión de la red Bitcoin",
+      "feeUnavailable": "estimación no disponible",
+      "youReceive": "Recibes",
+      "feeNote": "La comisión es una estimación; la comisión de red exacta del pago se descuenta del BTC que recibes (máx. {{max}} BTC)."
     }
   },
   "wallet": {
@@ -902,7 +910,7 @@
       },
       "backup": {
         "title": "Haz un respaldo — no pierdas tus mensajes",
-        "body": "Dos cosas te protegen, y son diferentes:\n\n• La frase de recuperación restaura tu billetera y tus fondos — pero NO tu historial de chat.\n• El archivo de respaldo cifrado (.pqcbackup) restaura tu billetera, tus fondos Y tus mensajes.\n\nExporta un respaldo en Ajustes → Seguridad y respaldo y guarda ambos en un lugar seguro."
+        "body": "Dos cosas te protegen:\n\n• La frase de recuperación restaura tu billetera, tus fondos y tus mensajes — excepto el historial de chat de billeteras creadas en este sitio antes de octubre de 2026.\n• El archivo de respaldo cifrado (.pqcbackup) restaura tu billetera, tus fondos Y tus mensajes en cualquier billetera.\n\nExporta un respaldo en Ajustes → Seguridad y respaldo y guarda ambos en un lugar seguro."
       }
     }
   },

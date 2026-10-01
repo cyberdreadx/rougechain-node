@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { fmtInt } from "../i18n/format";
 import { Launcher } from "./Launcher";
 import { defaultViews, workspaceViews, type WorkspaceView } from "./model";
 import { views } from "./Views";
@@ -9,6 +11,7 @@ export default function CompactWorkspace({
 }: {
   requested?: WorkspaceView;
 }) {
+  const { t } = useTranslation("common");
   const [opened, setOpened] = useState<WorkspaceView[]>(() =>
     requested ? [...new Set([...defaultViews, requested])] : defaultViews,
   );
@@ -49,7 +52,7 @@ export default function CompactWorkspace({
           <div
             className="explore-tabs"
             role="tablist"
-            aria-label="Workspace panels"
+            aria-label={t("workspace.panels")}
           >
             {opened
               .filter((n) => !hidden.includes(n))
@@ -82,7 +85,7 @@ export default function CompactWorkspace({
                   aria-selected={active === name}
                   onClick={() => setActive(name)}
                 >
-                  {name}
+                  {t(`workspace.views.${name}`)}
                 </button>
               ))}
             {block && (
@@ -91,7 +94,7 @@ export default function CompactWorkspace({
                 aria-selected={active === "BlockDetail"}
                 onClick={() => setActive("BlockDetail")}
               >
-                Block #{block.height}
+                {t("block.title", { height: fmtInt(block.height) })}
               </button>
             )}
           </div>
@@ -105,11 +108,11 @@ export default function CompactWorkspace({
                   role="tabpanel"
                   id={`compact-panel-${name}`}
                   aria-labelledby={`compact-tab-${name}`}
-                  aria-label={name}
+                  aria-label={t(`workspace.views.${name}`)}
                   hidden={active !== name || hidden.includes(name)}
                 >
                   <div className="compact-panel-heading">
-                    <h3>{name}</h3>
+                    <h3>{t(`workspace.views.${name}`)}</h3>
                     <button
                       className="button ghost small"
                       onClick={() => {
@@ -120,7 +123,9 @@ export default function CompactWorkspace({
                         if (next) setActive(next);
                       }}
                     >
-                      Hide {name}
+                      {t("workspace.hideView", {
+                        name: t(`workspace.views.${name}`),
+                      })}
                     </button>
                   </div>
                   <Content />
@@ -137,10 +142,10 @@ export default function CompactWorkspace({
               setBlock(undefined);
             }}
           >
-            Reset workspace
+            {t("workspace.reset")}
           </button>
           <p className="pane-note">
-            Compact workspace · Panel state lasts for this visit.
+            {t("workspace.compactNote")}
           </p>
         </div>
       </div>

@@ -1,5 +1,18 @@
 import snapshot from "./snapshot.json";
-export const API_BASE = "https://api.rougechain.io/api";
+import { readOnlyGet } from "./client";
+import { networkConfig, type NetworkId } from "./network";
+import { ChainMismatchError, obj, text, uint } from "./normalize";
+
+export * from "./network";
+export * from "./allowlist";
+export * from "./client";
+export * from "./normalize";
+export * from "./format";
+export * from "./bridge";
+
+/** Mainnet API base (kept for the POC surfaces; use networkConfig(id).apiBase instead). */
+export const API_BASE = networkConfig("mainnet").apiBase;
+/** The three reads behind the network summary (stats, validators, recent blocks). */
 export const ENDPOINTS = ["/stats", "/validators", "/blocks?limit=8"] as const;
 export type Endpoint = (typeof ENDPOINTS)[number];
 export type Block = {
@@ -16,82 +29,59 @@ export type Network = {
   capturedAt: string;
   blocks: Block[];
 };
+/** A saved MAINNET capture. Only ever shown labelled as a snapshot, never as live data. */
 export const demoSnapshot: Network = snapshot;
-// Fixed host, allowlisted endpoints, literal GET, omitted credentials. No write transport exists.
-export async function readOnlyGet(
-  endpoint: Endpoint,
-  method: "GET" = "GET",
-): Promise<unknown> {
-  if (method !== "GET" || !ENDPOINTS.includes(endpoint))
-    throw new Error("Only verified read-only GET endpoints are allowed");
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    method: "GET",
-    credentials: "omit",
-    redirect: "error",
-    signal: AbortSignal.timeout(8000),
-    headers: { Accept: "application/json" },
-  });
-  if (!response.ok)
-    throw new Error(`Network data unavailable (${response.status})`);
-  return response.json();
-}
-function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Unexpected API object");
-  return value as Record<string, unknown>;
-}
-function integer(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
-    throw new Error("Unexpected API number");
-  return value;
-}
-function string(value: unknown): string {
-  if (typeof value !== "string" || !value)
-    throw new Error("Unexpected API string");
-  return value;
-}
+
 export function normalizeNetwork(
   stats: unknown,
   validators: unknown,
   blocks: unknown,
+  expectedChainId: string = networkConfig("mainnet").chainId,
 ): Network {
-  const s = object(stats),
-    v = object(validators),
-    b = object(blocks);
+  const s = obj(stats),
+    v = obj(validators),
+    b = obj(blocks);
   if (
     v.success !== true ||
     !Array.isArray(v.validators) ||
-    !Array.isArray(b.blocks) ||
-    s.chain_id !== "rougechain-mainnet-1"
+    !Array.isArray(b.blocks)
   )
-    throw new Error("Unexpected mainnet response");
+    throw new Error("Unexpected network response");
+  if (s.chain_id !== expectedChainId)
+    throw new ChainMismatchError(expectedChainId, s.chain_id);
   return {
-    height: integer(s.network_height),
-    peers: integer(s.connected_peers),
+    height: uint(s.network_height),
+    peers: uint(s.connected_peers),
     validators: v.validators.length,
-    chainId: string(s.chain_id),
+    chainId: text(s.chain_id),
     capturedAt: new Date().toISOString(),
     blocks: b.blocks
       .map((raw) => {
-        const block = object(raw),
-          header = object(block.header);
+        const block = obj(raw),
+          header = obj(block.header);
         if (!Array.isArray(block.txs) || header.chain_id !== s.chain_id)
           throw new Error("Unexpected block");
         return {
-          height: integer(header.height),
-          hash: string(block.hash),
+          height: uint(header.height),
+          hash: text(block.hash),
           transactions: block.txs.length,
-          timestamp: integer(header.time),
+          timestamp: uint(header.time),
         };
       })
       .sort((a, b) => b.height - a.height)
       .slice(0, 8),
   };
 }
-export async function getNetwork(): Promise<Network> {
-  const [s, v, b] = await Promise.all(ENDPOINTS.map((e) => readOnlyGet(e)));
-  return normalizeNetwork(s, v, b);
+
+export async function getNetwork(
+  network: NetworkId = "mainnet",
+): Promise<Network> {
+  const [s, v, b] = await Promise.all(
+    ENDPOINTS.map((e) => readOnlyGet(e, "GET", network)),
+  );
+  return normalizeNetwork(s, v, b, networkConfig(network).chainId);
 }
+
 export function deriveNetworkState({
   mode,
   loading,
@@ -109,5 +99,35 @@ export function deriveNetworkState({
   if (loading && !hasData) return "loading";
   if (error && !hasData) return "demo";
   if (error || expired) return "stale";
+  return "live";
+}
+
+/**
+ * Provenance of one query's data, for the truthful live / stale / unavailable labels.
+ * `staleAfterMs` is how old a successful read may get before it is no longer called live.
+ */
+export type ReadState =
+  "loading" | "live" | "stale" | "unavailable" | "not-found";
+export function deriveReadState({
+  pending,
+  error,
+  notFound = false,
+  hasData,
+  updatedAt,
+  now,
+  staleAfterMs,
+}: {
+  pending: boolean;
+  error: boolean;
+  notFound?: boolean;
+  hasData: boolean;
+  updatedAt: number;
+  now: number;
+  staleAfterMs: number;
+}): ReadState {
+  if (notFound && !hasData) return "not-found";
+  if (pending && !hasData) return "loading";
+  if (!hasData) return "unavailable";
+  if (error || now - updatedAt > staleAfterMs) return "stale";
   return "live";
 }

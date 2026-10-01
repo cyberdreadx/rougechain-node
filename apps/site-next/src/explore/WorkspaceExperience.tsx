@@ -6,9 +6,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import CompactWorkspace from "./CompactWorkspace";
 import type { WorkspaceView } from "./model";
-const Trellis = lazy(() => import("./TrellisWorkspace"));
+// Desktop-only chunk: dockview and its stylesheet download only when the interactive view renders.
+const DockviewWorkspace = lazy(() => import("./DockviewWorkspace"));
+export const DESKTOP_QUERY = "(min-width: 900px)";
+function UnavailableNote() {
+  const { t } = useTranslation("common");
+  return <p role="status">{t("workspace.unavailable")}</p>;
+}
 export class WorkspaceBoundary extends Component<
   { children: ReactNode; requested?: WorkspaceView },
   { failed: boolean }
@@ -20,9 +27,7 @@ export class WorkspaceBoundary extends Component<
   render() {
     return this.state.failed ? (
       <>
-        <p role="status">
-          Interactive layout unavailable. Use the compact workspace below.
-        </p>
+        <UnavailableNote />
         <CompactWorkspace requested={this.props.requested} />
       </>
     ) : (
@@ -37,10 +42,11 @@ export default function WorkspaceExperience({
   embedded?: boolean;
   requested?: WorkspaceView;
 }) {
+  const { t } = useTranslation("common");
   const [desktop, setDesktop] = useState(false),
     [simple, setSimple] = useState(false);
   useEffect(() => {
-    const media = window.matchMedia("(min-width: 900px)");
+    const media = window.matchMedia(DESKTOP_QUERY);
     const update = () => setDesktop(media.matches);
     update();
     media.addEventListener("change", update);
@@ -50,19 +56,22 @@ export default function WorkspaceExperience({
     <>
       <div className="workspace-toolbar">
         <span className="mono muted">
-          OPEN · ARRANGE · TAB · FOCUS · HIDE · RESTORE
+          {t("workspace.toolbar")}
         </span>
-        <button
-          className="button ghost small"
-          onClick={() => setSimple(!simple)}
-        >
-          {simple ? "Interactive view" : "Simple view"}
-        </button>
+        {desktop && (
+          <button
+            type="button"
+            className="button ghost small"
+            onClick={() => setSimple(!simple)}
+          >
+            {simple ? t("workspace.interactive") : t("workspace.simple")}
+          </button>
+        )}
       </div>
       {desktop && !simple ? (
         <WorkspaceBoundary requested={requested}>
           <Suspense fallback={<CompactWorkspace requested={requested} />}>
-            <Trellis embedded={embedded} requested={requested} />
+            <DockviewWorkspace embedded={embedded} requested={requested} />
           </Suspense>
         </WorkspaceBoundary>
       ) : (
