@@ -16,13 +16,13 @@
     "size": 28463856
   },
   "cli": {
-    "name": "rougechain-ff5fa33",
-    "url": "https://api.rougechain.io/releases/rougechain-ff5fa33",
+    "name": "rougechain-1725150",
+    "url": "https://api.rougechain.io/releases/rougechain-1725150",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/rougechain-ff5fa33"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/rougechain-1725150"
     ],
-    "sha256": "d9602a821e722ea33bff2edb0f6bcbdf710db0ed22d74301f946eca7204a8b7c",
-    "size": 5237184
+    "sha256": "ac7ca208881408651461fd9a118fc1b194a4dc78338c1fab2c13135b7ba349fd",
+    "size": 5234312
   },
   "genesis": {
     "name": "genesis-mainnet.json",
