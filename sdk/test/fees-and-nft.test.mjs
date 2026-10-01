@@ -36,7 +36,8 @@ test("nft.batchMint signs per-NFT attributes as `attributes` (the field the node
 });
 
 test("createToken's default fee is the fee the node charges for create_token", async () => {
-  const m = /\},\s*([0-9]+(?:\.[0-9]+)?)\)\s*,?\s*$/.exec(arm('"create_token" =>', '"mint_tokens" =>').trim());
+  // The arm is either `=> (TxPayload {…}, 100.0),` or a block `=> { …; (TxPayload {…}, 100.0) }`.
+  const m = /\},\s*([0-9]+(?:\.[0-9]+)?)\)\s*,?\s*\}?\s*$/.exec(arm('"create_token" =>', '"mint_tokens" =>').trim());
   assert.ok(m, "create_token fee not found in v2_binding.rs");
   const { posts, rc } = capture();
   await rc.createToken(wallet, { name: "Name", symbol: "SYM", totalSupply: 1000 });

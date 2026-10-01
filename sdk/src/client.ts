@@ -1,6 +1,7 @@
 import {
   createSignedTransfer,
   createSignedTokenCreation,
+  createSignedTokenMint,
   createSignedSwap,
   createSignedPoolCreation,
   createSignedAddLiquidity,
@@ -27,6 +28,21 @@ import {
   signRequest,
 } from "./signer.js";
 import { hexToBytes, bytesToHex } from "./utils.js";
+
+/**
+ * Whether the node's TOKEN_MINTING upgrade applies to the next block, from `/api/stats`
+ * (`upgrade_schedule.token_minting` = activation height, `null` = not scheduled). Mintable
+ * `create_token` fields and `mint_tokens` are refused by the node until this is true.
+ */
+export function tokenMintingActive(
+  stats: { network_height?: number; upgrade_schedule?: { token_minting?: number | null } | null } | null | undefined
+): boolean {
+  const at = stats?.upgrade_schedule?.token_minting;
+  if (typeof at !== "number" || !Number.isFinite(at)) return false;
+  const height = typeof stats?.network_height === "number" ? stats.network_height : -1;
+  if (height < 0) return false;
+  return height + 1 >= at;
+}
 import type {
   WalletKeys,
   ApiResponse,
@@ -418,18 +434,29 @@ export class RougeChain {
     return this.submitTx("/v2/transfer", tx);
   }
 
+  /**
+   * Create a token (`create_token`, 100 XRGE). With `mintable: true` (and optional `maxSupply`)
+   * the creator can mint more later with {@link mintTokens} — node TOKEN_MINTING upgrade only;
+   * check {@link isTokenMintingActive} first. Invalid mint options resolve to `{ success: false }`.
+   */
   async createToken(
     wallet: WalletKeys,
     params: CreateTokenParams
   ): Promise<ApiResponse> {
-    const tx = createSignedTokenCreation(
-      wallet,
-      params.name,
-      params.symbol,
-      params.totalSupply,
-      params.fee,
-      params.image
-    );
+    let tx: SignedTransaction;
+    try {
+      tx = createSignedTokenCreation(
+        wallet,
+        params.name,
+        params.symbol,
+        params.totalSupply,
+        params.fee,
+        params.image,
+        { mintable: params.mintable, maxSupply: params.maxSupply, description: params.description }
+      );
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
     return this.submitTx("/v2/token/create", tx);
   }
 
@@ -487,20 +514,26 @@ export class RougeChain {
   }
 
   /**
-   * Mint additional tokens for a mintable token (creator only).
-   * The token must have been created with `mintable: true`.
+   * Mint more of a mintable token (`mint_tokens`, signed; node TOKEN_MINTING upgrade). Creator
+   * only; the node enforces the max supply and charges 1 XRGE. Errors (not creator, not
+   * mintable, exceeds max supply, not active yet) resolve to `{ success: false, error }`.
    */
   async mintTokens(
     wallet: WalletKeys,
     params: MintTokenParams
   ): Promise<ApiResponse> {
-    return this.post("/v2/token/mint", {
-      public_key: wallet.publicKey,
-      symbol: params.symbol,
-      amount: params.amount,
-      fee: params.fee ?? 1,
-      signature: "", // Will be signed server-side via PQC verification
-    });
+    let tx: SignedTransaction;
+    try {
+      tx = createSignedTokenMint(wallet, params.symbol, params.amount, params.fee, params.accountNonce);
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+    return this.submitTx("/v2/token/mint", tx);
+  }
+
+  /** Whether the node's TOKEN_MINTING upgrade is active for the next block (see {@link tokenMintingActive}). */
+  async isTokenMintingActive(): Promise<boolean> {
+    return tokenMintingActive(await this.getStats());
   }
 
   // ===== WebSocket =====

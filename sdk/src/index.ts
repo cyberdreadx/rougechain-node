@@ -1,4 +1,4 @@
-export { RougeChain } from "./client.js";
+export { RougeChain, tokenMintingActive } from "./client.js";
 export type { RougeChainOptions, TrackStats, ArtistStats, SocialComment, SocialPost, PostStats } from "./client.js";
 
 export { Wallet } from "./wallet.js";
@@ -34,6 +34,12 @@ export {
   verifyTransaction,
   serializePayload,
   createSignedTransfer,
+  createSignedTokenCreation,
+  createSignedTokenMint,
+  tokenMintFields,
+  TOKEN_MINT_MAX_AMOUNT,
+  TOKEN_MINT_FEE_XRGE,
+  TOKEN_CREATE_FEE_XRGE,
   createSignedBridgeWithdraw,
   createSignedTokenMetadataUpdate,
   createSignedTokenMetadataClaim,
@@ -46,6 +52,7 @@ export {
   isBurnAddress,
   signRequest,
 } from "./signer.js";
+export type { TokenCreationOptions } from "./signer.js";
 
 export { generateNonce, hexToBytes, bytesToHex } from "./utils.js";
 
@@ -74,6 +81,7 @@ export type {
   Transaction,
   Block,
   NodeStats,
+  UpgradeSchedule,
   TokenMetadata,
   TokenHolder,
   BalanceResponse,
