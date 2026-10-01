@@ -4,7 +4,9 @@ The RougeChain CLI (`rougechain`) is a command-line wallet and chain interaction
 
 ## Installation
 
-Build from source (requires Rust):
+`scripts/install-validator.sh` installs the CLI from the signed node release as
+`/usr/local/bin/rougechain` (see [Signed releases](../running-a-node/releases.md)). Or build from
+source (requires Rust):
 
 ```bash
 cd core/cli
@@ -17,21 +19,27 @@ The binary is output to `target/release/rougechain` (or `rougechain.exe` on Wind
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--rpc` | `https://rougechain.rougee.app` | RPC endpoint URL |
+| `--network` | `mainnet` | `mainnet` (`https://api.rougechain.io`) or `testnet` (`https://testnet.rougechain.io`) |
+| `--rpc` | the public node of `--network` | Node base URL, e.g. `http://127.0.0.1:5100` for your own node. Overrides `--network`. A trailing `/` or `/api` is accepted |
 | `--wallet-dir` | `~/.rougechain` | Directory for key storage |
+| `--node-keys` | — | Sign with a node's `node-keys.json` instead of the wallet key store |
+| `--legacy-broadcast` | off | Post stake / unstake / transfer as a raw transaction to `/api/tx/broadcast` (see [Signed Requests](#signed-requests)) |
 
 All flags are global and can be passed before any subcommand:
 
 ```bash
-rougechain --rpc https://testnet.rougechain.io/api balance
+rougechain --network testnet balance
+rougechain --rpc http://127.0.0.1:5100 stats
 ```
+
+Every request goes to `<base>/api/…` (JSON-RPC to `<base>/api/rpc`).
 
 ## Key Management
 
 ```bash
 # Generate a new ML-DSA-65 keypair
-rougechain keygen
-rougechain keygen --label "my-validator"
+rougechain key-gen
+rougechain key-gen --label "my-validator"
 
 # List all saved keys
 rougechain keys
@@ -62,9 +70,14 @@ rougechain token-balances <pubkey-hex>
 # Send XRGE
 rougechain transfer <recipient-pubkey> 100
 
-# Send with custom fee
-rougechain transfer <recipient-pubkey> 100 --fee 2
+# Send another token
+rougechain transfer <recipient-pubkey> 100 --token MYTOKEN
+
+# Testnet only: 10,000 test XRGE from the faucet (one claim per key per 24 h)
+rougechain --network testnet faucet
 ```
+
+Amounts are whole units. The node charges a fixed fee of 1 XRGE per transfer.
 
 ## Staking & Validators
 
@@ -206,20 +219,33 @@ rougechain rpc rouge_getStats
 
 ## Signed Requests
 
-All write operations (transfers, staking, mail, messenger, social) use v2 signed requests:
+Transfers, staking, the faucet, names, mail, messenger and social use v2 signed requests — the same
+format the SDK and the web wallet send:
 
-1. The CLI reads your active key from `~/.rougechain/keys.json`
+1. The CLI reads your active key from `~/.rougechain/keys.json` (or `--node-keys`)
 2. Builds a payload with `from`, `timestamp`, and a cryptographic `nonce`
-3. Signs the canonical JSON with ML-DSA-65
-4. Submits the signed envelope to the `/api/v2/` endpoint
+3. Signs the canonical JSON (sorted keys) with ML-DSA-65
+4. Submits `{ payload, signature, public_key }` to the `/api/v2/` endpoint — `stake` → `/api/v2/stake`,
+   `unstake` → `/api/v2/unstake`, `transfer` → `/api/v2/transfer`, `faucet` → `/api/v2/faucet`. For
+   these four the request also carries `payload_bytes_hex`, the exact bytes that were signed.
 
-This means your private key never leaves your machine — the node only receives the signature.
+This means your private key never leaves your machine — the node only receives the signature. A
+request is valid for 5 minutes around its `timestamp`, so the machine's clock must be correct.
+
+`vote` and `delegate` have no v2 route: they are posted as a raw signed transaction to
+`/api/tx/broadcast`. The public nodes do not accept that route from the internet, and a node that
+does accept it only places the transaction in its own mempool — so these two commands work only
+against the node that proposes blocks. `--legacy-broadcast` sends stake / unstake / transfer the
+same way; use it only against your own node.
+
+`stake`, `unstake`, `transfer` and `faucet` exit with a non-zero status when the node refuses the
+request.
 
 ## Command Reference
 
 | Command | Description |
 |---------|-------------|
-| `keygen` | Generate ML-DSA-65 keypair |
+| `key-gen` | Generate ML-DSA-65 keypair |
 | `keys` | List saved keys |
 | `whoami` | Show active key info |
 | `balance` | Check XRGE balance |
