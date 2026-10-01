@@ -1,5 +1,10 @@
 # Auto-Deploy Setup
 
+> **Deprecated for mainnet.** Mainnet nodes should run [signed releases](releases.md): a binary
+> whose manifest is signed by the release key and verified before it is installed
+> (`scripts/install-validator.sh`). Auto-deploy builds and runs whatever is on `main`, with no
+> signature check. This page remains for testnet and development nodes only.
+
 > ⚠️ **Never use auto-deploy on a mainnet validator.** It restarts the daemon
 > whenever `main` changes — an unattended restart while your validator is the
 > designated proposer stalls block production — and it auto-builds and runs **unreviewed

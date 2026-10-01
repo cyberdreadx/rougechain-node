@@ -268,7 +268,7 @@
       "steps": {
         "install": {
           "title": "ノードをインストール",
-          "detail": "依存関係、ビルド、systemd サービス"
+          "detail": "署名付きリリース、systemd サービス"
         },
         "stake": {
           "title": "入金とステーク",
