@@ -138,7 +138,8 @@
       "supply": "El suministro total debe ser un número entero mayor que cero",
       "insufficient": "XRGE insuficiente. Crear un token cuesta {{fee}} XRGE",
       "failed": "La creación del token falló",
-      "createFailed": "No se pudo crear el token"
+      "createFailed": "No se pudo crear el token",
+      "maxSupply": "El suministro máximo debe ser un número entero no menor que el suministro total"
     },
     "created": "Token {{symbol}} creado",
     "createdBody": "Aparecerá en tu billetera después del próximo bloque.",
@@ -153,7 +154,11 @@
     "upload": "Subir",
     "clear": "Quitar",
     "feeHint": "Comisión {{fee}} XRGE · tienes {{balance}} XRGE. Todo el suministro va a tu billetera.",
-    "submit": "Crear token ({{fee}} XRGE)"
+    "submit": "Crear token ({{fee}} XRGE)",
+    "mintable": "Acuñable",
+    "mintableHint": "Un token acuñable te permite, como creador, acuñar más después, hasta el suministro máximo.",
+    "maxSupply": "Suministro máximo (opcional)",
+    "maxSupplyPlaceholder": "Sin límite"
   },
   "lock": {
     "locked": "Billetera bloqueada",
@@ -524,5 +529,23 @@
     "submit": "Cifrar billetera",
     "done": "Billetera cifrada",
     "doneBody": "Tus claves ahora se guardan en este navegador solo de forma cifrada."
+  },
+  "mintToken": {
+    "title": "Acuñar {{symbol}}",
+    "action": "Acuñar más",
+    "amount": "Cantidad a acuñar",
+    "room": "Puedes acuñar hasta {{amount}} {{symbol}} más (suministro máximo {{max}}).",
+    "capOnly": "El suministro máximo es {{max}} {{symbol}}. El nodo comprueba cuánto margen queda.",
+    "uncapped": "Sin suministro máximo: puedes acuñar cualquier cantidad.",
+    "capReached": "Se alcanzó el suministro máximo. No se pueden acuñar más {{symbol}}.",
+    "feeHint": "Comisión {{fee}} XRGE. Los tokens acuñados van a tu billetera.",
+    "submit": "Acuñar ({{fee}} XRGE)",
+    "minted": "Acuñación de {{amount}} {{symbol}} enviada",
+    "mintedBody": "Aparecerá en tu billetera después del próximo bloque.",
+    "errors": {
+      "amount": "La cantidad debe ser un número entero mayor que cero",
+      "exceedsCap": "Solo se pueden acuñar {{room}} más dentro del suministro máximo",
+      "failed": "La acuñación falló"
+    }
   }
 }

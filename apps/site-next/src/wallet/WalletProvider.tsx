@@ -334,6 +334,11 @@ export function useWallet(): WalletContextValue {
   return ctx;
 }
 
+/** The wallet context, or null where no WalletProvider is mounted (e.g. the standalone explorer site). */
+export function useOptionalWallet(): WalletContextValue | null {
+  return useContext(WalletContext);
+}
+
 export interface Signer {
   kind: "local" | "extension";
   publicKey: string;

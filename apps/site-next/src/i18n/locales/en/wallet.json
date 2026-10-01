@@ -138,7 +138,8 @@
       "supply": "Total supply must be a whole number above zero",
       "insufficient": "Insufficient XRGE. Creating a token costs {{fee}} XRGE",
       "failed": "Token creation failed",
-      "createFailed": "Failed to create token"
+      "createFailed": "Failed to create token",
+      "maxSupply": "Max supply must be a whole number no lower than the total supply"
     },
     "created": "Token {{symbol}} created",
     "createdBody": "It appears in your wallet after the next block.",
@@ -153,7 +154,11 @@
     "upload": "Upload",
     "clear": "Clear",
     "feeHint": "Fee {{fee}} XRGE · you have {{balance}} XRGE. The whole supply goes to your wallet.",
-    "submit": "Create token ({{fee}} XRGE)"
+    "submit": "Create token ({{fee}} XRGE)",
+    "mintable": "Mintable",
+    "mintableHint": "Mintable tokens let you, the creator, mint more later, up to the max supply.",
+    "maxSupply": "Max supply (optional)",
+    "maxSupplyPlaceholder": "No cap"
   },
   "lock": {
     "locked": "Wallet locked",
@@ -524,5 +529,23 @@
     "submit": "Encrypt wallet",
     "done": "Wallet encrypted",
     "doneBody": "Your keys are now stored only in encrypted form in this browser."
+  },
+  "mintToken": {
+    "title": "Mint {{symbol}}",
+    "action": "Mint more",
+    "amount": "Amount to mint",
+    "room": "You can mint up to {{amount}} more {{symbol}} (max supply {{max}}).",
+    "capOnly": "Max supply is {{max}} {{symbol}}. The node checks how much room is left.",
+    "uncapped": "No max supply: you can mint any amount.",
+    "capReached": "Max supply reached. No more {{symbol}} can be minted.",
+    "feeHint": "Fee {{fee}} XRGE. Minted tokens go to your wallet.",
+    "submit": "Mint ({{fee}} XRGE)",
+    "minted": "Mint of {{amount}} {{symbol}} submitted",
+    "mintedBody": "It appears in your wallet after the next block.",
+    "errors": {
+      "amount": "Amount must be a whole number above zero",
+      "exceedsCap": "Only {{room}} more can be minted under the max supply",
+      "failed": "Mint failed"
+    }
   }
 }

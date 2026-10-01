@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import {
   Link,
   useLocation,
@@ -19,9 +19,13 @@ import {
   pubkeyToAddress,
   safeExternalUrl,
   shorten,
+  tokenMintingActiveAt,
   type NftToken,
+  type TokenInfo,
 } from "@rougechain/chain-readonly";
-import { useRead, useTokenDecimals } from "./read";
+import { useRead, useStats, useTokenDecimals } from "./read";
+import { useChain } from "./chain";
+import { useExplorerSlots } from "./slots";
 import { TxTable } from "./tables";
 import {
   AddressLink,
@@ -289,6 +293,28 @@ export function AddressDetailPage() {
 
 // ─── Token ───────────────────────────────────────────────────────────────────
 
+/** TOKEN_MINTING supply rows for a mintable token: initial supply, minted since, max supply. */
+function mintSupplyRows(
+  tok: TokenInfo,
+  t: (key: string) => string,
+): [string, ReactNode][] {
+  const amount = (n: number) => formatUnits(n, tok.decimals);
+  return [
+    ...(tok.initialSupply !== null
+      ? ([[t("token.initialSupply"), <span key="i" className="mono">{amount(tok.initialSupply)}</span>]] as [string, ReactNode][])
+      : []),
+    [t("token.minted"), <span key="m" className="mono">{amount(tok.totalMinted ?? 0)}</span>],
+    [
+      t("token.maxSupply"),
+      tok.maxSupply !== null ? (
+        <span key="x" className="mono">{amount(tok.maxSupply)}</span>
+      ) : (
+        <span key="x" className="muted">{t("token.uncapped")}</span>
+      ),
+    ],
+  ];
+}
+
 export function TokenDetailPage() {
   const { t } = useTranslation("explorer");
   const { symbol: param = "" } = useParams();
@@ -313,6 +339,11 @@ export function TokenDetailPage() {
   });
   const decimals = meta.data?.decimals ?? 0;
   const known = useTokenDecimals();
+  const stats = useStats();
+  const { network } = useChain();
+  const { TokenActions } = useExplorerSlots();
+  // TOKEN_MINTING: supply-cap rows and the creator's Mint action exist only once the upgrade is active.
+  const mintingActive = tokenMintingActiveAt(stats.data);
   const tokenPools = (pools.data ?? []).filter(
     (p) => p.tokenA === symbol || p.tokenB === symbol,
   );
@@ -412,8 +443,21 @@ export function TokenDetailPage() {
                   t("col.status"),
                   `${tok.frozen ? t("token.frozen") : t("token.active")} · ${tok.mintable ? t("token.mintable") : t("token.fixedSupply")}`,
                 ],
+                ...(mintingActive && tok.mintable ? mintSupplyRows(tok, t) : []),
               ]}
             />
+            {mintingActive && tok.mintable && TokenActions && (
+              <Suspense fallback={null}>
+                <TokenActions
+                  token={tok}
+                  network={network}
+                  onChanged={() => {
+                    meta.refetch();
+                    holders.refetch();
+                  }}
+                />
+              </Suspense>
+            )}
             <Section id="supply" title={t("what.supply")}>
               <SourceNote read={holders} what={t("what.holders")} />
               <ReadGate read={holders} what={t("what.supply")}>

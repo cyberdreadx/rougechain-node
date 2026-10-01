@@ -320,7 +320,11 @@
     "recentActivity": "最近のアクティビティ",
     "activityMeta_other": "{{symbol}} に関わるトランザクションは {{n}} 件です。最新 50 件を表示しています。",
     "noActivity": "アクティビティなし",
-    "noActivityBody": "このトークンに関わるトランザクションはまだありません。"
+    "noActivityBody": "このトークンに関わるトランザクションはまだありません。",
+    "initialSupply": "初期供給量",
+    "minted": "作成後の追加発行量",
+    "maxSupply": "最大供給量",
+    "uncapped": "上限なし"
   },
   "nft": {
     "imageAlt": "{{name}} の画像",
