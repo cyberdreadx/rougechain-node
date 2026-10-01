@@ -1954,11 +1954,31 @@ struct TokenMetadataResponse {
     created_at: i64,
     updated_at: i64,
     frozen: bool,
+    /// TOKEN_MINTING: mintable under consensus (created mintable by a block), not the legacy flag.
     mintable: bool,
     max_supply: Option<u64>,
     total_minted: u64,
+    /// TOKEN_MINTING: supply credited at creation (mintable tokens only; omitted otherwise).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    initial_supply: Option<u64>,
+    /// TOKEN_MINTING: height of the block that created the token mintable (omitted otherwise).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mint_enabled_height: Option<u64>,
     /// Canonical token decimals (source of truth for display/amount conversion).
     decimals: u8,
+}
+
+/// TOKEN_MINTING read-only fields shared by `/api/tokens` and `/api/token/:symbol/metadata`.
+/// `mintable` is the consensus flag (`consensus_mintable`): a `mintable` written by older
+/// API-time code without `mint_enabled_height` can never be minted, so it reads `false`.
+fn token_mint_json_fields(meta: &quantum_vault_storage::token_metadata_store::TokenMetadata) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("mintable".into(), serde_json::json!(meta.consensus_mintable()));
+    m.insert("max_supply".into(), serde_json::json!(meta.max_supply));
+    m.insert("total_minted".into(), serde_json::json!(meta.total_minted));
+    if let Some(v) = meta.initial_supply { m.insert("initial_supply".into(), serde_json::json!(v)); }
+    if let Some(v) = meta.mint_enabled_height { m.insert("mint_enabled_height".into(), serde_json::json!(v)); }
+    m
 }
 
 #[derive(Serialize)]
@@ -2003,7 +2023,8 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
         Ok(tokens) => {
             let token_list: Vec<TokenMetadataResponse> = tokens
                 .into_iter()
-                .map(|t| TokenMetadataResponse {
+                .map(|t| (t.consensus_mintable(), t))
+                .map(|(mintable, t)| TokenMetadataResponse {
                     success: true,
                     decimals: token_decimals(&t.symbol),
                     symbol: t.symbol,
@@ -2017,9 +2038,11 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                     created_at: t.created_at,
                     updated_at: t.updated_at,
                     frozen: t.frozen,
-                    mintable: t.mintable,
+                    mintable,
                     max_supply: t.max_supply,
                     total_minted: t.total_minted,
+                    initial_supply: t.initial_supply,
+                    mint_enabled_height: t.mint_enabled_height,
                 })
                 .collect();
             // Prepend the built-in native + bridge tokens that aren't already registered as
@@ -2046,6 +2069,8 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                     mintable: false,
                     max_supply: None,
                     total_minted: 0,
+                    initial_supply: None,
+                    mint_enabled_height: None,
                 })
                 .collect();
             merged.extend(token_list);
@@ -2064,20 +2089,25 @@ async fn get_token_metadata(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
     match node.get_token_metadata(&symbol) {
-        Ok(Some(meta)) => Ok(Json(serde_json::json!({
-            "success": true,
-            "decimals": token_decimals(&meta.symbol),
-            "symbol": meta.symbol,
-            "name": meta.name,
-            "creator": meta.creator,
-            "image": meta.image,
-            "description": meta.description,
-            "website": meta.website,
-            "twitter": meta.twitter,
-            "discord": meta.discord,
-            "created_at": meta.created_at,
-            "updated_at": meta.updated_at,
-        }))),
+        Ok(Some(meta)) => {
+            let mut v = serde_json::json!({
+                "success": true,
+                "decimals": token_decimals(&meta.symbol),
+                "symbol": meta.symbol,
+                "name": meta.name,
+                "creator": meta.creator,
+                "image": meta.image,
+                "description": meta.description,
+                "website": meta.website,
+                "twitter": meta.twitter,
+                "discord": meta.discord,
+                "created_at": meta.created_at,
+                "updated_at": meta.updated_at,
+                "frozen": meta.frozen,
+            });
+            if let Some(obj) = v.as_object_mut() { obj.extend(token_mint_json_fields(&meta)); }
+            Ok(Json(v))
+        }
         Ok(None) => {
             // Fall back to a built-in token (native/bridge) so /token/qBTC etc. resolve even
             // without an on-chain metadata row.
@@ -2248,7 +2278,10 @@ async fn get_token_holders(
     let original_supply = if symbol.eq_ignore_ascii_case("XRGE") {
         36_000_000_000u64
     } else {
-        node.get_token_original_supply(&symbol).unwrap_or(0)
+        // TOKEN_MINTING: supply minted after creation counts toward the total (0 for every token
+        // that was never minted, so fixed-supply tokens read exactly as before).
+        let minted = node.get_token_metadata(&symbol).ok().flatten().map(|m| m.total_minted).unwrap_or(0);
+        node.get_token_original_supply(&symbol).unwrap_or(0).saturating_add(minted)
     };
     
     // Get all wallet balances for this symbol
@@ -10963,6 +10996,44 @@ async fn social_following_feed_signed(
     let offset: usize = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let posts = state.node.social_get_following_feed(&authed_key, limit, offset).map_err(|e| signed_internal(&e))?;
     Ok(Json(serde_json::json!({ "success": true, "posts": posts })))
+}
+
+#[cfg(test)]
+mod token_mint_read_fields_tests {
+    use super::token_mint_json_fields;
+    use quantum_vault_storage::token_metadata_store::TokenMetadata;
+
+    fn meta(mintable: bool, max: Option<u64>, minted: u64, initial: Option<u64>, at: Option<u64>) -> TokenMetadata {
+        TokenMetadata {
+            symbol: "MNT".into(), name: "Mint".into(), creator: "ab".into(), token_id: String::new(),
+            image: None, description: None, website: None, twitter: None, discord: None,
+            created_at: 0, updated_at: 0, frozen: false,
+            mintable, max_supply: max, total_minted: minted, initial_supply: initial, mint_enabled_height: at,
+        }
+    }
+
+    #[test]
+    fn consensus_mintable_token_exposes_supply_fields() {
+        let f = token_mint_json_fields(&meta(true, Some(5_000), 250, Some(1_000), Some(42)));
+        assert_eq!(f["mintable"], serde_json::json!(true));
+        assert_eq!(f["max_supply"], serde_json::json!(5_000));
+        assert_eq!(f["total_minted"], serde_json::json!(250));
+        assert_eq!(f["initial_supply"], serde_json::json!(1_000));
+        assert_eq!(f["mint_enabled_height"], serde_json::json!(42));
+        let uncapped = token_mint_json_fields(&meta(true, None, 0, Some(10), Some(42)));
+        assert_eq!(uncapped["max_supply"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn legacy_mintable_flag_without_enable_height_reads_not_mintable() {
+        let f = token_mint_json_fields(&meta(true, Some(9), 0, None, None));
+        assert_eq!(f["mintable"], serde_json::json!(false));
+        assert!(!f.contains_key("initial_supply"));
+        assert!(!f.contains_key("mint_enabled_height"));
+        let fixed = token_mint_json_fields(&meta(false, None, 0, None, None));
+        assert_eq!(fixed["mintable"], serde_json::json!(false));
+        assert_eq!(fixed["total_minted"], serde_json::json!(0));
+    }
 }
 
 #[cfg(test)]
