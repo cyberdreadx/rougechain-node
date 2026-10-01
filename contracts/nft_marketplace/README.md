@@ -11,10 +11,24 @@ active the contract can be deployed but none of its calls run.
 
 | Method | Args | What it does |
 |---|---|---|
-| `list` | `{"collection":"col:…","token_id":7,"price":2500000000}` | Caller must **own the NFT now** (raw key or its rouge1 address). Records listing `N`; emits/returns `listed` `{"listing":N,"collection":…,"token_id":…,"price":…}`. |
+| `list` | `{"collection":"col:…","token_id":7,"price":2500000000}` | Caller must **own the NFT now** (raw key or its rouge1 address). Records listing `N`; emits/returns `listed` `{"listing":N,"seller":…,"collection":…,"token_id":…,"price":…}`. |
 | *(wallet)* | `nft_transfer` the NFT to the contract address, **no** sale price | Escrow. Do this only **after** `list`. |
 | `buy` | `{"listing":N}` + `attach: {"symbol":"XRGE","amount":price}` | `royalty = floor(price × bps / 10000)` to the royalty recipient, `price − royalty` to the seller, NFT to the buyer; emits `sold` `{"listing":N,"price":…,"royalty":…,"seller_proceeds":…}`. Wrong symbol/amount, unknown/stale listing, or NFT not escrowed yet: the call fails and the payment is refunded. |
-| `cancel` | `{"listing":N}` | Seller only. Returns the NFT if escrowed, deletes the listing; emits `cancelled` `{"listing":N,"returned":true|false}`. |
+| `cancel` | `{"listing":N}` | Seller only. Returns the NFT if it is escrowed **for this listing** (the NFT's current listing), deletes the listing; emits `cancelled` `{"listing":N,"returned":true|false}`. |
+| `listing` *(read)* | `{"listing":N}` | Returns `{"listing":N,"exists":true,"seller":…,"collection":…,"token_id":…,"price":…,"active":true|false,"escrowed":true|false}`, or `{"listing":N,"exists":false}` for an unknown, sold or cancelled listing (no trap). No event, no storage write. |
+| `listing_count` *(read)* | `{}` | Returns `{"next":N}` — the highest listing id issued so far (`0` = none). Ids run `1..=N`. |
+
+**Seller form.** `seller` is the caller string exactly as the contract received and stored it — for a
+wallet, the **raw ML-DSA-65 public key hex** (3,904 chars), not its `rouge1…` address. It is what
+`cancel` compares the caller with and what `buy` pays (`host_transfer` credits the key's `rouge1`
+ledger entry). To show or match an address, derive it client-side (`rouge1 = bech32m(sha256(pubkey))`,
+`await pubkeyToAddress(seller)` from `@rougechain/sdk`) — or compare `seller` with your wallet's `publicKey`.
+
+**`active` / `escrowed`.** Listing the same NFT again replaces the older listing: the old one stays
+readable (and cancellable by its seller) but is `active:false` and can't be bought, and cancelling it
+never returns the NFT — the escrow belongs to the current listing. `escrowed` is `true` when the
+listing is active **and** `host_nft_owner` is this contract (the check `buy`'s `host_nft_transfer`
+makes). A listing is buyable when `exists && escrowed`.
 
 Prices and amounts are JSON integers in quanta — a fraction or exponent makes the call fail.
 
@@ -44,9 +58,21 @@ await rc.nft.transfer(seller, { collectionId: colId, tokenId: 7, to: market }); 
 // buyer:
 await rc.contracts.game(market, buyer).call("buy", { listing: 1 },
   { attach: { symbol: "XRGE", amount: xrgeToQuanta("2.5") } });
+
+// UI reads — free, unsigned (POST /api/contract/:addr/query), no caller needed:
+const { returnData: count } = await rc.contracts.query(market, "listing_count", {});  // { next: 2 }
+for (let id = 1; id <= count.next; id++) {
+  const { returnData: l } = await rc.contracts.query(market, "listing", { listing: id });
+  if (l.exists && l.escrowed) { /* show: l.collection, l.token_id, l.price (quanta), l.seller */ }
+}
 ```
 
+The read methods link the same host functions as the rest of the contract, so like every other call
+they only run once CONTRACT_NFT_ROYALTY is active on the node answering the query.
+
 `core/daemon/src/node.rs` → `nft_marketplace_example_pays_royalty_and_seller_exactly_across_json_relay`
-runs this binary end to end on two nodes (blocks relayed as JSON), and
+runs this binary end to end on two nodes (blocks relayed as JSON) — including `listing` /
+`listing_count` through the query path before escrow, after escrow, after sale/cancel and for a
+replaced listing — and
 `nft_marketplace_royalty_to_a_splitter_contract_is_credited_and_split` pays the royalty to a splitter
 contract.

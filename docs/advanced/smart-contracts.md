@@ -142,7 +142,9 @@ is a small, commented reference (prebuilt `nft_marketplace.wasm`):
 
 1. **`list {"collection","token_id","price"}`** — the seller must **own** the NFT when listing (the
    contract can't tell who deposited an NFT, so listing after the deposit would let anyone claim it).
-   Returns `listed {"listing":N,…}`.
+   Returns `listed {"listing":N,"seller":…,"collection":…,"token_id":…,"price":…}`. `seller` is the
+   caller exactly as stored — for a wallet, its **raw public key hex**, not the `rouge1` address —
+   and is what `cancel` compares and `buy` pays.
 2. The seller escrows the NFT with a plain wallet `nft_transfer` to the contract address (no sale
    price).
 3. **`buy {"listing":N}`** with `attach: {"symbol":"XRGE","amount":price}` — the contract checks the
@@ -161,7 +163,27 @@ is a small, commented reference (prebuilt `nft_marketplace.wasm`):
    ```
 
    and emits `sold {"listing":N,"price":…,"royalty":…,"seller_proceeds":…}`.
-4. **`cancel {"listing":N}`** — seller only; returns the escrowed NFT.
+4. **`cancel {"listing":N}`** — seller only; returns the escrowed NFT (only for the NFT's current
+   listing — a listing replaced by a newer listing of the same NFT never takes the escrow back).
+
+A list/buy UI reads listings for free with the query endpoint (`POST /api/contract/{addr}/query`, no
+signature, fee or caller). These methods only call `host_set_return` — no event, no storage write:
+
+| Read method | Args | Returns |
+|---|---|---|
+| `listing` | `{"listing":N}` | `{"listing":N,"exists":true,"seller":…,"collection":…,"token_id":…,"price":…,"active":…,"escrowed":…}` or `{"listing":N,"exists":false}` (unknown, sold or cancelled — no trap) |
+| `listing_count` | `{}` | `{"next":N}` — highest listing id issued (`0` = none) |
+
+`active` is false for a listing replaced by a newer one of the same NFT; `escrowed` means active and
+the contract owns the NFT. Buyable = `exists && escrowed`.
+
+```ts
+const { returnData: { next } } = await rc.contracts.query(market, "listing_count", {});
+for (let id = 1; id <= next; id++) {
+  const { returnData: l } = await rc.contracts.query(market, "listing", { listing: id });
+  if (l.exists && l.escrowed) render(l); // l.price is in quanta; l.seller is the seller's public key
+}
+```
 
 For a 1.234567891 XRGE sale (1,234,567,891 quanta) of a 3% collection, the artist gets 37,037,036
 quanta and the seller 1,197,530,855 — the node test
