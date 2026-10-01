@@ -127,7 +127,7 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 |----------|--------|-------------|
 | `/api/validators` | GET | List validators |
 | `/api/validators/stats` | GET | Validator vote stats |
-| `/api/selection` | GET | Legacy stake-weighted QRNG lottery (informational only — **not** the consensus rule; the next designated proposer is `designated_proposer_next` in `/api/stats`) |
+| `/api/selection` | GET | Proposer for the next height. Once proposer selection is active, the consensus designated proposer (`rule: "designated_max_stake"`, same as `designated_proposer_next` in `/api/stats`; no entropy fields); before activation, the legacy QRNG lottery (`rule: "legacy_qrng_lottery"`) |
 | `/api/finality` | GET | Finality status (legacy, informational — see [Finality](../staking/finality.md)) |
 | `/api/votes` | GET | Vote quorum info |
 | `/api/v2/stake` | POST | Stake tokens (signed) |

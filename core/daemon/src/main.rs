@@ -4222,25 +4222,28 @@ async fn get_validators(State(state): State<AppState>) -> Result<Json<Validators
 struct SelectionResponse {
     success: bool,
     height: u64,
+    /// `designated_max_stake` (consensus rule, from the proposer-selection activation height) or
+    /// `legacy_qrng_lottery` (heights before activation).
+    rule: String,
     proposer: Option<String>,
     total_stake: Option<String>,
     selection_weight: Option<String>,
+    /// legacy lottery only (`null` under the designated rule — no entropy is fetched)
     entropy_source: Option<String>,
     entropy_hex: Option<String>,
 }
 
 async fn get_selection(State(state): State<AppState>) -> Result<Json<SelectionResponse>, StatusCode> {
-    let node = &state.node;
-    let height = node.get_tip_height().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? + 1;
-    let selection = node.get_selection_info().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let view = state.node.next_proposer_view().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(SelectionResponse {
         success: true,
-        height,
-        proposer: selection.as_ref().map(|s| s.proposer_pub_key.clone()),
-        total_stake: selection.as_ref().map(|s| s.total_stake.to_string()),
-        selection_weight: selection.as_ref().map(|s| s.selection_weight.to_string()),
-        entropy_source: selection.as_ref().map(|s| s.entropy_source.clone()),
-        entropy_hex: selection.as_ref().map(|s| s.entropy_hex.clone()),
+        height: view.height,
+        rule: view.rule.to_string(),
+        proposer: view.proposer,
+        total_stake: view.total_stake.map(|v| v.to_string()),
+        selection_weight: view.selection_weight.map(|v| v.to_string()),
+        entropy_source: view.entropy_source,
+        entropy_hex: view.entropy_hex,
     }))
 }
 

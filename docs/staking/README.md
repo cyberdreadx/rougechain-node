@@ -107,7 +107,7 @@ curl -X POST https://testnet.rougechain.io/api/v2/unstake \
 
 Since mainnet height 100, each block has exactly one **designated proposer**: the eligible validator (stake > 0, not jailed) with the **most stake**, ties going to the lowest raw public-key bytes. Selection is deterministic — no randomness and no rotation — and there is no fallback proposer yet. Blocks from any other validator are rejected. See [Becoming a Validator → Proposer selection](becoming-validator.md#proposer-selection).
 
-> `GET /api/selection` still reports the legacy QRNG lottery; it is not the consensus rule.
+> `GET /api/selection` reports this designated proposer for the next height (`rule: "designated_max_stake"`).
 
 ## Rewards
 

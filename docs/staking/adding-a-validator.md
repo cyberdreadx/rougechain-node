@@ -66,7 +66,7 @@ Symptoms fall into two distinct buckets — don't conflate them:
 
 **You *are* staked and in the active set, but your node never proposes.** This is expected unless you hold the most stake. Your miner logs `not the designated proposer for height <h> (designated: <pk>) — not sealing`, and `GET /api/stats` shows `designated_proposer_next`. If a block from you does reach peers while another validator is designated, they reject it with `proposer <pk> is not the designated proposer (<pk>)`. Staked validators still earn their stake-weighted share of fees in every block (see [Rewards](rewards.md)).
 
-> `GET /api/selection` still reports the legacy QRNG/stake-weighted lottery. It is **not** the consensus rule; use `designated_proposer_next` from `/api/stats`.
+> `designated_proposer_next` in `/api/stats` and `proposer` in `GET /api/selection` both name the designated proposer for the next height.
 
 **You *are* the designated proposer but blocks don't appear, or your node falls behind.** Check reachability and finality:
 

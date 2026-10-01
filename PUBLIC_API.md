@@ -271,9 +271,25 @@ Get the current validator set and stake amounts.
 
 ### 7. Proposer Selection
 
-Get the current proposer selection info.
+Who proposes the next height. Once proposer selection is active this is the consensus designated proposer (the eligible validator with the most stake); before activation it is the legacy QRNG lottery.
 
 **Endpoint:** `GET /api/selection`
+
+**Response:**
+```json
+{
+  "success": true,
+  "height": 1234,
+  "rule": "designated_max_stake",
+  "proposer": "a1b2c3d4...",
+  "totalStake": "150000",
+  "selectionWeight": "100000",
+  "entropySource": null,
+  "entropyHex": null
+}
+```
+
+`rule` is `designated_max_stake` (consensus rule; `totalStake` = stake of eligible validators, `selectionWeight` = the proposer's stake, no entropy) or `legacy_qrng_lottery` (heights before activation; entropy fields set).
 
 ---
 

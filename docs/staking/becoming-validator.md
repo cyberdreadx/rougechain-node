@@ -123,7 +123,7 @@ You're fully live once you're staked, in the active set and synced. `✓ Produci
 
 Since mainnet height 100 (Release 1), each block has exactly one **designated proposer**: the eligible validator (stake > 0, not jailed) with the **most stake**; ties go to the lowest raw public-key bytes. Selection is deterministic: there is no randomness, no QRNG and no rotation, so a validator that does not hold the most stake does not propose blocks. Every staked, non-jailed validator still earns a stake-weighted share of the fees in every block (see [Rewards](rewards.md)). There is no fallback proposer yet: if the designated proposer is offline, no blocks are produced until it returns. See [Adding a Validator](adding-a-validator.md) for how this affects a new validator.
 
-> `GET /api/selection` still reports the legacy QRNG/stake-weighted lottery and is **not** the consensus rule. The designated proposer for the next height is `designated_proposer_next` in `GET /api/stats`.
+> The designated proposer for the next height is `designated_proposer_next` in `GET /api/stats`, and `proposer` in `GET /api/selection` (which reports `rule: "designated_max_stake"` and no entropy fields once the rule is active).
 
 ## Security & slashing — read before you go live
 
