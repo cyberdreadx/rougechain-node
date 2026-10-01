@@ -121,7 +121,7 @@
     "copyPhrase": "Copy phrase",
     "hide": "Hide",
     "reveal": "Reveal recovery phrase",
-    "phraseHint": "The phrase restores your wallet and funds — not your chat history. Use an encrypted backup for that.",
+    "phraseHint": "The phrase restores your wallet, funds and messages. If you created this wallet on this site before October 2026, you also need its encrypted backup to read old messages.",
     "exportHint": "An encrypted .pqcbackup file (AES-256-GCM, PBKDF2 600k) restores your wallet, funds and messages.",
     "password": "Backup password",
     "confirmPassword": "Confirm password",
@@ -444,7 +444,7 @@
       },
       "backup": {
         "title": "Back up — don't lose your messages",
-        "body": "Two things keep you safe, and they are different:\n\n• Recovery phrase restores your wallet and funds — but NOT your chat history.\n• Encrypted backup file (.pqcbackup) restores your wallet, funds AND your messages.\n\nExport a backup in Settings → Security & backup and keep both somewhere safe."
+        "body": "Two things keep you safe:\n\n• Recovery phrase restores your wallet, funds and messages — except chat history of wallets created on this site before October 2026.\n• Encrypted backup file (.pqcbackup) restores your wallet, funds AND messages for any wallet.\n\nExport a backup in Settings → Security & backup and keep both somewhere safe."
       }
     }
   },
