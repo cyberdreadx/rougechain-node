@@ -268,7 +268,7 @@
       "steps": {
         "install": {
           "title": "Instala el nodo",
-          "detail": "Dependencias, compilación, servicio systemd"
+          "detail": "Versión firmada, servicio systemd"
         },
         "stake": {
           "title": "Fondea y haz stake",

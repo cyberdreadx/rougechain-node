@@ -21,6 +21,7 @@
 - [Docker](running-a-node/docker.md)
 - [Configuration](running-a-node/configuration.md)
 - [Mining](running-a-node/mining.md)
+- [Signed releases](running-a-node/releases.md)
 - [Network upgrade schedule (mainnet / testnet)](running-a-node/upgrade-schedule.md)
 - [Mandatory upgrade (2026-10): mintable tokens + royalty-aware contracts, block 235](running-a-node/mandatory-upgrade-2026-10.md)
 - [Mandatory upgrade (2026-09-28): finality + game-ready contracts](running-a-node/mandatory-upgrade-2026-09-28.md)

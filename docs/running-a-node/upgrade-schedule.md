@@ -14,8 +14,8 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Tokens, NFTs, randomness, multi-hop, state root v2 (GAME_READY 2) | 160 | 1200 |
 | `host_block_hash` commit-then-settle (GAME_READY 3) | 170 | 1200 |
 | Payable contract calls (`attach`) | 190 | 1200 |
-| Mintable custom tokens (TOKEN_MINTING) | not scheduled | not scheduled |
-| Contracts read NFT royalty (CONTRACT_NFT_ROYALTY) | not scheduled | not scheduled |
+| Mintable custom tokens (TOKEN_MINTING) | 235 | 1360 |
+| Contracts read NFT royalty (CONTRACT_NFT_ROYALTY) | 235 | 1360 |
 
 **Testnet validator cleanup (block 1240, testnet only):** 99% of testnet's stake sat on validator
 `4e094d21…`, whose key nobody holds, so it could never sign finality votes. At block 1240 its stake is
