@@ -8,6 +8,7 @@
 import {
   getLockedWalletMetadata,
   hasEncryptedWallet,
+  hasPlaintextStoredWallet,
   isWalletLocked,
   isWalletPending,
   loadUnifiedWallet,
@@ -83,7 +84,9 @@ export function readWalletSnapshot(): WalletSnapshot {
       displayName: wallet.displayName,
       isExtension: !wallet.signingPrivateKey,
       hasPassword,
-      needsPassword: hasKeys && (!hasPassword || pending),
+      // A plaintext copy of THIS wallet still on disk (legacy) also needs the password, even when
+      // some vault exists: only encrypting this wallet removes it.
+      needsPassword: hasKeys && (!hasPassword || pending || safe(() => hasPlaintextStoredWallet(wallet.signingPublicKey), false)),
       pending,
     };
   }

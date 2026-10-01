@@ -72,6 +72,30 @@ it("blocks pages for a legacy plaintext wallet until a password encrypts it (pla
   expect((await unlockUnifiedWallet("legacy-pass-1")).signingPrivateKey).toBe(w.signingPrivateKey);
 }, 60_000);
 
+it("a legacy unscoped or v1 split-key wallet survives closing the tab without a password, and is gated again", async () => {
+  const w = seedAppsWebWallet();
+  const secret = w.signingPrivateKey.slice(-200); // not part of the public key
+  const legacyForms: [string, string][] = [
+    ["pqc-unified-wallet", JSON.stringify(w)], // pre-network-scoping
+    ["pqc_messenger_wallet:mainnet", JSON.stringify({ id: w.id, displayName: "Old", signingPublicKey: w.signingPublicKey, signingPrivateKey: w.signingPrivateKey, encryptionPublicKey: w.encryptionPublicKey, encryptionPrivateKey: w.encryptionPrivateKey })],
+    ["pqc-blockchain-wallet:mainnet", JSON.stringify({ publicKey: w.signingPublicKey, privateKey: w.signingPrivateKey, createdAt: 1 })],
+  ];
+  for (const [key, value] of legacyForms) {
+    resetBrowserState();
+    mockFetch();
+    localStorage.setItem(key, value);
+    for (let visit = 0; visit < 2; visit++) {
+      const view = renderGate();
+      expect(await screen.findByRole("heading", { name: "Secure your wallet" }), key).toBeInTheDocument();
+      view.unmount();
+      sessionStorage.clear(); // tab closed without setting a password
+      resetWalletStoreForTests();
+      const onDisk = Object.values(dumpStorage(localStorage)).some((v) => v.includes(secret));
+      expect(onDisk, `${key} visit ${visit}: private key still recoverable`).toBe(true);
+    }
+  }
+});
+
 it("does not gate a password-protected wallet, a locked vault, an extension wallet or no wallet", async () => {
   const check = () => {
     const view = renderGate();

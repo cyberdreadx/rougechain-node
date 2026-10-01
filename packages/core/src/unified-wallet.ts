@@ -258,15 +258,63 @@ export function getLockedWalletMetadata(): { displayName?: string; signingPublic
  * builds (before 2026-10 every passwordless wallet was persisted there); core never writes it now.
  * Callers should ask the user to set a password, which encrypts it and removes the plaintext.
  */
-export function hasPlaintextStoredWallet(): boolean {
+export function hasPlaintextStoredWallet(signingPublicKey?: string): boolean {
+  const stored = readPlaintextStoredWallet();
+  if (!stored) return false;
+  return signingPublicKey === undefined || stored.signingPublicKey === signingPublicKey;
+}
+
+/** The scoped localStorage wallet, if it holds secrets (legacy plaintext). */
+function readPlaintextStoredWallet(): Partial<UnifiedWallet> | null {
   const raw = localStorage.getItem(getScopedKey(UNIFIED_WALLET_KEY));
-  if (!raw) return false;
+  if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<UnifiedWallet>;
-    return !!(parsed.signingPrivateKey || parsed.encryptionPrivateKey || parsed.mnemonic);
+    return parsed && (parsed.signingPrivateKey || parsed.encryptionPrivateKey || parsed.mnemonic) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A stored value carries private key material (unified, messenger or blockchain legacy format). */
+function holdsSecrets(raw: string | null): boolean {
+  if (!raw) return false;
+  try {
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    return !!(p.signingPrivateKey || p.encryptionPrivateKey || p.privateKey || p.mnemonic);
   } catch {
     return false;
   }
+}
+
+/** Public key a stored value belongs to (unified/messenger: signingPublicKey, blockchain: publicKey). */
+function storedPublicKey(raw: string | null): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    return (p.signingPublicKey as string) || (p.publicKey as string) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Remove a localStorage key unless it holds private keys of a wallet OTHER than `vaultedPublicKey`
+ * (or any private keys when `vaultedPublicKey` is undefined). Invariant: plaintext key material is
+ * deleted only once an encrypted vault for that same wallet has been written.
+ */
+function removeUnlessUnvaultedSecrets(key: string, vaultedPublicKey?: string): void {
+  const raw = localStorage.getItem(key);
+  if (holdsSecrets(raw) && (vaultedPublicKey === undefined || storedPublicKey(raw) !== vaultedPublicKey)) return;
+  localStorage.removeItem(key);
+}
+
+/**
+ * Legacy migration: keep a plaintext wallet that is ALREADY on disk under the scoped localStorage
+ * key (moving it adds no exposure), so it survives tab closes until a password encrypts it.
+ */
+function persistLegacyPlaintext(wallet: UnifiedWallet): void {
+  localStorage.setItem(getScopedKey(UNIFIED_WALLET_KEY), JSON.stringify(wallet));
 }
 
 /**
@@ -297,12 +345,13 @@ export async function lockUnifiedWallet(password: string): Promise<void> {
     displayName: wallet.displayName,
     signingPublicKey: wallet.signingPublicKey,
   }));
-  // Clear private keys from both session and local storage (incl. a legacy plaintext copy)
+  // The vault for THIS wallet is written: clear its private keys from session and local storage
+  // (incl. a legacy plaintext copy). Plaintext of a different wallet is never deleted here.
   sessionStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
   sessionStorage.removeItem(getScopedKey(WALLET_PENDING_KEY));
-  localStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
-  localStorage.removeItem(getScopedKey(MESSENGER_WALLET_KEY));
-  localStorage.removeItem(getScopedKey(BLOCKCHAIN_WALLET_KEY));
+  removeUnlessUnvaultedSecrets(getScopedKey(UNIFIED_WALLET_KEY), wallet.signingPublicKey);
+  removeUnlessUnvaultedSecrets(getScopedKey(MESSENGER_WALLET_KEY), wallet.signingPublicKey);
+  removeUnlessUnvaultedSecrets(getScopedKey(BLOCKCHAIN_WALLET_KEY), wallet.signingPublicKey);
 }
 
 export async function unlockUnifiedWallet(password: string): Promise<UnifiedWallet> {
@@ -337,9 +386,10 @@ export function autoLockWallet(): void {
   if (!hasEncryptedWallet()) return;
   sessionStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
   sessionStorage.removeItem(getScopedKey(WALLET_PENDING_KEY));
-  localStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
-  localStorage.removeItem(getScopedKey(MESSENGER_WALLET_KEY));
-  localStorage.removeItem(getScopedKey(BLOCKCHAIN_WALLET_KEY));
+  // Public-only mirrors go; a legacy plaintext wallet (not proven to be the vault's) stays.
+  removeUnlessUnvaultedSecrets(getScopedKey(UNIFIED_WALLET_KEY));
+  removeUnlessUnvaultedSecrets(getScopedKey(MESSENGER_WALLET_KEY));
+  removeUnlessUnvaultedSecrets(getScopedKey(BLOCKCHAIN_WALLET_KEY));
   localStorage.setItem(getScopedKey(WALLET_LOCKED_KEY), "true");
 }
 
@@ -428,7 +478,8 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
     } catch { /* continue */ }
   }
 
-  // 2. localStorage unified key (legacy plaintext — migrate to sessionStorage)
+  // 2. localStorage unified key: a legacy plaintext wallet (older builds) or an extension wallet.
+  //    The plaintext copy stays where it is until a password encrypts THIS wallet (lockUnifiedWallet).
   const unifiedKey = getScopedKey(UNIFIED_WALLET_KEY);
   const unified = localStorage.getItem(unifiedKey);
   if (unified) {
@@ -441,6 +492,14 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
       }
     } catch { /* continue */ }
   }
+
+  // Legacy formats below: move the plaintext (already on disk) to the scoped unified key FIRST,
+  // then derive the session copy. saveUnifiedWallet rewrites the split keys public-only, so
+  // without the move the private keys would exist only in this tab's session.
+  const migrate = (wallet: UnifiedWallet): UnifiedWallet => {
+    persistLegacyPlaintext(wallet);
+    return upgradeAndSave(wallet);
+  };
 
   // 3. Legacy messenger format with private keys
   const messengerKey = getScopedKey(MESSENGER_WALLET_KEY);
@@ -459,7 +518,9 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
           encryptionPrivateKey: parsed.encryptionPrivateKey || "",
           version: 2,
         };
-        return upgradeAndSave(wallet);
+        const result = migrate(wallet);
+        saveUnifiedWallet(result);
+        return result;
       }
     } catch { /* continue */ }
   }
@@ -481,20 +542,24 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
           encryptionPrivateKey: "",
           version: 2,
         };
-        return upgradeAndSave(wallet);
+        const result = migrate(wallet);
+        saveUnifiedWallet(result);
+        return result;
       }
     } catch { return null; }
   }
 
-  // 5. Pre-network-scoping legacy fallback
+  // 5. Pre-network-scoping legacy fallback (unscoped keys): move to the scoped key, then drop the
+  //    unscoped copies of THIS wallet (other wallets' plaintext stays).
   const legacyUnified = localStorage.getItem(UNIFIED_WALLET_KEY);
   if (legacyUnified) {
     try {
       const parsed = JSON.parse(legacyUnified) as UnifiedWallet;
       if (parsed.signingPrivateKey) {
-        saveUnifiedWallet(parsed);
-        clearLegacyWallets();
-        return parsed;
+        const result = migrate(parsed);
+        saveUnifiedWallet(result);
+        clearMigratedLegacyWallets(parsed.signingPublicKey);
+        return result;
       }
     } catch { /* continue */ }
   }
@@ -514,9 +579,10 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
           encryptionPrivateKey: parsed.encryptionPrivateKey,
           version: 2,
         };
-        saveUnifiedWallet(unifiedWallet);
-        clearLegacyWallets();
-        return unifiedWallet;
+        const result = migrate(unifiedWallet);
+        saveUnifiedWallet(result);
+        clearMigratedLegacyWallets(parsed.signingPublicKey);
+        return result;
       }
     } catch { /* continue */ }
   }
@@ -553,6 +619,15 @@ export function hasWallet(): boolean {
 
 function getScopedKey(baseKey: string): string {
   return `${baseKey}:${getActiveNetwork()}`;
+}
+
+/** Unscoped legacy keys after a move to the scoped key: keep any that hold ANOTHER wallet's secrets. */
+function clearMigratedLegacyWallets(movedPublicKey: string): void {
+  for (const key of [UNIFIED_WALLET_KEY, MESSENGER_WALLET_KEY, BLOCKCHAIN_WALLET_KEY]) {
+    const raw = localStorage.getItem(key);
+    if (holdsSecrets(raw) && storedPublicKey(raw) !== movedPublicKey) continue;
+    localStorage.removeItem(key);
+  }
 }
 
 function clearLegacyWallets(): void {
