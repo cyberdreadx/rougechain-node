@@ -9965,18 +9965,17 @@ async fn get_allowances(
 }
 
 /// Nonces are keyed by hex public key. A `rouge1…` address is canonicalised to its public key
-/// through the node's persistent address index (`resolve_rouge1`); an address the node has never
-/// indexed (or a malformed one) is an error rather than a misleading nonce of 0.
+/// through the node's persistent address index (`resolve_rouge1`). Every sender is indexed when
+/// its first tx is applied, so a valid address the index doesn't know has never sent a tx: it is
+/// passed through unchanged and reads as nonce 0 (a brand-new wallet's first send must keep
+/// working). Only a malformed `rouge1…` string is an error.
 fn resolve_nonce_account(input: &str, resolve_rouge1: impl Fn(&str) -> Option<String>) -> Result<String, String> {
     let input = input.trim();
     if input.starts_with("rouge1") {
         if !quantum_vault_crypto::is_rouge_address(input) {
             return Err(format!("invalid rouge1 address: {}", input));
         }
-        return resolve_rouge1(input).ok_or_else(|| format!(
-            "rouge1 address {} is not in this node's address index; query the nonce by hex public key",
-            input
-        ));
+        return Ok(resolve_rouge1(input).unwrap_or_else(|| input.to_string()));
     }
     Ok(input.to_string())
 }
@@ -11275,9 +11274,9 @@ mod nonce_account_tests {
         assert_eq!(resolve_nonce_account(&pk, |_| None).unwrap(), pk);
         // indexed rouge1 → its public key
         assert_eq!(resolve_nonce_account(&addr, |a| (a == addr).then(|| pk.clone())).unwrap(), pk);
-        // unindexed rouge1 → clear error (handler maps it to 400), never a silent 0
-        let e = resolve_nonce_account(&addr, |_| None).unwrap_err();
-        assert!(e.contains("not in this node's address index"), "{e}");
+        // unindexed (never-sent) rouge1 → passed through, so it reads as nonce 0 — a new wallet's
+        // first send must not fail
+        assert_eq!(resolve_nonce_account(&addr, |_| None).unwrap(), addr);
         // malformed rouge1
         assert!(resolve_nonce_account("rouge1notvalid", |_| Some(pk.clone())).unwrap_err().contains("invalid rouge1 address"));
     }
