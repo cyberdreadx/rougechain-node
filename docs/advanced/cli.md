@@ -148,10 +148,7 @@ rougechain resolve-name alice
 rougechain reverse-lookup
 rougechain reverse-lookup <pubkey-hex>
 
-# Send encrypted mail
-rougechain send-mail bob --subject "Hello" --body "How are you?"
-
-# View inbox
+# View inbox (sender, time and id of each mail; the CLI cannot decrypt the contents)
 rougechain inbox
 
 # View sent mail
@@ -160,10 +157,12 @@ rougechain sent-mail
 
 ## Messenger
 
-```bash
-# Register for messaging
-rougechain register-messenger --display-name "Alice"
+> The CLI cannot encrypt or decrypt yet. It lists conversations and messages (who and when), but it
+> cannot send messages or mail, read their contents, or handle attachments. `send-mail` and
+> `register-messenger` refuse to run. Use [rougechain.io](https://rougechain.io) or Qwalla for messaging
+> and mail.
 
+```bash
 # List conversations
 rougechain conversations
 
@@ -268,13 +267,13 @@ request.
 | `release-name` | Release mail name |
 | `resolve-name` | Resolve name → wallet |
 | `reverse-lookup` | Wallet → name |
-| `send-mail` | Send encrypted mail |
+| `send-mail` | Not supported yet (mail must be end-to-end encrypted) — use rougechain.io or Qwalla |
 | `inbox` | View inbox |
 | `sent-mail` | View sent mail |
-| `register-messenger` | Register for messaging |
+| `register-messenger` | Not supported yet (needs an encryption key) — use rougechain.io or Qwalla |
 | `conversations` | List conversations |
 | `create-conversation` | Create conversation |
-| `messages` | View conversation messages |
+| `messages` | List messages in a conversation (sender and time; contents stay encrypted) |
 | `post` | Create a social post |
 | `delete-post` | Delete your post |
 | `timeline` | Global timeline |
