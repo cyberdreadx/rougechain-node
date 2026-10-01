@@ -8,7 +8,7 @@ The RougeChain node exposes a REST API on the configured `--api-port` (default: 
 
 Local node:
 ```
-http://127.0.0.1:5100/api
+http://127.0.0.1:5101/api
 ```
 
 Public testnet:
@@ -27,12 +27,17 @@ Both public endpoints send `Access-Control-Allow-Origin: *`, so browser dApps an
 
 RougeChain uses **Bech32m** addresses with the `rouge1` prefix (e.g., `rouge1q8f3x7k2m4n9p...`). These are derived from the SHA-256 hash of the raw ML-DSA-65 public key.
 
-All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
+Accepted formats differ per endpoint:
 
-```
-✅ /api/balance/d67d8da279755a...
-❌ /api/balance/rouge1q8f3x7k2m4n9p...
-```
+| Endpoint | Accepts |
+|----------|---------|
+| `/api/balance/:publicKey`, `/api/balance/:publicKey/:token` | hex public key **or** `rouge1…` address |
+| `/api/address/:pubkey/transactions` | hex public key **or** `rouge1…` address |
+| `/api/resolve/:input` | hex public key **or** `rouge1…` address |
+| `/api/nft/owner/:pubkey` | exact match on the owner as recorded — normally the hex public key; a `rouge1…` address does not match a pubkey-owned NFT |
+| `/api/account/:pubkey/nonce` | hex public key only |
+
+When in doubt, pass the hex public key.
 
 > **Tip:** Use `GET /api/resolve/:input` to convert between `rouge1…` addresses and hex public keys.
 
@@ -53,7 +58,7 @@ All write endpoints use a standard signed-request envelope:
 }
 ```
 
-The `payload` is JSON-serialized with keys sorted alphabetically, then signed with your ML-DSA-65 private key. The server verifies the signature, checks the timestamp (must be within 60 seconds), and rejects replayed nonces.
+The `payload` is JSON-serialized with keys sorted alphabetically, then signed with your ML-DSA-65 private key. The server verifies the signature, checks the timestamp (must be within ±5 minutes of the server clock), and rejects a signature it has already seen within that window. Messenger, mail and name endpoints additionally require a unique `nonce` of 8–128 characters. The envelope may also carry an optional `payload_bytes_hex` (the exact bytes that were signed); when present the node verifies those bytes and checks that they decode to `payload`.
 
 ## Endpoints Overview
 
@@ -70,7 +75,7 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/blocks` | GET | Get all blocks |
+| `/api/blocks` | GET | Get recent blocks (max 100) or a page of blocks |
 | `/api/blocks/summary` | GET | Block summary for charts |
 | `/api/block/:height` | GET | Get block by height |
 | `/api/txs` | GET | Get transactions |
@@ -122,7 +127,7 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 |----------|--------|-------------|
 | `/api/validators` | GET | List validators |
 | `/api/validators/stats` | GET | Validator vote stats |
-| `/api/selection` | GET | Proposer selection |
+| `/api/selection` | GET | Legacy stake-weighted QRNG lottery (informational only — **not** the consensus rule; the next designated proposer is `designated_proposer_next` in `/api/stats`) |
 | `/api/finality` | GET | Finality status (legacy, informational — see [Finality](../staking/finality.md)) |
 | `/api/votes` | GET | Vote quorum info |
 | `/api/v2/stake` | POST | Stake tokens (signed) |
@@ -192,6 +197,7 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 | `/api/bridge/activity` | GET | Public bridge activity (deposits + withdrawals, paginated) |
 | `/api/bridge/activity/:txId` | GET | One bridge transfer by RougeChain tx id |
 | `/api/bridge/withdrawals/:txId` | DELETE | Fulfill withdrawal |
+| `/api/bridge/btc/deposit-address` | POST | Per-recipient BTC deposit address (qBTC) |
 | `/api/bridge/xrge/config` | GET | XRGE bridge config |
 | `/api/bridge/xrge/claim` | POST | Claim XRGE deposit |
 | `/api/bridge/xrge/withdraw` | POST | Withdraw XRGE to EVM |
@@ -296,15 +302,19 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 
 ## Authentication
 
-Some endpoints require an API key (if configured on the node):
+If a node is started with `--api-keys`, most REST routes require a key — reads included, not just writes. Exempt are `/`, `/api/health`, `/api/stats`, `/api/v2/*`, `/api/bridge/*`, `/api/messenger/*`, `/api/mail/*`, `/api/names/*` and the faucet. Send the key as `X-API-Key` or `Authorization: Bearer`:
 
 ```bash
-curl -H "X-API-Key: your-api-key" https://testnet.rougechain.io/api/stats
+curl -H "X-API-Key: your-api-key" http://127.0.0.1:5101/api/blocks
 ```
+
+The public endpoints (`api.rougechain.io`, `testnet.rougechain.io`) do not require a key.
 
 ## Rate Limiting
 
-Rate limiting is disabled by default (`--rate-limit-per-minute 0`). When enabled, the node supports tiered limits:
-- **Tier 1 (Validators):** Proven via `X-Validator-Key` header + signature
-- **Tier 2 (Registered peers):** Recognized by IP
-- **Tier 3 (Public):** Separate limits for read and write endpoints
+Rate limiting is disabled by default (all limits `0` = unlimited). Limits are per minute and tiered:
+- **Tier 1 (Validators):** Proven via `X-Validator-Key` / `X-Validator-Sig` / `X-Validator-Ts` headers (the signed timestamp must be within 30 seconds) — `--rate-limit-validator`
+- **Tier 2 (Registered peers):** Recognized by IP — `--rate-limit-peer`
+- **Tier 3 (Public):** GET requests use `--rate-limit-read-per-minute`, all other methods `--rate-limit-write-per-minute`
+
+The older `--rate-limit-per-minute` flag is still accepted but has no effect.

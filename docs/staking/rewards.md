@@ -1,20 +1,21 @@
 # Staking Rewards
 
-Validators earn rewards for producing blocks on RougeChain.
+Validators earn a share of the transaction fees in every block on RougeChain.
 
 ## Reward Sources
 
 | Source | Description |
 |--------|-------------|
 | **Transaction fees** | Your share of the tip pool from transactions in each block (proposer + stake-weighted validator share) |
-| **Base block reward** | Fixed reward per block (if configured) |
+
+There is no fixed block reward: validator income comes only from fees (plus the minimum-tip subsidy from the staking reserve, below).
 
 ## How Rewards Work
 
-1. A validator is selected to propose a block
-2. The validator assembles pending transactions
-3. Fees are split, not paid entirely to the proposer: **50% of the base fee is burned**, and the remaining tip pool is distributed **20% to the proposer, 70% among validators (stake-weighted), and 10% to the treasury**
-4. Rewards are credited immediately upon block finalization
+1. The designated proposer (the eligible validator with the most stake) proposes a block when there are pending transactions
+2. The proposer assembles pending transactions; each transaction's full signed fee is debited from its sender
+3. Fees are split, not paid entirely to the proposer: up to **half of the base fee per transaction is burned** (`burned = min(total fees, base fee × tx count ÷ 2)`), and the remaining tip pool is distributed **20% to the proposer, 70% among all staked, non-jailed validators (stake-weighted), and 10% to the treasury**. If the tip pool is below 0.1 XRGE it is topped up from the staking reserve.
+4. Rewards are credited when the block is applied to state
 
 ## Fee Structure
 
@@ -36,9 +37,9 @@ The tip portion of these fees (after the base-fee burn) is split across the prop
 
 Rewards depend on:
 
-- **Your stake** relative to total staked — determines how often you're selected
+- **Your stake** relative to total staked — determines your share of the 70% validator pool in every block
 - **Network activity** — more transactions = more fees per block
-- **Number of validators** — fewer validators means more blocks per validator
+- **Whether you are the designated proposer** — only the validator with the most stake proposes, and it also receives the 20% proposer share
 
 ### Example
 
@@ -47,11 +48,12 @@ Rewards depend on:
 | Your stake | 10,000 XRGE |
 | Total staked | 100,000 XRGE |
 | Your share | 10% |
-| Target block time | 400 ms |
-| Your share of proposed blocks | ~10% (stake-weighted) |
+| Your share of the validator pool | 10% of 70% of each block's tip pool |
 | Avg fee per block | varies with network activity |
 
-Your earnings are your ~10% share of the fees in the blocks you propose. Blocks
+Your earnings are your ~10% share of the 70% validator pool in every block,
+whoever proposes it (plus the 20% proposer share only if you are the designated
+proposer). Blocks
 are produced as transactions arrive, so daily volume tracks real network
 activity — on a quiet chain that is low, and there is **no fixed "blocks per
 day."** These figures are illustrative, not a yield promise; actual returns vary
@@ -62,8 +64,8 @@ with usage.
 Rewards are added to your balance, not your stake. To compound:
 
 1. Periodically stake your accumulated rewards
-2. This increases your proposer probability
-3. Leading to more blocks and more rewards
+2. This increases your share of the validator pool
+3. Leading to more rewards (and, if your stake becomes the largest, the proposer slot)
 
 ## Checking Rewards
 

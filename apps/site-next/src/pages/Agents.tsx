@@ -61,8 +61,10 @@ const TOOL_CATEGORIES: { id: string; tools: AgentTool[] }[] = [
       { name: "get_contract" },
       { name: "get_contract_state" },
       { name: "get_contract_events" },
-      { name: "deploy_contract" },
-      { name: "call_contract" },
+      { name: "query_contract" },
+      { name: "get_tx_receipt" },
+      { name: "publish_contract", write: true },
+      { name: "execute_contract", write: true },
     ],
   },
   {

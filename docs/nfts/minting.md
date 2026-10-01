@@ -17,10 +17,12 @@ Mint multiple NFTs at once:
 
 1. Open a collection page
 2. Click **Batch Mint**
-3. Provide a list of names (and optional URIs/attributes for each)
+3. Provide a list of names (and optional URIs for each)
 4. Click **Mint All**
 
 Fee is 5 XRGE per NFT in the batch.
+
+> Per-token attributes are not currently applied by batch mints from the web app or SDK. If a token needs on-chain attributes, mint it individually.
 
 ## Token Properties
 

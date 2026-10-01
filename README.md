@@ -25,10 +25,10 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 - **Deploy + Call + Query**: Full contract lifecycle via API
 
 ### MCP Agentic Layer 🆕
-- **61 MCP Tools**: AI agents interact with RougeChain natively (read + write-gated)
+- **63 MCP Tools**: AI agents interact with RougeChain natively (read + write-gated)
 - **First MCP-Native Blockchain**: built-in Model Context Protocol integration
 - **Chain Queries**: Stats, blocks, balances, tokens, NFTs, pools, validators
-- **Contract Operations**: Deploy, call, read state, get events
+- **Contract Operations**: Query, read state, get events; publish and execute when a signing wallet is configured
 - **Claude Desktop Ready**: Drop-in `claude_desktop_config.json` support
 
 ### DeFi (AMM/DEX)
@@ -38,9 +38,9 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 - **Custom Tokens**: Create and deploy tokens with mint authority
 
 ### Staking & Validators
-- **Proof of Stake**: Validator selection weighted by stake
+- **Proof of Stake**: Each block's designated proposer is the eligible validator with the most stake; fees are shared with all validators by stake
 - **Validator Names**: Human-readable node identifiers
-- **Slashing**: Penalties for misbehavior
+- **Slashing**: Missed-block auto-slashing is frozen since proposer selection activated (block 100); equivocation slashing is planned
 - **Unbonding Queue**: 500-block cooldown for unstaking
 
 ### Privacy & Shielded Transactions
@@ -57,18 +57,17 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 
 ### Messaging & Mail
 - **E2E Encrypted Messenger**: Real-time chat with ML-KEM-768 encryption
-- **Encrypted Mail**: On-chain mail system with PQC encryption, multi-recipient CEK pattern
+- **Encrypted Mail**: Node-hosted mail (stored in sled, not on-chain) with PQC encryption, multi-recipient CEK pattern
 - **Signed API Requests**: All mail/messenger/name operations require ML-DSA-65 signed requests with anti-replay nonces
 - **TOFU Key Verification**: SHA-256 fingerprints with key-change warnings
-- **Push Notifications**: Web push for new messages
+- **Push Notifications**: Mobile push (Expo) for new messages and mail
 - **Atomic Name Registry**: compare-and-swap name registration via sled
 
 ### Bridge
-- **qETH Bridge**: Two-way ETH bridging between Base and RougeChain
+- **qETH / qUSDC Bridge**: Two-way ETH and USDC bridging between Base and RougeChain
 - **XRGE Bridge**: Two-way XRGE bridging to Base
 - **Deposit-verified**: every claim is validated against the actual on-chain Base deposit (Transfer to the custody/vault), never a caller-supplied amount, with a required EVM signature and confirmation depth
 - **Relayer**: automated withdrawal release, with auto-refund on repeated failure
-- _qUSDC support is planned and not yet enabled._
 
 ### Governance
 - **Proposals**: On-chain governance proposals per token
@@ -113,12 +112,8 @@ const wallet = Wallet.generate();
 // Check balance
 const { balance } = await rc.getBalance(wallet.publicKey);
 
-// Deploy a WASM smart contract
-const result = await rc.deployContract({
-  wasm: base64WasmBytes,
-  deployer: wallet.publicKey,
-  nonce: 0,
-});
+// Publish a WASM smart contract (signed by your wallet, 10 XRGE)
+const result = await rc.contracts.publish(wallet, wasmBytes);
 ```
 
 ### MCP Server (AI Agent Integration)
@@ -192,10 +187,10 @@ Frontend commands (from the repo root): `npm install` once, then `npm run dev` (
 | Mainnet API | `https://api.rougechain.io/api` |
 | Testnet API | `https://testnet.rougechain.io/api` |
 | Frontend | `https://rougechain.io` |
-| Block Time | 400ms |
+| Block Time | On demand — blocks are produced only when there are transactions (the node checks every 400 ms by default) |
 | Signing | ML-DSA-65 (FIPS 204, formerly CRYSTALS-Dilithium) |
 | Encryption | ML-KEM-768 (FIPS 203, formerly CRYSTALS-Kyber) |
 
 ## License
 
-MIT
+Apache 2.0 (see [LICENSE](LICENSE))

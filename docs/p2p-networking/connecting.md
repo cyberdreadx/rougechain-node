@@ -22,13 +22,13 @@ Your node will:
 >
 > Without `--public-url`, your node pulls blocks from peers but **never registers itself**. Other nodes won't know it exists, and it won't appear on the [network globe](https://rougechain.io/blockchain).
 >
-> To be discoverable, add `--public-url` with your node's reachable address:
+> To be discoverable, add `--public-url` with your node's reachable address — the HTTPS URL of the reverse proxy in front of it (see [Firewall & Exposure](#firewall--exposure)):
 >
 > ```bash
 > ./quantum-vault-daemon \
 >   --api-port 5100 \
 >   --node-name "MyNode" \
->   --public-url "https://your-server.com:5100" \
+>   --public-url "https://your-server.com/api" \
 >   --peers "https://testnet.rougechain.io/api"
 > ```
 >
@@ -94,21 +94,24 @@ curl https://testnet.rougechain.io/api/health
 ## Connection Flow
 
 ```
-Your Node                          Peer Node
-    │                                  │
-    │── GET /api/health ──────────────►│
-    │◄─── { height: 12345 } ──────────│
-    │                                  │
-    │── GET /api/blocks?from=0 ───────►│
-    │◄─── [ block0, block1, ... ] ────│
-    │                                  │
-    │   (verify signatures, apply)     │
-    │                                  │
-    │── GET /api/peers ───────────────►│
-    │◄─── { peers: [...] } ───────────│
-    │                                  │
-    │   (discover new peers)           │
+Your Node                                         Peer Node
+    │                                                 │
+    │── GET /api/blocks?from_height=0&limit=1000 ────►│  (fresh node; later polls
+    │◄─── { blocks: [ block0, block1, ... ] } ───────│   use ?limit=1000)
+    │                                                 │
+    │   (verify signatures, apply)                    │
+    │                                                 │
+    │── GET /api/finality/:height ───────────────────►│
+    │◄─── finality proof ────────────────────────────│
+    │                                                 │
+    │── GET /api/peers ──────────────────────────────►│
+    │◄─── { peers: [...] } ──────────────────────────│
+    │                                                 │
+    │── POST /api/peers/register ────────────────────►│  (only with --public-url)
+    │── GET /api/stats ──────────────────────────────►│  (peer name)
 ```
+
+All peer traffic uses the same HTTP REST API that wallets use; there is no separate P2P protocol or port. New blocks and transactions are pushed with `POST /api/blocks/import` and `POST /api/tx/broadcast`.
 
 ## Firewall & Exposure
 
@@ -120,8 +123,8 @@ proxy (nginx + TLS) in front of it; open only the proxy's port 443. See
 | Port | Bind | Exposure |
 |------|------|----------|
 | 443 (nginx/TLS) | public | ✅ the only port open to the internet |
-| 5100 (daemon REST API) | `127.0.0.1` | ❌ never open to the public |
-| 4100 (P2P) | as needed | reachable by peers only; restrict where possible |
+| 5100 (daemon REST API, `--api-port`; default 5101) | `127.0.0.1` | ❌ never open to the public — peers reach it through the proxy |
+| 4101 (gRPC, `--port`) | `127.0.0.1` | ❌ client gRPC services only; peers do not use it |
 
 ```bash
 # Expose ONLY the reverse proxy; keep the daemon API private:

@@ -82,7 +82,7 @@ Node release `59478e6` (binary sha256 `9a93d68b…`, non-consensus; installed on
 ## Testnet v0.2.4 — March 2026
 
 ### Added
-- **Social layer** — On-chain social features with plays, likes, comments, follows, and tips. Data is stored server-side in sled with ML-DSA-65 signed writes; tips settle on-chain via `rc.transfer()`
+- **Social layer** — Node-hosted social features (not on-chain) with plays, likes, comments, follows, and tips. Data is stored server-side in sled with ML-DSA-65 signed writes; tips settle on-chain via `rc.transfer()`
 - **Standalone posts** — Create, delete, and fetch posts (max 4000 chars) with threaded replies via `replyToId`. Global timeline and personalized following feed endpoints
 - **Reposts** — Toggle repost on any post; repost counts aggregated per post with viewer state
 - **Post stats** — Aggregate endpoint returns likes, reposts, reply count, and viewer's liked/reposted state for any post

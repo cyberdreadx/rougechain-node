@@ -10,13 +10,13 @@ On a fresh Linux server (a ~$5/mo VPS is plenty), this installs dependencies, bu
 curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh | bash
 ```
 
-To be reachable by peers (so your blocks propagate), pass a public URL and open the P2P port:
+To be reachable by peers (so your votes and blocks propagate), pass a public URL that peers can reach over HTTPS (peers talk to each other over the REST API; there is no separate P2P port):
 
 ```bash
 PUBLIC_URL=https://node.example.com bash <(curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh)
 ```
 
-When it finishes it prints your validator address and the exact fund → stake → verify steps. You still need to **fund and stake ≥ 10,000 XRGE** (step 3 below); the node produces blocks automatically once you're staked and in the active set. Re-run the command any time to upgrade. The rest of this page is the manual walkthrough if you'd rather do each step yourself.
+When it finishes it prints your validator address and the exact fund → stake → verify steps. You still need to **fund and stake ≥ 10,000 XRGE** (step 3 below); once you're staked and in the active set, the node votes on blocks automatically and proposes whenever it is the [designated proposer](#proposer-selection). Re-run the command any time to upgrade. The rest of this page is the manual walkthrough if you'd rather do each step yourself.
 
 ## The one thing you must understand
 
@@ -25,7 +25,7 @@ Your validator identity is a **single ML-DSA-65 keypair** that does two jobs:
 1. it **holds your stake** — staking from a key registers *that key* as a validator, and
 2. it **signs the blocks** your node proposes.
 
-Your node stores this keypair at `<data-dir>/node-keys.json`. **The network rejects any block whose proposer is not a staked validator** — so your node's `node-keys.json` key and your staked key must be the **same key**. If you stake from one key but run your node with a different (freshly generated) key, your blocks are rejected by every peer and you earn nothing, with no obvious error. This is the most common way to get validator setup wrong.
+Your node stores this keypair at `<data-dir>/node-keys.json`. **The network rejects any block whose proposer is not a staked validator** (and, since height 100, any block whose proposer is not the [designated proposer](#proposer-selection)) — so your node's `node-keys.json` key and your staked key must be the **same key**. If you stake from one key but run your node with a different (freshly generated) key, your blocks are rejected by every peer and you earn nothing, with no obvious error. This is the most common way to get validator setup wrong.
 
 > **Security:** this key signs blocks on an always-online, internet-facing server. Use a **dedicated key that holds only your stake** — never your main treasury wallet. If the server is compromised, the blast radius is limited to the staked amount.
 
@@ -111,32 +111,34 @@ Restart the daemon with `--mine` (same key, same data-dir), plus a public URL so
   --public-url https://my-validator.example.com
 ```
 
-Because your `node-keys.json` key is now a staked validator, peers accept your blocks. Check progress anytime with:
+Because your `node-keys.json` key is now a staked validator, your node votes toward each block's commit certificate, and peers accept your blocks whenever you are the designated proposer. Check progress anytime with:
 
 ```bash
 rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json validator-status
 ```
 
-You're fully live once it shows `✓ Producing blocks`.
+You're fully live once you're staked, in the active set and synced. `✓ Producing blocks` counts blocks you have proposed, so it only turns green once you have been the designated proposer (the largest stake); see [Proposer selection](#proposer-selection).
 
 ## Proposer selection
 
-Selection is **stake-weighted**, mixed with **quantum entropy** (ANU QRNG, falling back to a local CSPRNG), plus block context for verifiability. Even a minimum-stake validator proposes blocks — just less often.
+Since mainnet height 100 (Release 1), each block has exactly one **designated proposer**: the eligible validator (stake > 0, not jailed) with the **most stake**; ties go to the lowest raw public-key bytes. Selection is deterministic: there is no randomness, no QRNG and no rotation, so a validator that does not hold the most stake does not propose blocks. Every staked, non-jailed validator still earns a stake-weighted share of the fees in every block (see [Rewards](rewards.md)). There is no fallback proposer yet: if the designated proposer is offline, no blocks are produced until it returns. See [Adding a Validator](adding-a-validator.md) for how this affects a new validator.
+
+> `GET /api/selection` still reports the legacy QRNG/stake-weighted lottery and is **not** the consensus rule. The designated proposer for the next height is `designated_proposer_next` in `GET /api/stats`.
 
 ## Security & slashing — read before you go live
 
 - **Dedicated key.** Keep only the stake in your validator key; never use your treasury wallet. (Done, if you followed Step 1.)
-- **One node per key.** **Never run two nodes with the same key** — double-signing is slashable equivocation.
+- **One node per key.** **Never run two nodes with the same key** — two nodes can sign two different blocks or votes at one height (equivocation). Slashing on equivocation evidence is planned.
 - **Back up `node-keys.json`** offline. It is the only copy of your validator identity.
 - **Don't expose the daemon port.** Bind to localhost, front it with nginx + TLS, and firewall the RPC/API port. See [public-node security](../p2p-networking/public-node.md). Do **not** open port 5100 to the public internet.
-- **Watch for missed blocks.** Missing **50 blocks** triggers an auto-slash; each violation costs **10%** of stake and jails you for ~20 blocks. Alert on your node being offline or lagging the chain tip (`/api/health` height vs the network).
+- **Stay online.** Automatic missed-block slashing is **frozen** since height 100 (a slash costs **10%** of stake plus a 20-block jail). But if you are the designated proposer and go offline, the chain stops producing blocks, and an offline validator's vote is missing from the ⅔-stake commit certificate. Alert on your node being offline or lagging the chain tip (`/api/health` height vs the network).
 - **Never run `--dev`** on a mainnet node — it enables unsafe key-accepting endpoints.
-- **Avoid unattended auto-restart** (e.g. an auto-deploy cron) on a validator: a restart during your proposal slot loses blocks, and auto-pulling unreviewed code is a supply-chain risk. Upgrade deliberately.
+- **Avoid unattended auto-restart** (e.g. an auto-deploy cron) on a validator: a restart while you are the designated proposer stalls block production, and auto-pulling unreviewed code is a supply-chain risk. Upgrade deliberately.
 
 ## Increasing stake / leaving
 
 - **Add stake:** `rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json stake 10000` again (≥ 10,000 each time).
-- **Leave:** `rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json unstake <amount>` enters the **~500-block unbonding** queue; dropping below 10,000 removes you from the active set. See [Staking](README.md).
+- **Leave:** `rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json unstake <amount>` enters the **500-block unbonding** queue (wall-clock time depends on how often blocks are produced); dropping to 0 stake removes you from the active set. See [Staking](README.md).
 
 ## Testing on testnet first
 

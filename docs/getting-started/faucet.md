@@ -22,10 +22,13 @@ Response:
 ```json
 {
   "success": true,
-  "amount": 10000,
-  "txId": "abc123..."
+  "txId": "abc123...",
+  "tx": { "...": "the faucet transfer (TxV1)" },
+  "error": null
 }
 ```
+
+The signed `POST /api/v2/faucet` endpoint (used by the SDK) instead returns `{ "success": true, "message": "Faucet: 10000 XRGE sent" }`, without a transaction id.
 
 ## Rate Limits
 

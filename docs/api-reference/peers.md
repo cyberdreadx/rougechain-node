@@ -79,31 +79,36 @@ Content-Type: application/json
 
 ### Request Body
 
-The full block object:
+The full block object. Field names are **snake_case** (a camelCase body is rejected):
 
 ```json
 {
   "version": 1,
   "header": {
     "version": 1,
-    "chainId": "rougechain-devnet-1",
+    "chain_id": "rougechain-mainnet-1",
     "height": 42,
     "time": 1706745600000,
-    "prevHash": "abc123...",
-    "txHash": "def456...",
-    "proposerPubKey": "..."
+    "prev_hash": "abc123...",
+    "tx_hash": "def456...",
+    "proposer_pub_key": "...",
+    "state_root": "...",
+    "parent_commit": { "...": "..." }
   },
   "txs": [...],
-  "proposerSig": "...",
+  "proposer_sig": "...",
   "hash": "..."
 }
 ```
+
+`state_root` and `parent_commit` are optional in the format but required on blocks at/after their activation heights (mainnet blocks carry both). Since proposer selection activated (mainnet height 100), a block is only accepted from the designated proposer for its height.
 
 ### Response
 
 ```json
 {
-  "success": true
+  "success": true,
+  "error": null
 }
 ```
 

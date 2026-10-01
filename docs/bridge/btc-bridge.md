@@ -16,21 +16,38 @@ qBTC uses **8 decimals — 1 on-chain unit = 1 satoshi.**
 Bitcoin has no event logs and no EVM signatures, so none of the `eth_getLogs` / ECDSA machinery
 applies. Two design choices carry the security:
 
-1. **Recipient binding via `OP_RETURN`.** A depositor writes their RougeChain address into an
-   `OP_RETURN` output of the very transaction that funds custody. The binding is baked into a
-   signed Bitcoin transaction, so knowing a txid does not let anyone redirect the mint. No xpub,
-   no HD derivation — the minimal key/quantum surface.
+1. **Recipient binding.** Every deposit is bound to a RougeChain recipient before any qBTC is
+   minted, in one of two ways:
+   - **Per-user deposit address (default).** Each RougeChain address is assigned its own Bitcoin
+     deposit address, stable per recipient. These addresses are derived (BIP84) from the BTC
+     relayer's HD wallet and registered with the daemon, which only stores the
+     address ↔ recipient binding and watches it. Send from any wallet, no `OP_RETURN` needed.
+   - **`OP_RETURN` fallback.** A depositor sends to the custody address and writes their
+     RougeChain address into an `OP_RETURN` output of that same transaction. The binding is baked
+     into a signed Bitcoin transaction, so knowing a txid does not let anyone redirect the mint.
 2. **Two-provider cross-check.** Every deposit is verified against two independent Esplora
    providers (mempool.space + blockstream.info by default). Both must agree on the custody amount
    and the recipient and both must meet the confirmation depth, so no single API can fabricate a
    deposit. If a provider is unreachable the daemon fails **closed** (the claim is idempotent and
    pollable, so an outage only delays).
 
-**The daemon holds no Bitcoin key.** Deposits use a watch-only custody address. The hot key lives
-only in the external BTC relayer, which pays withdrawals out; the daemon then re-verifies each
-payout on the Bitcoin chain before marking it fulfilled.
+**The daemon holds no Bitcoin key.** It only watches the custody address and the assigned deposit
+addresses. The hot keys (custody and the HD deposit wallet) live only in the external BTC relayer,
+which sweeps deposit addresses into custody and pays withdrawals out; the daemon then re-verifies
+each payout on the Bitcoin chain before marking it fulfilled.
 
 ## Deposit flow (BTC → qBTC)
+
+### Per-user deposit address
+
+1. The frontend calls `POST /api/bridge/btc/deposit-address` `{ recipient }` with the user's
+   RougeChain address and gets back that recipient's deposit address (the same one every time).
+2. User sends BTC to it from any wallet — no `OP_RETURN`.
+3. The daemon polls assigned addresses, cross-checks each deposit on both providers, and once it
+   has the required confirmations mints qBTC (sats) to the bound recipient. No claim call is needed.
+   Dedupe key: `btcaddr:{txid}:{vout}`.
+
+### `OP_RETURN` fallback
 
 1. User sends BTC to the custody address **with an `OP_RETURN` output** containing their RougeChain
    address. (Wallets that support OP_RETURN: Sparrow, Electrum, BlueWallet advanced, bitcoinjs.)

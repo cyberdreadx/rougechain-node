@@ -7,8 +7,8 @@ Create custom tokens on RougeChain. Tokens can be traded on the built-in AMM/DEX
 | Property | Value |
 |----------|-------|
 | Creation fee | 100 XRGE |
-| Max supply | Set at creation (immutable) |
-| Decimals | Configurable |
+| Supply | Set at creation — the full supply is minted to the creator and is fixed (tokens are created non-mintable) |
+| Decimals | Not configurable — user-created tokens are whole units (0 decimals) |
 | Trading | Via AMM liquidity pools |
 
 ## Create a Token
@@ -20,11 +20,11 @@ Create custom tokens on RougeChain. Tokens can be traded on the built-in AMM/DEX
 3. Fill in token details:
    - **Name** — Full name (e.g., "My Token")
    - **Symbol** — Ticker symbol (e.g., "MTK")
-   - **Total Supply** — Maximum supply
+   - **Total Supply** — Full supply, minted to you at creation
    - **Logo** — Upload an image or paste a URL (optional)
 4. Confirm and sign the transaction
 
-Uploaded logos are compressed to WebP (max 256×256, ≤100 KB) and stored on-chain as base64 data URIs. They display across the wallet, swap, pools, and explorer.
+Uploaded logos are compressed to WebP (max 256×256) and stored on-chain as base64 data URIs. The node rejects an inline `data:` logo larger than **32 KiB** (and a logo URL longer than 2,048 bytes), so for a detailed image host it and paste a URL. Logos display across the wallet, swap, pools, and explorer.
 
 ### Via SDK
 
@@ -51,10 +51,9 @@ curl -X POST https://testnet.rougechain.io/api/v2/token/create \
   -H "Content-Type: application/json" \
   -d '{
     "payload": {
-      "name": "My Token",
-      "symbol": "MTK",
-      "totalSupply": 1000000,
-      "decimals": 8,
+      "token_name": "My Token",
+      "token_symbol": "MTK",
+      "initial_supply": 1000000,
       "image": "https://example.com/logo.png",
       "from": "your-public-key-hex",
       "timestamp": 1706745600000,
@@ -65,21 +64,19 @@ curl -X POST https://testnet.rougechain.io/api/v2/token/create \
   }'
 ```
 
+Raw-HTTP field names are snake_case: `token_name` (1–64 chars), `token_symbol` (1–10 chars, no whitespace, must be unused), `initial_supply` (> 0), plus optional `image` and `description`. The 100 XRGE fee is set by the node regardless of any `fee` in the payload. There is no `decimals` field.
+
 ### Response
 
 ```json
 {
   "success": true,
-  "txId": "abc123...",
-  "token": {
-    "symbol": "MTK",
-    "name": "My Token",
-    "totalSupply": 1000000,
-    "decimals": 8,
-    "creator": "your-public-key"
-  }
+  "token_symbol": "MTK",
+  "message": "Token creation transaction submitted"
 }
 ```
+
+The token exists once the transaction is included in a block.
 
 ## After Creation
 
@@ -98,10 +95,10 @@ curl -X POST https://testnet.rougechain.io/api/v2/pool/create \
   -H "Content-Type: application/json" \
   -d '{
     "payload": {
-      "tokenA": "XRGE",
-      "tokenB": "MTK",
-      "amountA": 1000,
-      "amountB": 10000,
+      "token_a": "XRGE",
+      "token_b": "MTK",
+      "amount_a": 1000,
+      "amount_b": 10000,
       "from": "your-public-key-hex",
       "timestamp": 1706745600001,
       "nonce": "random-hex"

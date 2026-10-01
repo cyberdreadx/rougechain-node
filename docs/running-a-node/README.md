@@ -9,8 +9,8 @@ The node software is **open source** on [GitHub](https://github.com/cyberdreadx/
 | Type | What it does | Key flags |
 |------|--------------|-----------|
 | **Full node** | Syncs and validates all blocks from peers | `--peers` |
-| **Mining / validator node** | Produces blocks (requires ≥ 10,000 XRGE staked to be selected) | `--mine` |
-| **Public node** | Serves an API/RPC to other users and apps | `--host 0.0.0.0` + reverse proxy |
+| **Mining / validator node** | Votes on blocks once staked (≥ 10,000 XRGE); proposes only while it is the designated proposer (the validator with the most stake) | `--mine` |
+| **Public node** | Serves an API/RPC to other users and apps | `--public-url` + reverse proxy |
 
 A single node can be all three at once.
 
@@ -66,7 +66,7 @@ Mainnet requires the mainnet genesis file (shipped in the repo) and the mainnet 
   --node-name my-node
 ```
 
-Add `--mine` if you intend to validate (you'll only be selected once you've staked ≥ 10,000 XRGE — see [Staking](../staking/README.md)).
+Add `--mine` if you intend to validate. Your node only proposes once its key is staked (≥ 10,000 XRGE) **and** it is the designated proposer, i.e. it holds the most stake — see [Staking](../staking/README.md).
 
 ### Join Testnet
 
@@ -87,10 +87,10 @@ If you want your node to serve an API/RPC to users, wallets, or apps, run it as 
 
 Recommended operator setup:
 
-1. **Bind and advertise** — run with `--host 0.0.0.0 --api-port 5100` (firewalled) and set `--public-url https://your-domain/api` so peers can reach you.
+1. **Bind and advertise** — run with the default `--host 127.0.0.1` and `--api-port 5100`, and set `--public-url https://your-domain/api` so peers can reach you through the proxy. Peers use the same REST API; there is no separate P2P port.
 2. **Terminate TLS at nginx** — proxy `https://your-domain/api` → `http://127.0.0.1:5100`. A full nginx example is in [Running a Public Node](../p2p-networking/public-node.md).
-3. **Protect writes** — set `--api-keys "<key1>,<key2>"` so only holders of a key can hit write endpoints. (Signed `/api/v2/*` and public `/api/faucet`, `/api/bridge/*` handle their own auth.)
-4. **Rate-limit** — e.g. `--rate-limit-per-minute 120` (plus `--rate-limit-read/write-per-minute` for finer control) to keep a single client from overwhelming the node.
+3. **API keys (private nodes only)** — `--api-keys "<key1>,<key2>"` makes every route that is not exempt return `401` unless the request sends `X-API-Key` or `Authorization: Bearer`. This covers **reads** too (e.g. `/api/blocks`, balances) and the peer routes (`/api/blocks/import`, `/api/peers/register`, `/api/tx/broadcast`); peers never send a key, so a keyed node stops accepting pushed blocks and transactions. Exempt: `/`, `/api/health`, `/api/stats`, `/api/v2/*`, `/api/bridge/*`, `/api/messenger/*`, `/api/mail/*`, `/api/names/*`, `/api/finality/*`, the faucet and the bot. Signed routes check their own signatures.
+4. **Rate-limit** — e.g. `--rate-limit-read-per-minute 600 --rate-limit-write-per-minute 60`. All limits default to `0` (unlimited); `--rate-limit-per-minute` is accepted but not enforced. Limits are keyed by the connecting IP — the node does not read `X-Forwarded-For` — so behind a reverse proxy every client shares one bucket; do per-client limiting in the proxy.
 5. **Run under systemd** — so it restarts on crash/reboot. Example unit and hardening in [Public Node](../p2p-networking/public-node.md) and [Configuration](configuration.md).
 6. **Monitor** — poll `/api/health` (liveness) and `/api/stats` (height, peers, mining) from your uptime checker.
 

@@ -1,6 +1,6 @@
 # Create a Wallet
 
-You explicitly create (or import) your RougeChain wallet and set a password (minimum 8 characters) at creation. Here's what you need to know about it.
+You explicitly create (or import) your RougeChain wallet, and onboarding then asks you to set a password (at least 6 characters there; at least 8 when you set or change it later in Settings). **Set one** — on the web, your keys are stored unencrypted in the browser until you do. Here's what you need to know about your wallet.
 
 ## Wallet Components
 
@@ -24,7 +24,7 @@ rouge1q8f3x7k2m4n9pvj5dz6ywl2cg8hs0kw9...
 
 Addresses are ~63 characters — much shorter than the raw 3,904-char hex public key. The wallet, extension, and explorer all display this format.
 
-> **Note:** API endpoints still use the raw hex public key internally. The `rouge1` address is for display, sharing, and QR codes.
+> **Note:** Some API endpoints still require the raw hex public key (see [Address Format](../api-reference/README.md#address-format)). The `rouge1` address is for display, sharing, and QR codes.
 
 ## Backup Your Wallet
 
@@ -58,7 +58,7 @@ Wallets also support **24-word BIP-39 mnemonic** backup (256-bit entropy for pos
 2. Write down all 24 words in order
 3. Store securely — anyone with your seed phrase has full access to your wallet
 
-> **Tip:** Use the seed phrase as your primary backup method. The `.pqcbackup` file is best for transferring between devices.
+> **Important:** The seed phrase restores your **signing key and address** (and so your funds), but **not** your messaging/mail encryption key — that key is generated randomly, not derived from the phrase. A wallet restored from the phrase alone gets a new encryption key and cannot read your earlier messages or mail. Keep a `.pqcbackup` file as well: it contains both keys.
 
 ## `.pqcbackup` File Format
 
@@ -90,7 +90,7 @@ The encrypted backup file uses industry-standard cryptography:
 3. The salt, IV, and ciphertext are bundled into a `.pqcbackup` JSON file
 4. Without the correct password, the file cannot be decrypted
 
-> **Warning:** There is no password recovery. If you forget your backup password, use your seed phrase to restore instead.
+> **Warning:** There is no password recovery. If you forget your backup password, you can restore your address and funds from your seed phrase, but not your old messages or mail.
 
 ## Security Best Practices
 
@@ -110,22 +110,24 @@ The encrypted backup file uses industry-standard cryptography:
 const mnemonic = bip39.generateMnemonic(256);
 
 // Derive 32-byte seed via HKDF-SHA256
-const seed = hkdf(mnemonicToSeed(mnemonic), "rougechain-pqc-v1");
+const seed = hkdf(sha256, mnemonicToSeed(mnemonic), undefined, "rougechain-ml-dsa-65-v1", 32);
 
 // Signing keypair (ML-DSA-65 / FIPS 204)
 const signingKeypair = ml_dsa65.keygen(seed);
 
-// Encryption keypair (ML-KEM-768 / FIPS 203)
-const encryptionKeypair = ml_kem768.keygen(seed);
+// Encryption keypair (ML-KEM-768 / FIPS 203) — random, NOT derived from the seed
+const encryptionKeypair = ml_kem768.keygen();
 ```
 
 ### Key Storage
 
-Keys are encrypted at rest with **AES-256-GCM** (PBKDF2, 600,000 iterations). Only the encrypted blob is persisted to disk; the decrypted key is held only in memory for the active session.
+Once you set a password, keys are encrypted at rest with **AES-256-GCM** (PBKDF2, 600,000 iterations).
+
+On the web, a new or imported wallet is first saved to `localStorage` **unencrypted**, so it survives a reload. Setting a password replaces that copy with the encrypted blob. While the wallet is unlocked, the decrypted wallet is kept in `sessionStorage`, which the browser clears when the tab closes. If you skip the password step, set one in **Settings** as soon as possible, and keep a `.pqcbackup`.
 
 | Platform | Storage |
 |----------|---------|
-| Web (rougechain.io) | encrypted blob in `localStorage`; decrypted key in memory only |
+| Web (rougechain.io) | no password: plaintext wallet in `localStorage`; with a password: encrypted blob in `localStorage`, decrypted wallet in `sessionStorage` while unlocked |
 | Browser Extension (RougeChain Wallet) | encrypted AES-256-GCM vault in `chrome.storage.local`; decrypted key in `chrome.storage.session`, never written to disk |
 | Mobile (Qwalla) | `expo-secure-store` → device keychain |
 
