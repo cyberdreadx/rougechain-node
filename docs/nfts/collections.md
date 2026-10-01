@@ -18,7 +18,7 @@ The collection ID is generated from `creator_pubkey:SYMBOL`.
 
 ## Royalties
 
-Set a `royaltyBps` (basis points — `500` = 5%, `1000` = 10%) when creating a collection to earn on secondary sales.
+Set a `royaltyBps` (basis points — `500` = 5%, `1000` = 10%) when creating a collection to earn on secondary sales. From the CONTRACT_NFT_ROYALTY upgrade, `royaltyBps` must be an integer from `0` to `10000` (100%); a higher value is rejected at creation.
 
 - **When it's paid:** on an `nft_transfer` that declares a `salePrice > 0`. The royalty is `salePrice × royaltyBps / 10000`, in XRGE.
 - **Who pays:** the **sender** (the current owner initiating the transfer). It is deducted from their XRGE balance *on top of* the 1 XRGE transfer fee.

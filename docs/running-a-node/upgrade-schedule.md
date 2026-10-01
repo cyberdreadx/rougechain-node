@@ -42,7 +42,10 @@ state root also commits the mint ledger. Every node must run the new binary **be
 
 CONTRACT_NFT_ROYALTY is planned for the **same height**. It is a smaller fork: from its height every
 contract call links `host_nft_royalty_bps` / `host_nft_royalty_recipient`, so a call to a contract that
-imports them succeeds where an old node fails it (an old node then rejects the block). No transaction
+imports them succeeds where an old node fails it (an old node then rejects the block). From the same
+height an `nft_create_collection` whose `royaltyBps` is above `10000` (over 100%) or not an exact
+integer is invalid (refused by the API, mempool and producer; a block carrying one is rejected) — an
+old node would accept that block, so this too requires the new binary everywhere. No transaction
 or state-root format changes. Activating both at one height means one coordinated install. They are
 two independent schedule fields — set **both** to the same `H`.
 
@@ -66,6 +69,8 @@ two independent schedule fields — set **both** to the same `H`.
      `GET /api/token/<SYM>/metadata` shows `mintable: true` on every node;
    - mint once as the creator: balance and `total_minted` move by exactly the amount on every node;
    - a mint by another key, a mint above the cap and a mint of a non-mintable token are refused;
+   - CONTRACT_NFT_ROYALTY: `POST /api/v2/nft/collection/create` with `"royaltyBps": 10001` is refused
+     (`royaltyBps must be an integer between 0 and 10000`); `10000` is accepted.
    - CONTRACT_NFT_ROYALTY: publish `contracts/nft_marketplace/nft_marketplace.wasm` (it can be
      published before `H`, but its calls only run from `H`). On a test collection with a royalty,
      `list`, escrow the NFT with `nft_transfer`, then `buy` with the exact price attached: the royalty
