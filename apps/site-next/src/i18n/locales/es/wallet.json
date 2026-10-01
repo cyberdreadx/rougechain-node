@@ -224,7 +224,8 @@
       "title": "Protege tu billetera",
       "body": "Establece una contraseña para cifrar tus claves en este navegador (AES-256-GCM). La usarás para desbloquear la billetera.",
       "submit": "Cifrar y continuar",
-      "hint": "Tu contraseña nunca sale de este dispositivo."
+      "hint": "Tu contraseña nunca sale de este dispositivo.",
+      "required": "La contraseña es obligatoria: la billetera solo se guarda en este navegador una vez cifrada. Si cierras esta pestaña antes, no se conserva."
     },
     "mail": {
       "title": "Reclama tu nombre de correo",
@@ -499,5 +500,16 @@
     "baseHint": "Tu dirección de Base proviene de la misma frase de recuperación. Envía y recibe en la página Billetera.",
     "help": "Ayuda",
     "tourHint": "Recorre lo que hace cada parte de RougeChain."
+  },
+  "secure": {
+    "title": "Protege tu billetera",
+    "pendingBody": "Tu nueva billetera aún no está guardada. Establece una contraseña para cifrarla en este navegador; hasta entonces solo existe en esta pestaña y desaparece al cerrarla.",
+    "legacyBody": "Esta billetera no está protegida con contraseña y sus claves podrían estar guardadas sin cifrar en este navegador. Establece una contraseña para cifrarlas; después se elimina la copia sin cifrar.",
+    "required": "Debes establecer una contraseña para seguir usando esta billetera.",
+    "backupFirst": "Hacer copia de seguridad primero",
+    "backupHint": "¿No tienes claro si guardaste tu frase de recuperación o una copia de seguridad? Guarda una antes de continuar.",
+    "submit": "Cifrar billetera",
+    "done": "Billetera cifrada",
+    "doneBody": "Tus claves ahora se guardan en este navegador solo de forma cifrada."
   }
 }

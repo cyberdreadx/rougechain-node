@@ -172,7 +172,7 @@ All node state lives in [sled](https://github.com/spacejam/sled) embedded databa
 
 | Store | Location | Content |
 |-------|----------|---------|
-| Wallet keys | `localStorage` | ML-DSA-65 and ML-KEM-768 keys — AES-256-GCM encrypted once a wallet password is set |
+| Wallet keys | `localStorage` | ML-DSA-65 and ML-KEM-768 keys — only as an AES-256-GCM encrypted vault (password required); decrypted keys live in `sessionStorage` while unlocked |
 | Block list | `localStorage` | Blocked wallet addresses |
 | Mail settings | `localStorage` | Email signature preferences |
 | Display name | `localStorage` | User's messenger display name |

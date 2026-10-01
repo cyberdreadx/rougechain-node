@@ -224,7 +224,8 @@
       "title": "Secure your wallet",
       "body": "Set a password to encrypt your keys in this browser (AES-256-GCM). You'll use it to unlock the wallet.",
       "submit": "Encrypt and continue",
-      "hint": "Your password never leaves this device."
+      "hint": "Your password never leaves this device.",
+      "required": "A password is required: the wallet is saved in this browser only once it's encrypted. If you close this tab first, it is not kept."
     },
     "mail": {
       "title": "Claim your mail name",
@@ -499,5 +500,16 @@
     "baseHint": "Your Base address comes from the same recovery phrase. Send and receive on the Wallet page.",
     "help": "Help",
     "tourHint": "Walk through what each part of RougeChain does."
+  },
+  "secure": {
+    "title": "Secure your wallet",
+    "pendingBody": "Your new wallet isn't saved yet. Set a password to encrypt it in this browser — until then it exists only in this tab and disappears when you close it.",
+    "legacyBody": "This wallet isn't protected by a password, and its keys may be stored unencrypted in this browser. Set a password to encrypt them; the unencrypted copy is then deleted.",
+    "required": "You need to set a password to keep using this wallet.",
+    "backupFirst": "Back up first",
+    "backupHint": "Not sure you have your recovery phrase or a backup? Save one before you continue.",
+    "submit": "Encrypt wallet",
+    "done": "Wallet encrypted",
+    "doneBody": "Your keys are now stored only in encrypted form in this browser."
   }
 }

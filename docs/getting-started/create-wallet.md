@@ -1,6 +1,6 @@
 # Create a Wallet
 
-You explicitly create (or import) your RougeChain wallet, and onboarding then asks you to set a password (at least 6 characters there; at least 8 when you set or change it later in Settings). **Set one** — on the web, your keys are stored unencrypted in the browser until you do. Here's what you need to know about your wallet.
+You explicitly create (or import) your RougeChain wallet, and onboarding then asks you to set a password (at least 8 characters). The password is **required**: on the web, the wallet is saved in your browser only once it's encrypted with it. Here's what you need to know about your wallet.
 
 ## Wallet Components
 
@@ -123,11 +123,13 @@ const encryptionKeypair = ml_kem768.keygen();
 
 Once you set a password, keys are encrypted at rest with **AES-256-GCM** (PBKDF2, 600,000 iterations).
 
-On the web, a new or imported wallet is first saved to `localStorage` **unencrypted**, so it survives a reload. Setting a password replaces that copy with the encrypted blob. While the wallet is unlocked, the decrypted wallet is kept in `sessionStorage`, which the browser clears when the tab closes. If you skip the password step, set one in **Settings** as soon as possible, and keep a `.pqcbackup`.
+On the web, a new or imported wallet is held only in the tab's `sessionStorage` until you set its password; nothing is written to `localStorage` before that, so if you close the tab during the recovery-phrase or password step the wallet is not kept (restore it from the recovery phrase). Setting the password stores the encrypted blob in `localStorage`. While the wallet is unlocked, the decrypted wallet is kept in `sessionStorage`, which the browser clears when the tab closes. Keep a `.pqcbackup` as well.
+
+Older versions of the site saved a wallet without a password to `localStorage` **unencrypted**. If you still have such a wallet, rougechain.io asks you to set a password before you can keep using it (you can back it up first); the wallet is then encrypted and the unencrypted copy is deleted.
 
 | Platform | Storage |
 |----------|---------|
-| Web (rougechain.io) | no password: plaintext wallet in `localStorage`; with a password: encrypted blob in `localStorage`, decrypted wallet in `sessionStorage` while unlocked |
+| Web (rougechain.io) | encrypted blob in `localStorage`; decrypted wallet in `sessionStorage` while unlocked (and before the password is set during create / import). Private keys are never written to `localStorage` unencrypted |
 | Browser Extension (RougeChain Wallet) | encrypted AES-256-GCM vault in `chrome.storage.local`; decrypted key in `chrome.storage.session`, never written to disk |
 | Mobile (Qwalla) | `expo-secure-store` → device keychain |
 

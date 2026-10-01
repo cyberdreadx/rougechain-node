@@ -300,8 +300,25 @@ describe("create → onboarding → tour", () => {
     await user.click(screen.getByRole("checkbox"));
     await user.click(cont);
 
-    await user.type(screen.getByLabelText("Password"), "abc123");
-    await user.type(screen.getByLabelText("Confirm password"), "abc123");
+    // Mandatory, min 8 characters (no skip).
+    expect(
+      screen.getByText(/A password is required/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
+    await user.type(screen.getByLabelText("Password"), "abc1234");
+    await user.type(screen.getByLabelText("Confirm password"), "abc1234");
+    await user.click(
+      screen.getByRole("button", { name: "Encrypt and continue" }),
+    );
+    expect(
+      screen.getByText("Password must be at least 8 characters"),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem("pqc-unified-wallet-encrypted:mainnet")).toBeNull();
+    expect(localStorage.getItem("pqc-unified-wallet:mainnet")).toBeNull();
+    await user.clear(screen.getByLabelText("Password"));
+    await user.clear(screen.getByLabelText("Confirm password"));
+    await user.type(screen.getByLabelText("Password"), "abc12345");
+    await user.type(screen.getByLabelText("Confirm password"), "abc12345");
     await user.click(
       screen.getByRole("button", { name: "Encrypt and continue" }),
     );

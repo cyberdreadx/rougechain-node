@@ -8,8 +8,10 @@ see [Status & Roadmap](status.md).
 - Accounts, transactions, validator block signatures and staking operations use **ML-DSA-65**
   (FIPS 204). Messaging and mail use **ML-KEM-768** (FIPS 203).
 - Transactions are signed client-side; private keys do not leave the wallet.
-- In the web wallet, keys are encrypted at rest only **once you set a password**; until then they are
-  stored unencrypted in the browser. See [Create a Wallet](getting-started/create-wallet.md#key-storage).
+- In the web wallet, setting a password (min 8 characters) is **required** to finish creating or
+  importing a wallet, and keys are written to browser storage only encrypted (AES-256-GCM). A wallet
+  an older version stored unencrypted must be secured with a password before it can be used again.
+  See [Create a Wallet](getting-started/create-wallet.md#key-storage).
 - Messages and mail are encrypted to each participant's **long-term** ML-KEM-768 key. There is no
   forward secrecy: anyone who later obtains that key can decrypt the stored messages and mail it
   was used for, both received and sent.

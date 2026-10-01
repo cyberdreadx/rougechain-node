@@ -4,6 +4,15 @@ All notable changes to RougeChain.
 
 ---
 
+## Web wallet: keys never stored unencrypted — 2026-10-01
+
+- **Security fix (rougechain.io).** A new or imported wallet was saved to `localStorage` unencrypted
+  before the password step, and stayed there if you left onboarding (the password was optional).
+  Now the wallet is held only in the tab's `sessionStorage` until you set its password, which is
+  **required** (min 8 characters, also during onboarding); only the AES-256-GCM vault is persisted.
+- Existing wallets that an older version stored unencrypted keep working, but the site asks you to
+  set a password before using them (with a backup option); the plaintext copy is then deleted.
+
 ## Payable contract calls (block 190) — 2026-09-28
 
 - A contract call can carry a signed payment: `attach: {"symbol": "XRGE" | TOKEN, "amount": N}` (integer:

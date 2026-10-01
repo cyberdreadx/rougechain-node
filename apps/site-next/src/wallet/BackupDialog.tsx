@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog, Button } from "@rougechain/ui";
-import { encryptWallet } from "@rougechain/core/unified-wallet";
+import { encryptWallet, MIN_VAULT_PASSWORD_LENGTH } from "@rougechain/core/unified-wallet";
 import { useWallet } from "./WalletProvider";
 import { CopyText } from "./parts";
 import { toast } from "./toast";
@@ -126,7 +126,7 @@ export function ImportForm({ onDone }: { onDone?: () => void }) {
 }
 
 /** Reveal the recovery phrase, export an encrypted .pqcbackup, or import. */
-export function BackupDialog({ open, onClose, initialTab }: { open: boolean; onClose: () => void; initialTab?: Tab }) {
+export function BackupDialog({ open, onClose, initialTab, allowImport = true }: { open: boolean; onClose: () => void; initialTab?: Tab; allowImport?: boolean }) {
   const { t } = useTranslation("wallet");
   const { wallet } = useWallet();
   const hasPhrase = !!wallet?.mnemonic;
@@ -147,7 +147,7 @@ export function BackupDialog({ open, onClose, initialTab }: { open: boolean; onC
 
   const exportBackup = async () => {
     if (!wallet) return;
-    if (pw.length < 8) return toast.error(t("backup.passwordMin", { count: 8 }));
+    if (pw.length < MIN_VAULT_PASSWORD_LENGTH) return toast.error(t("backup.passwordMin", { count: MIN_VAULT_PASSWORD_LENGTH }));
     if (pw !== pw2) return toast.error(t("backup.passwordMismatch"));
     setBusy(true);
     try {
@@ -167,7 +167,7 @@ export function BackupDialog({ open, onClose, initialTab }: { open: boolean; onC
   const tabs: { id: Tab; label: string }[] = [
     ...(hasPhrase ? [{ id: "phrase" as const, label: t("backup.tabPhrase") }] : []),
     ...(wallet ? [{ id: "export" as const, label: t("backup.tabExport") }] : []),
-    { id: "import", label: t("backup.tabImport") },
+    ...(allowImport ? [{ id: "import" as const, label: t("backup.tabImport") }] : []),
   ];
 
   return (
@@ -224,7 +224,7 @@ export function BackupDialog({ open, onClose, initialTab }: { open: boolean; onC
         </form>
       )}
 
-      {tab === "import" && <ImportForm onDone={close} />}
+      {tab === "import" && allowImport && <ImportForm onDone={close} />}
     </Dialog>
   );
 }

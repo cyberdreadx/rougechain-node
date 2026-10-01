@@ -100,7 +100,7 @@ const valid = ml_dsa65.verify(signature, message, publicKey);
 
 ## Security Considerations
 
-1. **Key storage** - Private keys are stored in `localStorage` when no vault password is set (for PWA persistence), or encrypted with AES-256-GCM (PBKDF2, 600K iterations) when the user configures a vault passphrase. Active session keys are held in `sessionStorage`.
+1. **Key storage** - Private keys are persisted only encrypted with AES-256-GCM (PBKDF2, 600K iterations) under a required vault password (min 8 characters); they are never written to `localStorage` in plaintext. Active session keys (and a new wallet before its password is set) are held in `sessionStorage`. Wallets that older versions stored in plaintext must be secured with a password before further use, which deletes the plaintext copy.
 2. **Entropy** - Keys use cryptographically secure random number generators
 3. **Side channels** - Library implementations are designed to be constant-time
 4. **Hybrid approach** - Consider adding classical signatures for defense-in-depth
