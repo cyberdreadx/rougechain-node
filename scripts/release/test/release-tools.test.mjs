@@ -29,6 +29,7 @@ let keyFile;
 let keysDir;
 let binary;
 let genesis;
+let cli;
 
 /** Fresh, signed manifest in its own directory. Returns paths. */
 function freshRelease(name, { sign = true } = {}) {
@@ -38,7 +39,7 @@ function freshRelease(name, { sign = true } = {}) {
   const r = run('make-manifest.mjs', [
     '--network', 'mainnet', '--version', '9.9.9', '--released', '2026-10-01',
     '--binary', binary, '--source-commit', '03613ef', '--public-commit', 'e048bf1',
-    '--genesis', genesis, '--mandatory', '--upgrade-before-height', '235',
+    '--genesis', genesis, '--cli', cli, '--mandatory', '--upgrade-before-height', '235',
     '--activation', 'token_minting=235', '--activation', 'contract_nft_royalty=235',
     '--notes-url', 'https://docs.rougechain.io/running-a-node/releases.html',
     '--out', manifest,
@@ -58,6 +59,8 @@ before(() => {
   keysDir = join(dir, 'keys');
   binary = join(dir, 'quantum-vault-daemon-test-0000000');
   writeFileSync(binary, Buffer.alloc(4096, 7));
+  cli = join(dir, 'rougechain');
+  writeFileSync(cli, Buffer.alloc(2048, 3));
   genesis = join(dir, 'genesis-mainnet.json');
   writeFileSync(genesis, JSON.stringify({ chain_id: 'rougechain-mainnet-1' }) + '\n');
   const r = run('keygen.mjs', ['--out', keyFile, '--pub-dir', keysDir]);
@@ -111,11 +114,46 @@ describe('make-manifest', () => {
     assert.match(m.binary.sha256, /^[0-9a-f]{64}$/);
     assert.equal(m.binary.url, 'https://api.rougechain.io/releases/quantum-vault-daemon-test-0000000');
     assert.equal(m.genesis.name, 'genesis-mainnet.json');
+    assert.equal(m.cli.name, 'rougechain-03613ef');
+    assert.equal(m.cli.url, 'https://api.rougechain.io/releases/rougechain-03613ef');
+    assert.equal(m.cli.size, 2048);
+    assert.match(m.cli.sha256, /^[0-9a-f]{64}$/);
+    assert.deepEqual(m.cli.mirrors, []);
+    assert.deepEqual(Object.keys(m).slice(7, 10), ['binary', 'cli', 'genesis']);
     assert.deepEqual(m.activations, [{ name: 'token_minting', height: 235 }, { name: 'contract_nft_royalty', height: 235 }]);
+  });
+  it('cli: --no-cli gives cli: null; one of --cli / --no-cli is required; mirrors for binary, cli and genesis', () => {
+    const base = ['--network', 'mainnet', '--version', '1.6.0', '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis];
+    const none = join(dir, 'cli-none.json');
+    const r0 = run('make-manifest.mjs', [...base, '--out', none]);
+    assert.notEqual(r0.status, 0);
+    assert.match(out(r0), /--cli <file>.*--no-cli/);
+    assert.ok(!existsSync(none));
+    const r1 = run('make-manifest.mjs', [...base, '--no-cli', '--out', none]);
+    assert.equal(r1.status, 0, out(r1));
+    const m1 = JSON.parse(readFileSync(none, 'utf8'));
+    assert.equal(m1.cli, null);
+    assert.deepEqual(validateManifest(m1), []);
+    assert.notEqual(run('make-manifest.mjs', [...base, '--cli', cli, '--no-cli', '--out', join(dir, 'cli-both.json')]).status, 0);
+    assert.notEqual(run('make-manifest.mjs', [...base, '--cli', binary, '--out', join(dir, 'cli-same.json')]).status, 0);
+    const gh = 'https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0';
+    const mirrored = join(dir, 'cli-mirrors.json');
+    const r2 = run('make-manifest.mjs', [
+      ...base, '--cli', cli, '--cli-name', 'rougechain-03613ef', '--out', mirrored,
+      '--binary-mirror', `${gh}/quantum-vault-daemon-test-0000000`, '--cli-mirror', `${gh}/rougechain-03613ef`,
+      '--genesis-mirror', `${gh}/genesis-mainnet.json`, '--genesis-mirror', 'https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/core/daemon/genesis-mainnet.json',
+    ]);
+    assert.equal(r2.status, 0, out(r2));
+    const m2 = JSON.parse(readFileSync(mirrored, 'utf8'));
+    assert.deepEqual(m2.binary.mirrors, [`${gh}/quantum-vault-daemon-test-0000000`]);
+    assert.deepEqual(m2.cli.mirrors, [`${gh}/rougechain-03613ef`]);
+    assert.equal(m2.genesis.mirrors.length, 2);
+    assert.equal(m2.genesis.mirrors[0], `${gh}/genesis-mainnet.json`);
+    assert.notEqual(run('make-manifest.mjs', [...base, '--cli', cli, '--cli-mirror', 'http://insecure.example/x', '--out', join(dir, 'cli-http.json')]).status, 0);
   });
   it('refuses to overwrite without --force, and never over existing signatures', () => {
     const { manifest } = freshRelease('make-overwrite');
-    const base = ['--network', 'mainnet', '--version', '9.9.10', '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis, '--out', manifest];
+    const base = ['--network', 'mainnet', '--version', '9.9.10', '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis, '--no-cli', '--out', manifest];
     const r = run('make-manifest.mjs', base);
     assert.notEqual(r.status, 0);
     assert.match(out(r), /already exists/);
@@ -125,7 +163,7 @@ describe('make-manifest', () => {
     assert.equal(JSON.parse(readFileSync(manifest, 'utf8')).version, '9.9.9');
   });
   it('rejects bad input', () => {
-    const base = ['--network', 'mainnet', '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis];
+    const base = ['--network', 'mainnet', '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis, '--no-cli'];
     for (const [extra, re] of [
       [['--version', 'v1.6', '--out', join(dir, 'x1.json')], /version/],
       [['--version', '1.0.0', '--activation', 'Bad Name=1', '--out', join(dir, 'x2.json')], /activations/],
@@ -137,7 +175,7 @@ describe('make-manifest', () => {
       assert.match(out(r), re);
     }
     // genesis for the wrong chain
-    const r = run('make-manifest.mjs', ['--network', 'testnet', '--version', '1.0.0', '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis, '--out', join(dir, 'x5.json')]);
+    const r = run('make-manifest.mjs', ['--network', 'testnet', '--version', '1.0.0', '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis, '--no-cli', '--out', join(dir, 'x5.json')]);
     assert.notEqual(r.status, 0);
     assert.match(out(r), /chain_id/);
     for (const n of ['x1', 'x2', 'x3', 'x4', 'x5']) assert.ok(!existsSync(join(dir, `${n}.json`)));
@@ -149,7 +187,7 @@ describe('sign + verify', () => {
     const { manifest, ed, ml } = freshRelease('roundtrip');
     assert.equal(Buffer.from(readFileSync(ed, 'utf8').trim(), 'base64').length, 64);
     assert.equal(Buffer.from(readFileSync(ml, 'utf8').trim(), 'base64').length, 3309);
-    const r = verify(manifest, ['--binary', binary, '--genesis', genesis, '--network', 'mainnet']);
+    const r = verify(manifest, ['--binary', binary, '--cli', cli, '--genesis', genesis, '--network', 'mainnet']);
     assert.equal(r.status, 0, out(r));
     assert.match(r.stdout, /VERIFIED/);
     assert.match(r.stdout, /Ed25519 signature\s+OK/);
@@ -215,6 +253,18 @@ describe('sign + verify', () => {
     const r2 = verify(manifest, ['--binary', bad]);
     assert.equal(r2.status, 1);
     assert.match(r2.stderr, /binary: size/);
+    const badCli = join(d, 'cli');
+    const cbuf = Buffer.alloc(2048, 3);
+    cbuf[7] = 4;
+    writeFileSync(badCli, cbuf);
+    const r3 = verify(manifest, ['--cli', badCli]);
+    assert.equal(r3.status, 1);
+    assert.match(r3.stderr, /cli: sha256/);
+    writeFileSync(badCli, Buffer.alloc(2047, 3));
+    assert.match(verify(manifest, ['--cli', badCli]).stderr, /cli: size/);
+    // the daemon binary passed as the CLI (and the reverse) must not verify
+    assert.equal(verify(manifest, ['--cli', binary]).status, 1);
+    assert.equal(verify(manifest, ['--binary', cli]).status, 1);
     const badGenesis = join(d, 'genesis.json');
     writeFileSync(badGenesis, '{"chain_id":"rougechain-mainnet-1" }\n');
     assert.equal(verify(manifest, ['--genesis', badGenesis]).status, 1);
@@ -330,6 +380,15 @@ describe('sign + verify', () => {
       (m) => { m.binary.mirrors = ['ftp://example.com/x']; },
       (m) => { m.binary.extra = 1; },
       (m) => { m.genesis = {}; },
+      (m) => { delete m.cli; },
+      (m) => { m.cli = {}; },
+      (m) => { m.cli = 'rougechain'; },
+      (m) => { m.cli.sha256 = 'abc'; },
+      (m) => { m.cli.url = 'http://api.rougechain.io/releases/rougechain'; },
+      (m) => { m.cli.mirrors = ['http://github.com/x']; },
+      (m) => { m.cli.name = '../rougechain'; },
+      (m) => { m.cli.name = m.binary.name; },
+      (m) => { m.cli.size = -1; },
       (m) => { m.mandatory = 'yes'; },
       (m) => { m.upgrade_before_height = -1; },
       (m) => { m.upgrade_before_height = 1.5; },
@@ -372,6 +431,37 @@ describe('sign + verify', () => {
   it('--network mismatch fails', () => {
     const { manifest } = freshRelease('network-mismatch');
     assert.equal(verify(manifest, ['--network', 'testnet']).status, 1);
+  });
+});
+
+describe('cli in a signed release', () => {
+  it('--cli against a manifest without a cli fails; a signed cli: null manifest verifies', () => {
+    const d = join(dir, 'signed-nocli');
+    mkdirSync(d);
+    const manifest = join(d, 'manifest-mainnet.json');
+    const r = run('make-manifest.mjs', ['--network', 'mainnet', '--version', '9.9.9', '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis, '--no-cli', '--out', manifest]);
+    assert.equal(r.status, 0, out(r));
+    assert.equal(run('sign-manifest.mjs', ['--key', keyFile, '--yes', manifest]).status, 0);
+    assert.equal(verify(manifest, ['--binary', binary]).status, 0);
+    const v = verify(manifest, ['--cli', cli]);
+    assert.equal(v.status, 1);
+    assert.match(v.stderr, /manifest has no cli/);
+  });
+  it('the cli entry is covered by the signatures (swapping its hash breaks both)', () => {
+    const { manifest } = freshRelease('cli-tamper');
+    const m = JSON.parse(readFileSync(manifest, 'utf8'));
+    m.cli.sha256 = m.binary.sha256.split('').reverse().join('');
+    writeFileSync(manifest, JSON.stringify(m, null, 2) + '\n');
+    const r = verify(manifest);
+    assert.equal(r.status, 1);
+    assert.equal((r.stderr.match(/does NOT verify/g) || []).length, 2);
+  });
+  it('the summary shown before signing lists the cli and every mirror', () => {
+    const { manifest } = freshRelease('cli-summary', { sign: false });
+    const r = run('sign-manifest.mjs', ['--key', keyFile, '--yes', manifest]);
+    assert.equal(r.status, 0, out(r));
+    assert.match(r.stderr, /cli\s+rougechain-03613ef/);
+    assert.match(r.stderr, /mirror\s+https:\/\/raw\.githubusercontent\.com/);
   });
 });
 

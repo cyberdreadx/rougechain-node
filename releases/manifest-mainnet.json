@@ -13,6 +13,7 @@
     "sha256": "673bf7b1a469b7f9937b17228faab1e81ae48fb2a90aa32b2fd1b7fcc9cc2984",
     "size": 28463856
   },
+  "cli": null,
   "genesis": {
     "name": "genesis-mainnet.json",
     "url": "https://api.rougechain.io/releases/genesis-mainnet.json",
