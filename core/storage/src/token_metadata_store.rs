@@ -26,6 +26,23 @@ pub struct TokenMetadata {
     pub max_supply: Option<u64>,   // Optional cap on total mintable supply (None = unlimited)
     #[serde(default)]
     pub total_minted: u64,         // Running total of all minted supply
+    /// TOKEN_MINTING: supply credited at creation. Set (with `mint_enabled_height`) only by block
+    /// apply for a token created mintable at/after the upgrade height. Omitted when `None`, so
+    /// every pre-upgrade record serializes exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_supply: Option<u64>,
+    /// TOKEN_MINTING: height of the block that created this token as mintable. A token can be
+    /// minted under consensus ONLY if this is set — a `mintable` flag written by older node-local
+    /// code (API-time registration) is never honoured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mint_enabled_height: Option<u64>,
+}
+
+impl TokenMetadata {
+    /// Mintable under the TOKEN_MINTING consensus rules (created mintable by a block).
+    pub fn consensus_mintable(&self) -> bool {
+        self.mintable && self.mint_enabled_height.is_some()
+    }
 }
 
 impl TokenMetadata {
@@ -154,6 +171,19 @@ impl TokenMetadataStore {
             Some(mut meta) => {
                 meta.total_minted += amount;
                 meta.updated_at = chrono::Utc::now().timestamp();
+                self.set_metadata(&meta)
+            }
+            None => Err(format!("Token {} not found", symbol)),
+        }
+    }
+
+    /// TOKEN_MINTING block apply: add `amount` to `total_minted`. Deterministic — touches no
+    /// timestamp — so every node holds the same record after the same blocks.
+    pub fn add_minted(&self, symbol: &str, amount: u64) -> Result<(), String> {
+        match self.get_metadata(symbol)? {
+            Some(mut meta) => {
+                meta.total_minted = meta.total_minted.checked_add(amount)
+                    .ok_or_else(|| format!("total_minted overflow for {}", symbol))?;
                 self.set_metadata(&meta)
             }
             None => Err(format!("Token {} not found", symbol)),

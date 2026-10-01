@@ -17,6 +17,7 @@ export interface ApiResponse<T = unknown> {
 export type TransactionType =
   | "transfer"
   | "create_token"
+  | "mint_tokens"
   | "swap"
   | "create_pool"
   | "add_liquidity"
@@ -56,6 +57,10 @@ export interface TransactionPayload {
   token_name?: string;
   token_symbol?: string;
   initial_supply?: number;
+  /** create_token (TOKEN_MINTING): `true` makes the token mintable by its creator; omitted otherwise. */
+  mintable?: boolean;
+  /** create_token (TOKEN_MINTING): optional supply cap, only with `mintable: true`. */
+  max_supply?: number;
   token_in?: string;
   token_out?: string;
   amount_in?: number;
@@ -168,6 +173,23 @@ export interface NodeStats {
   base_fee: number;
   /** Total fees burned via EIP-1559 mechanism */
   total_fees_burned: number;
+  /** Upgrade heights the node enforces (`null` = not scheduled on this network). */
+  upgrade_schedule?: UpgradeSchedule;
+}
+
+/** `/api/stats` → `upgrade_schedule`: activation height per protocol upgrade, `null` = not scheduled. */
+export interface UpgradeSchedule {
+  network?: string;
+  tx_uniqueness?: number | null;
+  proposer_selection?: number | null;
+  finality_v2?: number | null;
+  game_ready?: number | null;
+  game_ready_2?: number | null;
+  game_ready_3?: number | null;
+  payable_calls?: number | null;
+  /** TOKEN_MINTING: mintable custom tokens + creator-only capped `mint_tokens`. */
+  token_minting?: number | null;
+  [upgrade: string]: unknown;
 }
 
 // ===== Tokens =====
@@ -183,6 +205,18 @@ export interface TokenMetadata {
   discord?: string;
   created_at: number;
   updated_at: number;
+  decimals?: number;
+  frozen?: boolean;
+  /** TOKEN_MINTING: the creator can mint more of this token (created mintable by a block). */
+  mintable?: boolean;
+  /** TOKEN_MINTING: cap on initial + minted supply; `null` = uncapped. */
+  max_supply?: number | null;
+  /** TOKEN_MINTING: total minted after creation. */
+  total_minted?: number;
+  /** TOKEN_MINTING: supply credited at creation (mintable tokens only). */
+  initial_supply?: number | null;
+  /** TOKEN_MINTING: height of the block that created the token mintable. */
+  mint_enabled_height?: number | null;
 }
 
 export interface TokenHolder {
@@ -489,16 +523,26 @@ export interface CreateTokenParams {
   fee?: number;
   /** Token logo — URL or data URI (base64). Stored on-chain in token metadata. */
   image?: string;
-  /** Whether this token supports ongoing minting by the creator */
+  /** Token description (signed with the payload). */
+  description?: string;
+  /**
+   * Make the token mintable by its creator (node TOKEN_MINTING upgrade). Sent as `mintable: true`
+   * only when true; the node refuses it before the upgrade is active ({@link RougeChain.isTokenMintingActive}).
+   */
   mintable?: boolean;
-  /** Maximum supply cap (only applies if mintable is true) */
+  /** Optional cap on initial + minted supply. Only with `mintable: true`; integer ≥ totalSupply, ≤ 2^53-1. */
   maxSupply?: number;
 }
 
 export interface MintTokenParams {
+  /** Token symbol (the token must be mintable and the wallet its creator). */
   symbol: string;
+  /** Positive integer, ≤ 2^53-1; initial + minted + amount must stay ≤ max supply. */
   amount: number;
+  /** Signed fee (informational — the node charges 1 XRGE). */
   fee?: number;
+  /** Optional durable replay protection (the account's next nonce). */
+  accountNonce?: number;
 }
 
 // ===== EIP-1559 Fee Info =====

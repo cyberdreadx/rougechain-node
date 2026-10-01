@@ -3,6 +3,7 @@ import WorkspacePage from "./WorkspacePage";
 import Architecture from "./Architecture";
 import { featureRoutes, featureHeaderProduct } from "./features";
 import { explorerRoutes, isExplorerPath } from "./explorer/routes";
+import { ExplorerSlotsProvider, type ExplorerSlots } from "./explorer/slots";
 import { ChainProvider } from "./explorer/chain";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NetworkProvider } from "./Network";
@@ -17,6 +18,11 @@ import { UiText } from "./i18n/UiText";
 // Wallet pages load on demand (Base / viem, QR and the dialogs stay out of the landing bundle).
 const WalletPage = lazy(() => import("./wallet/WalletPage"));
 const SettingsPage = lazy(() => import("./wallet/SettingsPage"));
+// Wallet actions on explorer pages (the creator's "Mint" on a token page). The standalone explorer
+// site provides no slots, so it carries no signing code.
+const explorerSlots: ExplorerSlots = {
+  TokenActions: lazy(() => import("./wallet/MintTokenDialog").then((m) => ({ default: m.ExplorerTokenMintAction }))),
+};
 function PageFallback() {
   const { t } = useTranslation("common");
   return (
@@ -64,6 +70,7 @@ export default function App() {
                 <Suspense fallback={<PageFallback />}>
                   {/* A wallet whose keys no password protects must be secured before any page is used. */}
                   <SecureWalletGate>
+                    <ExplorerSlotsProvider value={explorerSlots}>
                     <Routes>
                       <Route path="/" element={<Home />} />
                       <Route path="/workspace" element={<WorkspacePage />} />
@@ -101,6 +108,7 @@ export default function App() {
                         }
                       />
                     </Routes>
+                    </ExplorerSlotsProvider>
                   </SecureWalletGate>
                 </Suspense>
                 <Footer />

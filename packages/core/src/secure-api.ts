@@ -15,7 +15,9 @@ import {
   signTransaction,
   generateNonce,
   BURN_ADDRESS,
+  buildTokenMintPayload,
 } from "./pqc-signer";
+import { type TokenMintOptions, tokenMintFields, tokenMintingActive } from "./token-minting";
 import { signViaExtension, getRougeChainProvider } from "./extension-bridge";
 
 // Re-export burn address for convenience
@@ -112,8 +114,16 @@ export async function secureCreateToken(
   initialSupply: number,
   fee: number = 100, // the node charges a fixed 100 XRGE for create_token
   image?: string,
-  description?: string
+  description?: string,
+  /** TOKEN_MINTING: `{ mintable: true, maxSupply? }` — only once the node upgrade is active. */
+  mint?: TokenMintOptions
 ): Promise<ApiResponse<{ token_symbol: string }>> {
+  let mintFields: ReturnType<typeof tokenMintFields>;
+  try {
+    mintFields = tokenMintFields(initialSupply, mint);
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
   const payload: TransactionPayload = {
     type: "create_token",
     from: creatorPublicKey,
@@ -125,9 +135,31 @@ export async function secureCreateToken(
     nonce: generateNonce(),
     ...(image ? { image } : {}),
     ...(description ? { description } : {}),
+    ...mintFields,
   };
   const signedTx = await resolveSignedTx(payload, creatorPublicKey, creatorPrivateKey);
   return submitSignedTx("/v2/token/create", signedTx) as Promise<ApiResponse<{ token_symbol: string }>>;
+}
+
+/**
+ * Mint more of a mintable token (TOKEN_MINTING): signed `mint_tokens` to /v2/token/mint.
+ * Creator only; the node enforces the max supply and charges 1 XRGE. Signs locally, or via the
+ * connected extension / Qwalla provider when there is no local private key.
+ */
+export async function secureMintTokens(
+  creatorPublicKey: string,
+  creatorPrivateKey: string,
+  tokenSymbol: string,
+  amount: number
+): Promise<ApiResponse<{ symbol: string; amount_minted: number }>> {
+  let payload: TransactionPayload;
+  try {
+    payload = buildTokenMintPayload(creatorPublicKey, tokenSymbol, amount);
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  const signedTx = await resolveSignedTx(payload, creatorPublicKey, creatorPrivateKey);
+  return submitSignedTx("/v2/token/mint", signedTx) as Promise<ApiResponse<{ symbol: string; amount_minted: number }>>;
 }
 
 export async function secureApproveToken(
@@ -376,6 +408,32 @@ export interface TokenMetadata {
   discord?: string;
   created_at: number;
   updated_at: number;
+  decimals?: number;
+  frozen?: boolean;
+  /** TOKEN_MINTING: mintable by the creator under consensus. */
+  mintable?: boolean;
+  /** TOKEN_MINTING: cap on initial + minted supply (`null` = uncapped). */
+  max_supply?: number | null;
+  /** TOKEN_MINTING: supply minted after creation. */
+  total_minted?: number;
+  /** TOKEN_MINTING: supply credited at creation (mintable tokens only). */
+  initial_supply?: number | null;
+}
+
+/**
+ * Whether the node's TOKEN_MINTING upgrade applies to the next block on the active network
+ * (`/stats` → `upgrade_schedule.token_minting`). False when it is not scheduled or the node is unreachable.
+ */
+export async function fetchTokenMintingActive(): Promise<boolean> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) return false;
+  try {
+    const res = await fetch(`${baseUrl}/stats`, { headers: getCoreApiHeaders() });
+    if (!res.ok) return false;
+    return tokenMintingActive(await res.json());
+  } catch {
+    return false;
+  }
 }
 
 export async function getAllTokenMetadata(): Promise<ApiResponse<TokenMetadata[]>> {

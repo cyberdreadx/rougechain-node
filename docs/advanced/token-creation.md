@@ -7,7 +7,7 @@ Create custom tokens on RougeChain. Tokens can be traded on the built-in AMM/DEX
 | Property | Value |
 |----------|-------|
 | Creation fee | 100 XRGE |
-| Supply | Set at creation — the full supply is minted to the creator and is fixed (tokens are created non-mintable) |
+| Supply | Set at creation — the full supply is minted to the creator and is fixed. Mintable tokens (creator can mint more, optional cap) are built but **not active yet** — see [Mintable tokens](#mintable-tokens-not-active-yet) |
 | Decimals | Not configurable — user-created tokens are whole units (0 decimals) |
 | Trading | Via AMM liquidity pools |
 
@@ -85,6 +85,75 @@ Once created, the entire supply is credited to the creator's wallet. You can the
 1. **Transfer** tokens to other wallets
 2. **Create a liquidity pool** to enable trading
 3. **Burn** tokens by sending to the burn address
+
+## Mintable tokens (not active yet)
+
+> **Status: built, activation not scheduled.** Mintable tokens are a consensus upgrade
+> (`TOKEN_MINTING`). Until its activation height is set and reached, the node **refuses**
+> `mintable` / `max_supply` on `/api/v2/token/create` with `token minting is not active yet` and
+> refuses every `/api/v2/token/mint`. `GET /api/stats` → `upgrade_schedule.token_minting` shows the
+> height (`null` = not scheduled).
+
+From activation, a token can be created **mintable**, with an optional cap. Add to the signed
+create payload:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `mintable` | boolean | `true`: the creator may mint more later. Omit (or `false`) for a fixed-supply token. |
+| `max_supply` | integer | Optional cap on **total issuance** (initial supply + everything ever minted). Requires `mintable: true`; must be ≥ `initial_supply`. Omit for no cap. |
+
+Rules (enforced by every node when the transaction is included in a block):
+
+- Only the token's **creator** (the key that signed the `create_token`) can mint.
+- Only tokens created mintable **at or after the activation height** can be minted; tokens created
+  earlier stay fixed-supply.
+- `amount` and `max_supply` are JSON **integers** (a float or string is refused), at most
+  9,007,199,254,740,991 (2^53 − 1). A mintable token's `initial_supply` has the same bound.
+- `initial_supply + total_minted + amount` must stay ≤ `max_supply` when a cap is set. Burning does
+  not free room: the cap bounds issuance, not circulating supply.
+- A mint costs a 1 XRGE fee. A mint that breaks a rule when its block is built is skipped (no fee, no
+  tokens); minting exactly up to the cap is allowed.
+- `total_minted` is updated when the mint is included in a block, not when it is submitted.
+
+```bash
+# create (from activation)
+curl -X POST https://testnet.rougechain.io/api/v2/token/create -H "Content-Type: application/json" -d '{
+  "payload": { "token_name": "My Token", "token_symbol": "MTK", "initial_supply": 1000000,
+               "mintable": true, "max_supply": 5000000,
+               "from": "your-public-key-hex", "timestamp": 1706745600000, "nonce": "random-hex" },
+  "signature": "...", "public_key": "your-public-key-hex" }'
+
+# mint (creator only)
+curl -X POST https://testnet.rougechain.io/api/v2/token/mint -H "Content-Type: application/json" -d '{
+  "payload": { "token_symbol": "MTK", "amount": 250000,
+               "from": "your-public-key-hex", "timestamp": 1706745600001, "nonce": "random-hex" },
+  "signature": "...", "public_key": "your-public-key-hex" }'
+```
+
+`GET /api/token/:symbol/metadata` and `GET /api/tokens` report `mintable` (true only for a token a
+block created mintable), `max_supply` (`null` = uncapped), `total_minted`, and for a mintable token
+`initial_supply` and `mint_enabled_height`. `GET /api/token/:symbol/holders` counts minted supply in
+`total_supply`.
+
+### With the SDK (1.12.0+)
+
+```typescript
+if (await rc.isTokenMintingActive()) {          // reads /api/stats upgrade_schedule.token_minting
+  await rc.createToken(wallet, { name: "My Token", symbol: "MTK", totalSupply: 1_000_000,
+                                 mintable: true, maxSupply: 5_000_000 });  // maxSupply optional
+  await rc.mintTokens(wallet, { symbol: "MTK", amount: 250_000 });      // signed mint_tokens, 1 XRGE
+}
+```
+
+The SDK validates the numbers before signing (integers, `maxSupply` ≥ `totalSupply`, at most
+2^53 − 1) and returns `{ success: false, error }` instead of posting an invalid request.
+
+### On rougechain.io
+
+The **Create a token** dialog shows a **Mintable** option (and an optional **Max supply**) only on
+a network where the upgrade is active. On a mintable token's page in the Explorer, the token's
+creator sees **Mint more** (amount, room left under the cap, 1 XRGE fee); it signs with the local
+wallet or the connected extension / Qwalla. Everyone sees the initial, minted and max supply.
 
 ## Creating a Liquidity Pool
 

@@ -64,9 +64,44 @@ pub fn make_pool_id(token_a: &str, token_b: &str) -> String {
     if token_a < token_b { format!("{}-{}", token_a, token_b) } else { format!("{}-{}", token_b, token_a) }
 }
 
-/// Derive `(payload, fee)` for `tx_type` from the signed JSON. Errors only for a type that the
-/// API never builds from a signed payload.
+/// Derive `(payload, fee)` for `tx_type` from the signed JSON with the rules in force BEFORE
+/// TOKEN_MINTING (the historical derivation). Errors only for a type that the API never builds
+/// from a signed payload.
 pub fn derive_v2_fields(tx_type: &str, p: &Value) -> Result<(TxPayload, f64), String> {
+    derive(tx_type, p, false)
+}
+
+/// Derive `(payload, fee)` for a transaction that will be judged at block `height` — the
+/// derivation consensus uses. Identical to [`derive_v2_fields`] before TOKEN_MINTING activates.
+pub fn derive_v2_fields_at(tx_type: &str, p: &Value, height: u64) -> Result<(TxPayload, f64), String> {
+    derive(tx_type, p, crate::node::token_minting_active(height))
+}
+
+/// TOKEN_MINTING: the signed `mintable` (bool) / `max_supply` (integer) of a create_token.
+/// `mintable` absent, null or false → not mintable (field omitted); `max_supply` absent or null →
+/// uncapped. Anything else that is not a bool / non-negative JSON integer is refused, so a cap can
+/// never be a float that two nodes might parse differently. A cap without `mintable: true`, or below
+/// `initial_supply`, is refused. (The same rules are re-checked on the payload by
+/// `node::token_minting_tx_rule`, which also covers CLI envelopes.)
+fn derive_mint_fields(p: &Value) -> Result<(Option<bool>, Option<u64>), String> {
+    let mintable = match p.get("mintable") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("mintable must be a boolean".into()),
+    };
+    let max_supply = match p.get("max_supply") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_u64().ok_or("max_supply must be a non-negative integer")?),
+    };
+    if let Some(max) = max_supply {
+        if !mintable { return Err("max_supply requires mintable: true".into()); }
+        let initial = u(p, "initial_supply");
+        if max < initial { return Err(format!("max_supply {} is below initial_supply {}", max, initial)); }
+    }
+    Ok((if mintable { Some(true) } else { None }, max_supply))
+}
+
+fn derive(tx_type: &str, p: &Value, token_minting: bool) -> Result<(TxPayload, f64), String> {
     let d = TxPayload::default();
     Ok(match tx_type {
         "transfer" => {
@@ -81,15 +116,22 @@ pub fn derive_v2_fields(tx_type: &str, p: &Value) -> Result<(TxPayload, f64), St
                 ..d
             }, 1.0)
         }
-        "create_token" => (TxPayload {
-            token_name: Some(s(p, "token_name")),
-            token_symbol: Some(s(p, "token_symbol")),
-            token_decimals: Some(18),
-            token_total_supply: Some(u(p, "initial_supply")),
-            metadata_image: opt_s(p, "image"),
-            metadata_description: opt_s(p, "description"),
-            ..d
-        }, 100.0),
+        "create_token" => {
+            // Before TOKEN_MINTING the signed `mintable` / `max_supply` are ignored, exactly as
+            // they always were (historical create_tokens may carry them).
+            let (token_mintable, token_max_supply) = if token_minting { derive_mint_fields(p)? } else { (None, None) };
+            (TxPayload {
+                token_name: Some(s(p, "token_name")),
+                token_symbol: Some(s(p, "token_symbol")),
+                token_decimals: Some(18),
+                token_total_supply: Some(u(p, "initial_supply")),
+                metadata_image: opt_s(p, "image"),
+                metadata_description: opt_s(p, "description"),
+                token_mintable,
+                token_max_supply,
+                ..d
+            }, 100.0)
+        }
         "mint_tokens" => (TxPayload { token_symbol: Some(s(p, "token_symbol")), token_total_supply: Some(u(p, "amount")), ..d }, 1.0),
         "approve" => (TxPayload { spender_pub_key: Some(s(p, "spender")), token_symbol: Some(s(p, "token_symbol")), allowance_amount: Some(u(p, "amount")), ..d }, 1.0),
         "transfer_from" => (TxPayload {
@@ -186,8 +228,15 @@ pub fn derive_v2_fields(tx_type: &str, p: &Value) -> Result<(TxPayload, f64), St
 }
 
 /// API construction: the only way a handler may turn a verified signed payload into a `TxV1`.
+/// Uses the pre-TOKEN_MINTING derivation; a `create_token` handler uses [`build_v2_tx_at`].
 pub fn build_v2_tx(tx_type: &str, from_pub_key: String, nonce: u64, payload: &Value, sig: String, signed_payload: String) -> Result<TxV1, String> {
     let (payload, fee) = derive_v2_fields(tx_type, payload)?;
+    Ok(TxV1 { version: 1, tx_type: tx_type.to_string(), from_pub_key, nonce, payload, fee, sig, signed_payload: Some(signed_payload) })
+}
+
+/// [`build_v2_tx`] for a transaction meant for the block at `height` (the next block).
+pub fn build_v2_tx_at(tx_type: &str, from_pub_key: String, nonce: u64, payload: &Value, sig: String, signed_payload: String, height: u64) -> Result<TxV1, String> {
+    let (payload, fee) = derive_v2_fields_at(tx_type, payload, height)?;
     Ok(TxV1 { version: 1, tx_type: tx_type.to_string(), from_pub_key, nonce, payload, fee, sig, signed_payload: Some(signed_payload) })
 }
 
@@ -198,7 +247,19 @@ pub fn is_cli_envelope(p: &Value) -> bool {
     p.get("payload").map(|v| v.is_object()).unwrap_or(false) && p.get("tx_type").map(|v| v.is_string()).unwrap_or(false)
 }
 
+/// Binding check with the pre-TOKEN_MINTING derivation (tests and history tooling). Consensus,
+/// mempool and producer use [`verify_v2_binding_at`].
+#[cfg(test)]
 pub fn verify_v2_binding(tx: &TxV1) -> Result<(), String> {
+    verify_binding(tx, false)
+}
+
+/// Binding check for a transaction judged in the block at `height`.
+pub fn verify_v2_binding_at(tx: &TxV1, height: u64) -> Result<(), String> {
+    verify_binding(tx, crate::node::token_minting_active(height))
+}
+
+fn verify_binding(tx: &TxV1, token_minting: bool) -> Result<(), String> {
     let Some(sp) = tx.signed_payload.as_deref() else { return Ok(()) };
     let p: Value = serde_json::from_str(sp).map_err(|e| format!("signed_payload is not valid JSON: {}", e))?;
     if !p.is_object() { return Err("signed_payload is not a JSON object".into()); }
@@ -215,7 +276,7 @@ pub fn verify_v2_binding(tx: &TxV1) -> Result<(), String> {
         if tx.payload != payload { return Err(format!("{} payload does not match its signed envelope", tx.tx_type)); }
         return Ok(());
     }
-    let (payload, fee) = derive_v2_fields(&tx.tx_type, &p)?;
+    let (payload, fee) = derive(&tx.tx_type, &p, token_minting)?;
     if tx.payload != payload { return Err(format!("{} payload does not match its signed_payload", tx.tx_type)); }
     if tx.fee != fee { return Err(format!("{} fee {} does not match the fee bound to its signed_payload ({})", tx.tx_type, tx.fee, fee)); }
     Ok(())

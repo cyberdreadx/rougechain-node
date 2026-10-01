@@ -231,7 +231,8 @@ The faucet refuses a request with `429` while you already have a faucet transfer
 | `transfer` | Standard XRGE or token transfer (faucet payouts are `transfer`s with `payload.faucet = true`) |
 | `stake` | Stake tokens to become validator |
 | `unstake` | Unstake tokens |
-| `create_token` | Create custom token |
+| `create_token` | Create custom token (`token_mintable` / `token_max_supply` only from TOKEN_MINTING activation) |
+| `mint_tokens` | Creator mints more of a mintable token (`token_total_supply` = amount) — applied only from TOKEN_MINTING activation |
 | `burn` | Burn tokens permanently |
 | `shield` | Shield tokens (make private) |
 | `unshield` | Unshield tokens (make public) |

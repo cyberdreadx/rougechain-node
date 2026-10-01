@@ -105,6 +105,40 @@ await rc.burn(wallet, 500, 1, 'XRGE');
 await rc.faucet(wallet);
 ```
 
+### Mintable tokens (SDK 1.12.0, node TOKEN_MINTING upgrade)
+
+Mintable tokens need the node's `TOKEN_MINTING` upgrade, which is **not scheduled on any network
+yet**. Until it is active the node refuses `mintable` / `maxSupply` and every mint with
+"token minting is not active yet". Check first:
+
+```typescript
+import { tokenMintingActive } from '@rougechain/sdk';
+
+await rc.isTokenMintingActive();             // GET /api/stats → upgrade_schedule.token_minting
+tokenMintingActive(await rc.getStats());     // the same check on stats you already have
+
+// Creator can mint more later; maxSupply (optional) caps initial + minted supply
+await rc.createToken(wallet, { name: 'My Token', symbol: 'MTK', totalSupply: 1_000_000, mintable: true, maxSupply: 5_000_000 });
+
+// Signed mint_tokens → POST /api/v2/token/mint (creator only, 1 XRGE fee)
+const r = await rc.mintTokens(wallet, { symbol: 'MTK', amount: 250_000 });
+if (!r.success) console.error(r.error); // not creator / not mintable / exceeds max supply / not active
+
+// Supply info
+const meta = await rc.getTokenMetadata('MTK'); // mintable, max_supply, total_minted, initial_supply
+```
+
+- `mintable: true` and `max_supply` are signed only when `mintable` is true, so a fixed-supply
+  token's payload is the same as before. A `maxSupply` without `mintable`, a `maxSupply` below
+  `totalSupply`, a non-integer value or anything above 2^53 − 1 returns `{ success: false, error }`
+  without sending anything. `tokenMintFields(initialSupply, { mintable, maxSupply })` runs the same
+  validation and returns the fields to sign.
+- Low-level builders: `createSignedTokenCreation(wallet, name, symbol, supply, fee?, image?, { mintable, maxSupply, description })`
+  and `createSignedTokenMint(wallet, symbol, amount, fee = 1, accountNonce?)`.
+- Constants: `TOKEN_MINT_MAX_AMOUNT` (2^53 − 1), `TOKEN_MINT_FEE_XRGE` (1), `TOKEN_CREATE_FEE_XRGE` (100).
+- Before 1.12.0, `mintTokens` sent an unsigned request that the node always rejected, and
+  `createToken` dropped `mintable` / `maxSupply`.
+
 ### Staking
 
 ```typescript

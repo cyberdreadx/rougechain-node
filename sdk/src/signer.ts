@@ -88,14 +88,80 @@ export function createSignedTransfer(
   return buildAndSign(wallet, { type: "transfer", to, amount, fee, token }, accountNonce);
 }
 
+/**
+ * Largest integer the node accepts for a mint amount, a mintable token's initial supply and its
+ * max supply (2^53 - 1, the largest integer JSON carries exactly). `TOKEN_MINT_MAX_AMOUNT` in
+ * core/daemon/src/node.rs.
+ */
+export const TOKEN_MINT_MAX_AMOUNT = 9_007_199_254_740_991;
+
+/** XRGE fee the node charges for a `mint_tokens` transaction (v2_binding). */
+export const TOKEN_MINT_FEE_XRGE = 1;
+
+/** XRGE fee the node charges for a `create_token` transaction (v2_binding). */
+export const TOKEN_CREATE_FEE_XRGE = 100;
+
+/** Extra options for {@link createSignedTokenCreation}. */
+export interface TokenCreationOptions {
+  /**
+   * Create the token mintable: its creator can mint more later with `mint_tokens`
+   * (node TOKEN_MINTING upgrade — the node refuses this before the upgrade is active).
+   */
+  mintable?: boolean;
+  /** Optional cap on initial + minted supply. Only with `mintable: true`; integer ≥ initial supply. */
+  maxSupply?: number;
+  /** Token description (signed with the payload). */
+  description?: string;
+}
+
+function isWholeAmount(n: unknown): n is number {
+  return typeof n === "number" && Number.isSafeInteger(n) && n > 0;
+}
+
+/**
+ * Validate the TOKEN_MINTING fields of a `create_token` and return the exact payload fields to sign:
+ * `{}` for a fixed-supply token, `{ mintable: true }` or `{ mintable: true, max_supply }` for a
+ * mintable one. Throws a clear error on invalid input (mirrors the node's checks).
+ */
+export function tokenMintFields(
+  initialSupply: number,
+  options: Pick<TokenCreationOptions, "mintable" | "maxSupply"> = {}
+): { mintable?: true; max_supply?: number } {
+  const { mintable, maxSupply } = options;
+  if (mintable !== undefined && typeof mintable !== "boolean") {
+    throw new Error("mintable must be a boolean");
+  }
+  if (!mintable) {
+    if (maxSupply !== undefined && maxSupply !== null) {
+      throw new Error("maxSupply requires mintable: true");
+    }
+    return {};
+  }
+  if (!isWholeAmount(initialSupply) || initialSupply > TOKEN_MINT_MAX_AMOUNT) {
+    throw new Error(`a mintable token's initial supply must be a positive integer at most ${TOKEN_MINT_MAX_AMOUNT}`);
+  }
+  if (maxSupply === undefined || maxSupply === null) {
+    return { mintable: true };
+  }
+  if (!isWholeAmount(maxSupply) || maxSupply > TOKEN_MINT_MAX_AMOUNT) {
+    throw new Error(`maxSupply must be a positive integer at most ${TOKEN_MINT_MAX_AMOUNT}`);
+  }
+  if (maxSupply < initialSupply) {
+    throw new Error(`maxSupply ${maxSupply} is below the initial supply ${initialSupply}`);
+  }
+  return { mintable: true, max_supply: maxSupply };
+}
+
 export function createSignedTokenCreation(
   wallet: WalletKeys,
   tokenName: string,
   tokenSymbol: string,
   initialSupply: number,
-  fee = 100, // the node charges a fixed 100 XRGE for create_token (v2_binding)
-  image?: string
+  fee = TOKEN_CREATE_FEE_XRGE, // the node charges a fixed 100 XRGE for create_token (v2_binding)
+  image?: string,
+  options: TokenCreationOptions = {}
 ): SignedTransaction {
+  const mintFields = tokenMintFields(initialSupply, options);
   return buildAndSign(wallet, {
     type: "create_token",
     token_name: tokenName,
@@ -103,7 +169,33 @@ export function createSignedTokenCreation(
     initial_supply: initialSupply,
     fee,
     ...(image ? { image } : {}),
+    ...(options.description ? { description: options.description } : {}),
+    ...mintFields,
   });
+}
+
+/**
+ * Sign a `mint_tokens` (node TOKEN_MINTING upgrade): mint `amount` more of a mintable token to
+ * its creator. Only the token's creator can mint; the node enforces the max supply and charges
+ * {@link TOKEN_MINT_FEE_XRGE}. Submit to `POST /api/v2/token/mint`.
+ */
+export function createSignedTokenMint(
+  wallet: WalletKeys,
+  tokenSymbol: string,
+  amount: number,
+  fee = TOKEN_MINT_FEE_XRGE,
+  accountNonce?: number
+): SignedTransaction {
+  const symbol = String(tokenSymbol ?? "").trim().toUpperCase();
+  if (!symbol) throw new Error("token symbol is required");
+  if (!isWholeAmount(amount) || amount > TOKEN_MINT_MAX_AMOUNT) {
+    throw new Error(`mint amount must be a positive integer at most ${TOKEN_MINT_MAX_AMOUNT}`);
+  }
+  return buildAndSign(
+    wallet,
+    { type: "mint_tokens", token_symbol: symbol, amount, fee },
+    accountNonce
+  );
 }
 
 export function createSignedTokenMetadataUpdate(

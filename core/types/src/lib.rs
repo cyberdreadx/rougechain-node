@@ -179,6 +179,13 @@ pub struct TxPayload {
     pub limit_order_id: Option<String>,                    // Order ID (for cancel)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit_order_expires: Option<u64>,                  // Expiry block height (0 = never)
+    // TOKEN_MINTING (create_token only, from the upgrade's activation height). `None` is omitted
+    // from the encoding, so every transaction without them — all of history — encodes, hashes and
+    // identifies byte-identically to before these fields existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_mintable: Option<bool>,                      // Some(true): the creator may mint more later
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_max_supply: Option<u64>,                     // Cap on total issuance (initial + minted)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -426,6 +433,65 @@ mod tests {
         assert_eq!(header.state_root, None);
         // ...and re-encoding it round-trips to the same bytes.
         assert_eq!(String::from_utf8(encode_header_v1(&header)).unwrap(), legacy);
+    }
+
+    /// TOKEN_MINTING compatibility proof. A create_token / mint_tokens transaction as it exists
+    /// in history (no `token_mintable` / `token_max_supply`) must encode, hash and identify to
+    /// EXACTLY the bytes it did before those fields existed. The pinned values below were
+    /// produced by this test on the commit BEFORE the fields were added (88d7270).
+    fn legacy_token_txs() -> Vec<TxV1> {
+        let create = TxV1 {
+            version: 1, tx_type: "create_token".into(), from_pub_key: "ab12".into(), nonce: 7,
+            payload: TxPayload { token_name: Some("Qwalla".into()), token_symbol: Some("QWALLA".into()),
+                token_decimals: Some(18), token_total_supply: Some(1_000_000_000),
+                metadata_image: Some("https://x/y.png".into()), ..Default::default() },
+            fee: 100.0, sig: "5151".into(),
+            signed_payload: Some(r#"{"type":"create_token","token_name":"Qwalla","token_symbol":"QWALLA","initial_supply":1000000000,"mintable":true,"max_supply":2000000000}"#.into()),
+        };
+        let mint = TxV1 {
+            version: 1, tx_type: "mint_tokens".into(), from_pub_key: "ab12".into(), nonce: 8,
+            payload: TxPayload { token_symbol: Some("QWALLA".into()), token_total_supply: Some(5), ..Default::default() },
+            fee: 1.0, sig: "5252".into(), signed_payload: None,
+        };
+        vec![create, mint]
+    }
+
+    #[test]
+    fn legacy_token_txs_encode_hash_and_identify_unchanged() {
+        let txs = legacy_token_txs();
+        let enc0 = String::from_utf8(encode_tx_v1(&txs[0])).unwrap();
+        let got = (
+            sha256_hex(enc0.as_bytes()),
+            compute_single_tx_hash(&txs[0]), compute_single_tx_hash(&txs[1]),
+            tx_identity(&txs[0]), tx_identity(&txs[1]),
+            sha256_hex(&encode_tx_for_signing(&txs[1])),
+            compute_tx_hash(&txs),
+        );
+        assert!(!enc0.contains("token_mintable") && !enc0.contains("token_max_supply"));
+        assert_eq!(got, (
+            "d7dfab067fc8e02e7e0f87fe9904fb91e08253dd29b872938d4567388c9ecf20".to_string(), "d7dfab067fc8e02e7e0f87fe9904fb91e08253dd29b872938d4567388c9ecf20".to_string(), "1ceeac3215854e08c87fed7125fde70026775fd2f46520e418375828150662e6".to_string(), "c7cb4ec7529db3dd1dacc6e823c0e0a40c380f66011be84d3b140718c8570b9a".to_string(),
+            "2a4b1fb733bee8978faff79d4e550bb696fa2206d0d1bc32653cf5e8ae729792".to_string(), "02e482d9e25bad6223b10dc8cac310b4ba6f874572cc2f76b3de58050114b5bb".to_string(), "fb9fa4669e8840a65c0ca03722ab7d22614f8f29becd05e76540229d62db2b62".to_string(),
+        ));
+        // A stored historical tx re-decodes and re-encodes to the same bytes.
+        let back: TxV1 = serde_json::from_str(&enc0).unwrap();
+        assert_eq!(String::from_utf8(encode_tx_v1(&back)).unwrap(), enc0);
+    }
+
+    fn sha256_hex(b: &[u8]) -> String { hex::encode(Sha256::digest(b)) }
+
+    #[test]
+    fn token_mint_fields_serialize_only_when_set_and_roundtrip() {
+        let mut tx = legacy_token_txs().remove(0);
+        tx.payload.token_mintable = Some(true);
+        tx.payload.token_max_supply = Some(9_007_199_254_740_991);
+        let enc = String::from_utf8(encode_tx_v1(&tx)).unwrap();
+        assert!(enc.contains(r#""token_mintable":true,"token_max_supply":9007199254740991"#), "{enc}");
+        let back: TxV1 = serde_json::from_str(&enc).unwrap();
+        assert_eq!(back.payload, tx.payload);
+        assert_ne!(compute_single_tx_hash(&back), "d7dfab067fc8e02e7e0f87fe9904fb91e08253dd29b872938d4567388c9ecf20");
+        // a legacy JSON (no keys) decodes to None/None
+        let legacy: TxPayload = serde_json::from_str(r#"{"token_symbol":"A"}"#).unwrap();
+        assert_eq!((legacy.token_mintable, legacy.token_max_supply), (None, None));
     }
 
     /// A post-fork header carries the field and it survives a round-trip.
