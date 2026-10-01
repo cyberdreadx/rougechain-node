@@ -422,9 +422,9 @@ async fn main() -> Result<(), String> {
     };
     // Protocol upgrade heights for this network (mainnet / testnet), before any block is applied.
     let schedule = upgrades::select(&chain.chain_id)?;
-    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}",
+    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}, token minting {:?}",
         schedule.network, chain.chain_id, schedule.tx_uniqueness, schedule.proposer_selection, schedule.finality_v2,
-        schedule.game_ready, schedule.game_ready_2, schedule.game_ready_3, schedule.payable_calls);
+        schedule.game_ready, schedule.game_ready_2, schedule.game_ready_3, schedule.payable_calls, schedule.token_minting);
     let data_dir_clone = data_dir.clone();
     let bridge_withdraw_store = std::sync::Arc::new(
         BridgeWithdrawStore::new(&data_dir_clone).map_err(|e| format!("bridge withdraw store: {}", e))?
@@ -5954,8 +5954,19 @@ async fn v2_create_token(
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
     let token_image = payload.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
     let _token_description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let _mintable = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false);
-    let _max_supply = payload.get("max_supply").and_then(|v| v.as_u64());
+    // TOKEN_MINTING: `mintable` / `max_supply` take effect only from the upgrade height. Before it
+    // they are refused (they used to be silently ignored, leaving a fixed-supply token).
+    let next_height = node.get_tip_height().unwrap_or(0) + 1;
+    let wants_minting = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false)
+        || payload.get("max_supply").map(|v| !v.is_null()).unwrap_or(false);
+    if wants_minting && !crate::node::token_minting_active(next_height) {
+        let when = match crate::node::token_minting_activation_height() {
+            Some(h) => format!("it activates at block {}", h),
+            None => "its activation is not scheduled".to_string(),
+        };
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false,
+            "error": format!("token minting is not active yet ({}); create the token without mintable/max_supply", when)}))));
+    }
     let fee = 100.0_f64; // Server-enforced token creation fee
 
     if token_name.is_empty() || token_symbol.is_empty() {
@@ -6006,7 +6017,11 @@ async fn v2_create_token(
     }
 
     // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
-    let tx = match crate::v2_binding::build_v2_tx("create_token", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
+    // TOKEN_MINTING: derived for the next block (mintable / max_supply validated there).
+    let tx = match crate::v2_binding::build_v2_tx_at("create_token", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload, next_height) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
+    if let Err(e) = crate::node::token_minting_tx_rule(&tx, next_height) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+    }
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -10043,77 +10058,52 @@ async fn v2_token_mint(
 
     let node = &state.node;
     let payload = &body.payload;
+    let bad = |code: StatusCode, e: String| (code, Json(serde_json::json!({"success": false, "error": e})));
 
     let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
-    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
-    let fee = 1.0_f64;
-
     let sym_upper = token_symbol.trim().to_uppercase();
     if sym_upper.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_symbol is required"}))));
+        return Err(bad(StatusCode::BAD_REQUEST, "token_symbol is required".into()));
     }
+    // Integers only: a float/string amount would derive to 0 and be refused below.
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
     if amount == 0 {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "amount must be greater than zero"}))));
+        return Err(bad(StatusCode::BAD_REQUEST, "amount must be a positive integer".into()));
     }
 
-    // Verify creator authority
-    match node.is_token_creator(&sym_upper, &body.public_key) {
-        Ok(true) => {}
-        Ok(false) => return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
-            "success": false, "error": "only the token creator can mint"
-        })))),
-        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": e
-        })))),
-    }
-
-    // Check mintable flag
-    match node.is_token_mintable(&sym_upper) {
-        Ok(true) => {}
-        Ok(false) => return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
-            "success": false, "error": format!("Token {} is not mintable", sym_upper)
-        })))),
-        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": e
-        })))),
-    }
-
-    // Check max_supply cap
-    if let Ok(Some(meta)) = node.get_token_metadata(&sym_upper) {
-        if let Some(max) = meta.max_supply {
-            if meta.total_minted + amount > max {
-                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                    "success": false,
-                    "error": format!("Would exceed max supply: {} + {} > {}", meta.total_minted, amount, max)
-                }))));
-            }
-        }
-    }
-
-    // Check XRGE balance for fee
-    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
-    if bal < fee {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false,
-            "error": format!("Insufficient XRGE for mint fee: have {:.4}, need {:.4}", bal, fee)
-        }))));
+    // TOKEN_MINTING: before activation no token is mintable under consensus and every mint is
+    // dropped by block apply, so refuse here instead of charging nothing for nothing.
+    let next_height = node.get_tip_height().unwrap_or(0) + 1;
+    if !crate::node::token_minting_active(next_height) {
+        let when = match crate::node::token_minting_activation_height() {
+            Some(h) => format!("it activates at block {}", h),
+            None => "its activation is not scheduled".to_string(),
+        };
+        return Err(bad(StatusCode::BAD_REQUEST, format!("token minting is not active yet ({})", when)));
     }
 
     if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+        return Err(bad(StatusCode::BAD_REQUEST, e));
     }
 
     // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
-    let tx = match crate::v2_binding::build_v2_tx("mint_tokens", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
+    let tx = match crate::v2_binding::build_v2_tx_at("mint_tokens", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload, next_height) { Ok(t) => t, Err(e) => return Err(bad(StatusCode::BAD_REQUEST, e)) };
+
+    // The consensus rule block apply will enforce (creator, mintable, cap, amount, fee), with its
+    // own error messages. Supply that is already pending in the mempool is not counted here; a
+    // block that would overshoot the cap simply skips the later mint.
+    if let Err(e) = node.check_token_mint_now(&tx) {
+        let code = if e.starts_with("only the creator") { StatusCode::FORBIDDEN } else { StatusCode::BAD_REQUEST };
+        return Err(bad(code, e));
+    }
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+        .map_err(|e| bad(StatusCode::BAD_REQUEST, e))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
-
-    // Update metadata total_minted
-    let _ = node.record_token_mint(&sym_upper, amount);
+    // `total_minted` is advanced by block apply when the mint is included (deterministically on
+    // every node), never here at submit time.
 
     Ok(Json(serde_json::json!({
         "success": true,

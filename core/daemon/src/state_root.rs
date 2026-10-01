@@ -248,3 +248,63 @@ pub fn extend_state_root_v2(
     }
     hex::encode(h.finalize())
 }
+
+const TAG_TOKEN_MINT: &[u8] = b"rougechain.stateroot.token_mint.v1";
+
+/// One mintable token's consensus mint ledger (TOKEN_MINTING).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenMintEntry {
+    pub symbol: String,
+    pub creator: String,
+    pub initial_supply: u64,
+    pub max_supply: Option<u64>,
+    pub total_minted: u64,
+    pub enabled_height: u64,
+}
+
+/// TOKEN_MINTING state root: the root so far plus the mint ledger of every token created mintable
+/// by a block (creator, initial supply, cap, minted so far, creation height), so every node must
+/// agree on who may still mint how much. Explicit, length-prefixed, sorted by symbol; integers only.
+/// Callers apply it only when at least one such token exists, so the root is unchanged until the
+/// first mintable token is created.
+pub fn extend_state_root_token_mint(root: &str, entries: &[TokenMintEntry]) -> String {
+    let mut sorted: Vec<&TokenMintEntry> = entries.iter().collect();
+    sorted.sort_by(|a, b| a.symbol.as_bytes().cmp(b.symbol.as_bytes()));
+    let mut h = Sha256::new();
+    h.update(TAG_TOKEN_MINT);
+    field(&mut h, root.as_bytes());
+    h.update((sorted.len() as u64).to_be_bytes());
+    for e in sorted {
+        field(&mut h, e.symbol.as_bytes());
+        field(&mut h, e.creator.as_bytes());
+        h.update(e.initial_supply.to_be_bytes());
+        match e.max_supply {
+            Some(m) => { h.update([1u8]); h.update(m.to_be_bytes()); }
+            None => h.update([0u8]),
+        }
+        h.update(e.total_minted.to_be_bytes());
+        h.update(e.enabled_height.to_be_bytes());
+    }
+    hex::encode(h.finalize())
+}
+
+#[cfg(test)]
+mod token_mint_root_tests {
+    use super::*;
+
+    fn e(sym: &str, minted: u64, max: Option<u64>) -> TokenMintEntry {
+        TokenMintEntry { symbol: sym.into(), creator: "c".into(), initial_supply: 10, max_supply: max, total_minted: minted, enabled_height: 5 }
+    }
+
+    #[test]
+    fn order_independent_and_sensitive_to_every_field() {
+        let a = extend_state_root_token_mint("r", &[e("A", 1, None), e("B", 2, Some(20))]);
+        assert_eq!(a, extend_state_root_token_mint("r", &[e("B", 2, Some(20)), e("A", 1, None)]));
+        assert_ne!(a, extend_state_root_token_mint("r2", &[e("A", 1, None), e("B", 2, Some(20))]));
+        assert_ne!(a, extend_state_root_token_mint("r", &[e("A", 2, None), e("B", 2, Some(20))]));
+        assert_ne!(a, extend_state_root_token_mint("r", &[e("A", 1, Some(0)), e("B", 2, Some(20))]));
+        assert_ne!(a, extend_state_root_token_mint("r", &[e("A", 1, None)]));
+        let mut c = e("A", 1, None); c.creator = "d".into();
+        assert_ne!(a, extend_state_root_token_mint("r", &[c, e("B", 2, Some(20))]));
+    }
+}
