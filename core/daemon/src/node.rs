@@ -357,6 +357,36 @@ pub fn token_minting_active(height: u64) -> bool {
     matches!(token_minting_activation_height(), Some(a) if height >= a)
 }
 
+/// CONTRACT_NFT_ROYALTY — two read-only host functions, `host_nft_royalty_bps` and
+/// `host_nft_royalty_recipient` (`quantum_vault_vm::game::register_nft_royalty_functions`), so a
+/// contract that sells NFTs (an escrow marketplace) can read a collection's royalty and pay it
+/// itself with `host_transfer` (`host_nft_transfer` pays none). The recipient is returned as
+/// `canon_addr(royalty_recipient)` — the ledger entry the wallet `nft_transfer` sale path credits.
+/// From this height every contract call (block apply and previews) links them; before it they are
+/// not linked, so a module importing them fails to instantiate exactly like a module importing any
+/// unknown function (deploy never inspects imports, before or after). Nothing else changes: no new
+/// tx fields, no state-root change. `None` = not scheduled (the per-network height lives in
+/// `upgrades.rs`; activate together with TOKEN_MINTING — see the runbook).
+pub const CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_CONTRACT_NFT_ROYALTY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_contract_nft_royalty(h: Option<u64>) {
+    TEST_CONTRACT_NFT_ROYALTY_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn contract_nft_royalty_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_CONTRACT_NFT_ROYALTY_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(crate::upgrades::current().contract_nft_royalty, Some(a) if height >= a)
+}
+
 /// Largest integer a JSON client can send exactly (2^53 - 1). Mint amounts, mintable initial
 /// supplies and caps are bounded by it, so every amount survives JSON relay and the ledger's
 /// `as f64` credit path exactly.
@@ -441,6 +471,7 @@ impl quantum_vault_vm::ChainView for NodeChainView {
     fn nft_collection(&self, collection_id: &str) -> Option<quantum_vault_vm::CollectionView> {
         self.nfts.get_collection(collection_id).ok().flatten().map(|c| quantum_vault_vm::CollectionView {
             creator: c.creator, max_supply: c.max_supply, minted: c.minted, frozen: c.frozen,
+            royalty_bps: c.royalty_bps, royalty_recipient: c.royalty_recipient,
         })
     }
     fn block_hash(&self, height: u64) -> Option<String> {
@@ -4098,6 +4129,7 @@ impl L1Node {
             seed: quantum_vault_vm::game::random_seed(&tip_hash, "preview"),
             block_hashes: game_ready_3_active(height),
             payable: payable_calls_active(height),
+            nft_royalty: contract_nft_royalty_active(height),
             attached: attach.map(|(_, _, s, a)| (s.to_string(), a)),
         })
     }
@@ -5200,6 +5232,7 @@ impl L1Node {
                                 seed: quantum_vault_vm::game::random_seed(&block.header.prev_hash, &tx_hash_str),
                                 block_hashes: game_ready_3_active(block.header.height),
                                 payable: payable_calls_active(block.header.height),
+                                nft_royalty: contract_nft_royalty_active(block.header.height),
                                 attached: attach.clone(),
                             });
                             match rt.execute_contract_ext(
@@ -12373,6 +12406,345 @@ mod game_ready_tests {
         let addr = deploy.payload.contract_addr.clone().unwrap();
         import(&e, vec![deploy]).expect("block is valid; the deploy just installs nothing");
         assert!(e.node.contract_store.as_ref().unwrap().get_contract(&addr).unwrap().is_none());
+    }
+
+    // ── CONTRACT_NFT_ROYALTY ──────────────────────────────────────────────────────────────────
+
+    /// `probe {"c":"<collection id>"}` / `probe4` (4-byte buffer) store `bps`, `n` (recipient result)
+    /// and `rcp` (recipient bytes); `make` creates the contract's own `OWN` collection and probes it
+    /// in the same call.
+    const WAT_ROYALTY_PROBE: &str = r#"
+    (module
+      (import "env" "host_nft_royalty_bps"       (func $bps (param i32 i32) (result i32)))
+      (import "env" "host_nft_royalty_recipient" (func $rcp (param i32 i32 i32 i32) (result i32)))
+      (import "env" "host_nft_create_collection" (func $cc (param i32 i32 i32 i32 i64 i32 i32) (result i32)))
+      (import "env" "host_get_args_len"          (func $al (result i32)))
+      (import "env" "host_read_args"             (func $ra (param i32 i32) (result i32)))
+      (import "env" "host_storage_write"         (func $sw (param i32 i32 i32 i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "bps")
+      (data (i32.const 4) "n")
+      (data (i32.const 8) "rcp")
+      (data (i32.const 16) "OWN")
+      (func $rec (param $p i32) (param $l i32) (param $cap i32) (local $n i32)
+        (i32.store (i32.const 100) (call $bps (local.get $p) (local.get $l)))
+        (call $sw (i32.const 0) (i32.const 3) (i32.const 100) (i32.const 4))
+        (local.set $n (call $rcp (local.get $p) (local.get $l) (i32.const 10000) (local.get $cap)))
+        (i32.store (i32.const 104) (local.get $n))
+        (call $sw (i32.const 4) (i32.const 1) (i32.const 104) (i32.const 4))
+        (if (i32.gt_s (local.get $n) (i32.const 0))
+          (then (call $sw (i32.const 8) (i32.const 3) (i32.const 10000) (local.get $n)))))
+      ;; args are {"c":"<id>"}: the id starts at byte 6 and is len - 8 long
+      (func $arg_col (result i32)
+        (drop (call $ra (i32.const 1000) (i32.const 4096)))
+        (i32.sub (call $al) (i32.const 8)))
+      (func (export "probe")  (call $rec (i32.const 1006) (call $arg_col) (i32.const 8192)))
+      (func (export "probe4") (call $rec (i32.const 1006) (call $arg_col) (i32.const 4)))
+      (func (export "make") (local $c i32)
+        (local.set $c (call $cc (i32.const 16) (i32.const 3) (i32.const 16) (i32.const 3) (i64.const 0) (i32.const 6000) (i32.const 200)))
+        (call $rec (i32.const 6000) (local.get $c) (i32.const 8192))))
+    "#;
+
+    fn royalty_forks_on() {
+        set_test_game_ready_2(Some(1));
+        set_test_game_ready_3(Some(1));
+        set_test_payable_calls(Some(1));
+    }
+    fn royalty_forks_off() {
+        set_test_game_ready_2(None);
+        set_test_game_ready_3(None);
+        set_test_payable_calls(None);
+        set_test_contract_nft_royalty(None);
+    }
+
+    fn call_tx(kp: &PQKeypair, addr: &str, method: &str, args: Value, attach: Value, n: u64) -> TxV1 {
+        v2(kp, "contract_call", &json!({ "from": kp.public_key_hex, "contractAddr": addr, "method": method, "args": args,
+            "gasLimit": 1_000_000, "attach": attach, "timestamp": n, "nonce": format!("{:016x}", n) }), n)
+    }
+
+    /// Probe results from contract storage after a call.
+    fn probe_state(e: &Env, addr: &str) -> (i32, i32, Option<String>) {
+        let st = e.node.contract_store.as_ref().unwrap().load_all_state(addr).unwrap();
+        let i = |k: &str| i32::from_le_bytes(st[k.as_bytes()].clone().try_into().unwrap());
+        let (bps, n) = (i("bps"), i("n"));
+        (bps, n, if n > 0 { st.get(b"rcp".as_slice()).map(|v| String::from_utf8(v.clone()).unwrap()) } else { None })
+    }
+
+    #[test]
+    fn nft_royalty_host_fns_report_wallet_zero_contract_and_unknown_collections() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        set_test_contract_nft_royalty(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let studio = pqc_keygen();
+        let n = std::cell::Cell::new(0u64);
+        let next = || { n.set(n.get() + 1); n.get() };
+        let ts = |n: u64| 1_790_000_000_000u64 + n;
+
+        // Wallet collections: ART (2.5% to the studio's PUBLIC KEY), FREE (no royalty → creator),
+        // RB (5% to a rouge1 address).
+        let studio_addr = canon_addr(&studio.public_key_hex);
+        for (sym, bps, to) in [("ART", Some(250u64), Some(studio.public_key_hex.clone())), ("FREE", None, None), ("RB", Some(500), Some(studio_addr.clone()))] {
+            let k = next();
+            let mut p = json!({ "from": pk, "symbol": sym, "name": sym, "timestamp": ts(k) });
+            if let Some(b) = bps { p["royaltyBps"] = json!(b); }
+            if let Some(t) = to { p["royaltyRecipient"] = json!(t); }
+            mine(&e, v2(&e.player, "nft_create_collection", &p, k)).expect(sym);
+        }
+        let col = |sym: &str| crate::nft_store::NftCollection::make_collection_id(&pk, sym);
+        assert_eq!(e.node.nft_store.get_collection(&col("ART")).unwrap().unwrap().royalty_recipient, studio.public_key_hex,
+            "stored as given (a public key)");
+
+        let addr = deploy_wat(&e, WAT_ROYALTY_PROBE, next());
+        let probe = |method: &str, c: &str| {
+            let k = next();
+            let h = mine(&e, call_tx(&e.player, &addr, method, json!({ "c": c }), Value::Null, k)).expect(method);
+            assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success), "{method} {c}");
+            probe_state(&e, &addr)
+        };
+        // Recipient = the canonical ledger key the wallet nft_transfer royalty path credits.
+        assert_eq!(probe("probe", &col("ART")), (250, studio_addr.len() as i32, Some(studio_addr.clone())));
+        assert_eq!(canon_addr(&e.node.nft_store.get_collection(&col("ART")).unwrap().unwrap().royalty_recipient), studio_addr);
+        assert_eq!(probe("probe", &col("FREE")), (0, canon_addr(&pk).len() as i32, Some(canon_addr(&pk))), "zero royalty, recipient = creator");
+        assert_eq!(probe("probe", &col("RB")), (500, studio_addr.len() as i32, Some(studio_addr.clone())));
+        assert_eq!(probe("probe", "col:nope:NOPE"), (-1, -1, None), "unknown collection");
+        assert_eq!(probe("probe4", &col("ART")), (250, -2, None), "buffer too small");
+
+        // Contract-created: same call (overlay) …
+        let k = next();
+        mine(&e, call_tx(&e.player, &addr, "make", json!({}), Value::Null, k)).expect("make");
+        assert_eq!(probe_state(&e, &addr), (0, addr.len() as i32, Some(addr.clone())), "no royalty; recipient = the creating contract");
+        // … and later, from the stored collection.
+        let own = crate::nft_store::NftCollection::make_collection_id(&addr, "OWN");
+        let c = e.node.nft_store.get_collection(&own).unwrap().unwrap();
+        assert_eq!((c.royalty_bps, c.royalty_recipient.as_str()), (0, addr.as_str()));
+        assert_eq!(probe("probe", &own), (0, addr.len() as i32, Some(addr.clone())));
+        royalty_forks_off();
+    }
+
+    #[test]
+    fn nft_royalty_host_fns_fail_like_an_unknown_import_before_activation() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        set_test_contract_nft_royalty(None);
+        let pk = e.player.public_key_hex.clone();
+        // Deploy: accepted and installed, exactly like a module with an unknown import (deploy
+        // validation never looked at imports).
+        let probe = deploy_wat(&e, WAT_ROYALTY_PROBE, 1);
+        let unknown = deploy_wat(&e, &WAT_ROYALTY_PROBE.replace("host_nft_royalty_bps", "host_no_such_function"), 2);
+        let cs = e.node.contract_store.as_ref().unwrap();
+        assert!(cs.get_contract(&probe).unwrap().is_some() && cs.get_contract(&unknown).unwrap().is_some());
+        let col = crate::nft_store::NftCollection::make_collection_id(&pk, "X");
+        // Call: the producer can't execute either, so it doesn't include them …
+        for (n, addr) in [(3u64, &probe), (4, &unknown)] {
+            let err = mine(&e, call_tx(&e.player, addr, "probe", json!({ "c": col }), Value::Null, n)).unwrap_err();
+            assert!(err.contains("Instantiation: cannot find definition for import"), "{err}");
+            e.node.mempool.lock().unwrap().clear(); // the producer re-queues it; drop it
+        }
+        // … and a block that carries such a call is rejected the same way for both.
+        let tip = e.node.tip_height().unwrap();
+        let e1 = import(&e, vec![call_tx(&e.player, &probe, "probe", json!({ "c": col }), Value::Null, 3)]).unwrap_err();
+        let e2 = import(&e, vec![call_tx(&e.player, &unknown, "probe", json!({ "c": col }), Value::Null, 3)]).unwrap_err();
+        for err in [&e1, &e2] { assert!(err.contains("execution failed under active custody") && err.contains("Instantiation"), "{err}"); }
+        assert_eq!(e.node.tip_height().unwrap(), tip);
+        // Activation: the same deployed contract now runs.
+        set_test_contract_nft_royalty(Some(tip + 1));
+        let h = mine(&e, call_tx(&e.player, &probe, "probe", json!({ "c": col }), Value::Null, 3)).expect("runs after activation");
+        assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+        assert_eq!(probe_state(&e, &probe), (-1, -1, None));
+        let err = mine(&e, call_tx(&e.player, &unknown, "probe", json!({ "c": col }), Value::Null, 4)).unwrap_err();
+        assert!(err.contains("host_no_such_function"), "a truly unknown import still fails: {err}");
+        e.node.mempool.lock().unwrap().clear();
+        royalty_forks_off();
+    }
+
+    /// The shipped example (contracts/nft_marketplace): list → escrow → wrong payment refunded →
+    /// buy pays royalty + seller exactly in quanta and moves the NFT; cancel returns an NFT. Every
+    /// block is relayed to a second node as JSON and the state roots must match. Activation of
+    /// CONTRACT_NFT_ROYALTY happens mid-test: before it the producer can't run the marketplace.
+    #[test]
+    fn nft_marketplace_example_pays_royalty_and_seller_exactly_across_json_relay() {
+        use base64::Engine as _;
+        let a = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let b = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        set_test_contract_nft_royalty(Some(6)); // blocks 1–5 below; the marketplace runs from 6
+        let seller = &a.player;
+        let buyer = pqc_keygen();
+        let artist = pqc_keygen(); // royalty recipient: never transacts, so its balance is pure royalty
+        let spk = seller.public_key_hex.clone();
+        for n in [&a.node, &b.node] {
+            fund_xrge(n, &spk, 1_000.0);
+            fund_xrge(n, &b.player.public_key_hex, 1_000.0);
+            fund_xrge(n, &buyer.public_key_hex, 100.0);
+        }
+        let relay = |blk: BlockV1| b.node.import_block(serde_json::from_str(&serde_json::to_string(&blk).unwrap()).unwrap());
+        let mine_relay = |tx: TxV1| -> Result<String, String> {
+            let h = compute_single_tx_hash(&tx);
+            a.node.add_tx_to_mempool_verified(tx)?;
+            relay(a.node.mine_pending()?.ok_or("no block")?)?;
+            Ok(h)
+        };
+        let status = |h: &str| a.node.get_receipt(h).unwrap().unwrap().status;
+        let ok = |h: &str| assert!(matches!(status(h), TxStatus::Success), "{:?}", status(h));
+        let q = |n: &L1Node, k: &str| *n.balances.lock().unwrap().get(&canon_addr(k)).unwrap_or(&0);
+        let ts = |n: u64| 1_790_000_000_000u64 + n;
+
+        // Block 1: marketplace deploy. Blocks 2–3: the artist-royalty collection (3%) and a mint.
+        let wasm = include_bytes!("../../../contracts/nft_marketplace/nft_marketplace.wasm");
+        let d = v2(seller, "contract_deploy", &deploy_payload(&spk, &base64::engine::general_purpose::STANDARD.encode(wasm)), 1);
+        let market = d.payload.contract_addr.clone().unwrap();
+        mine_relay(d).expect("deploy");
+        mine_relay(v2(seller, "nft_create_collection", &json!({ "from": spk, "symbol": "ART", "name": "Art", "royaltyBps": 300,
+            "royaltyRecipient": artist.public_key_hex, "timestamp": ts(2) }), 2)).expect("collection");
+        let col = crate::nft_store::NftCollection::make_collection_id(&spk, "ART");
+        for (k, name) in [(3u64, "One"), (4, "Two")] {
+            mine_relay(v2(seller, "nft_mint", &json!({ "from": spk, "collectionId": col, "name": name, "timestamp": ts(k) }), k)).expect("mint");
+        }
+        let owner = |id: u64| a.node.nft_store.get_token(&col, id).unwrap().unwrap().owner;
+        assert_eq!(owner(1), spk);
+
+        // Block 5 (before activation): listing can't run on either node.
+        const PRICE: u64 = 1_234_567_891; // ≈1.23 XRGE; 3% = 37,037,036.73 → floor
+        let list = |nft: u64, n: u64| call_tx(seller, &market, "list", json!({ "collection": col, "token_id": nft, "price": PRICE }), Value::Null, n);
+        let err = mine_relay(list(1, 5)).unwrap_err();
+        assert!(err.contains("cannot find definition for import env::host_nft_royalty"), "{err}");
+        a.node.mempool.lock().unwrap().clear();
+        mine_relay(v2(seller, "transfer", &json!({ "from": spk, "to": b.player.public_key_hex, "amount": 1, "fee": 1.0,
+            "timestamp": ts(5), "nonce": "0000000000000005" }), 5)).expect("filler block 5");
+        assert_eq!(a.node.tip_height().unwrap(), 5);
+
+        // Block 6+: list #1 and #2 (seller owns them), then escrow both with plain wallet transfers.
+        let h = mine_relay(list(1, 6)).unwrap(); ok(&h);
+        let h = mine_relay(list(2, 7)).unwrap(); ok(&h);
+        let ev = |h: &str| -> (String, Value) {
+            let ev = a.node.contract_store.as_ref().unwrap().get_events_page(&market, 1, None, Some(h)).unwrap();
+            (ev[0].topic.clone(), serde_json::from_str(&ev[0].data).unwrap())
+        };
+        assert_eq!(ev(&h), ("listed".to_string(), json!({ "listing": 2, "collection": col, "token_id": 2, "price": PRICE })));
+        // A non-owner can't list someone else's NFT.
+        let h = mine_relay(call_tx(&buyer, &market, "list", json!({ "collection": col, "token_id": 1, "price": 1 }), Value::Null, 1)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        for (k, nft) in [(8u64, 1u64), (9, 2)] {
+            mine_relay(v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": nft, "to": market, "timestamp": ts(k) }), k)).expect("escrow");
+            assert_eq!(owner(nft), market);
+        }
+
+        // Wrong payment: one quantum short → the call fails, the buyer only pays gas, nothing moves.
+        let gas_fee: u128 = 1_000_000 * 1_000; // gasLimit × 0.000001 XRGE, in quanta
+        let buy = |listing: u64, amount: u64, n: u64| call_tx(&buyer, &market, "buy", json!({ "listing": listing }),
+            json!({ "symbol": "XRGE", "amount": amount }), n);
+        let (b0, s0, r0, m0) = (q(&a.node, &buyer.public_key_hex), q(&a.node, &spk), q(&a.node, &artist.public_key_hex), q(&a.node, &market));
+        let h = mine_relay(buy(1, PRICE - 1, 2)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        let h = mine_relay(buy(1, PRICE + 1, 3)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        assert_eq!(b0 - q(&a.node, &buyer.public_key_hex), 2 * gas_fee, "only gas; both payments refunded");
+        assert_eq!((q(&a.node, &spk), q(&a.node, &artist.public_key_hex), q(&a.node, &market)), (s0, r0, m0));
+        assert_eq!(owner(1), market);
+
+        // Exact payment: royalty floor(PRICE × 300 / 10000) to the artist, the rest to the seller.
+        let royalty = (PRICE as u128 * 300 / 10_000) as u128;
+        assert_eq!(royalty, 37_037_036);
+        let b1 = q(&a.node, &buyer.public_key_hex);
+        let h = mine_relay(buy(1, PRICE, 4)).unwrap(); ok(&h);
+        assert_eq!(q(&a.node, &artist.public_key_hex) - r0, royalty, "royalty, exact quanta");
+        assert_eq!(q(&a.node, &spk) - s0, PRICE as u128 - royalty, "seller proceeds, exact quanta");
+        assert_eq!(b1 - q(&a.node, &buyer.public_key_hex), PRICE as u128 + gas_fee);
+        assert_eq!(q(&a.node, &market), m0, "the marketplace keeps nothing");
+        assert_eq!(owner(1), buyer.public_key_hex, "NFT delivered to the buyer");
+        assert_eq!(ev(&h), ("sold".to_string(), json!({ "listing": 1, "price": PRICE, "royalty": 37_037_036u64,
+            "seller_proceeds": PRICE - 37_037_036 })));
+        // The listing is gone: buying it again fails and refunds.
+        let h = mine_relay(buy(1, PRICE, 5)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        // Only the seller can cancel; cancel returns the escrowed NFT.
+        let h = mine_relay(call_tx(&buyer, &market, "cancel", json!({ "listing": 2 }), Value::Null, 6)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        let h = mine_relay(call_tx(seller, &market, "cancel", json!({ "listing": 2 }), Value::Null, 10)).unwrap(); ok(&h);
+        assert_eq!(ev(&h), ("cancelled".to_string(), json!({ "listing": 2, "returned": true })));
+        assert_eq!(owner(2), spk);
+
+        // The peer received every block as JSON and agrees on everything.
+        assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        assert_eq!(b.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, buyer.public_key_hex);
+        assert_eq!(q(&b.node, &artist.public_key_hex), r0 + royalty);
+        royalty_forks_off();
+    }
+
+    /// Mainnet history (fixture 0–137) replays to the same blocks and root with CONTRACT_NFT_ROYALTY
+    /// unscheduled and scheduled from block 1 (nothing before activation can depend on it).
+    #[test]
+    fn mainnet_history_replays_identically_with_contract_nft_royalty_scheduled_from_genesis() {
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl");
+        let run = |act: Option<u64>| {
+            set_test_contract_nft_royalty(act);
+            let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+            assert!(fail.is_none(), "activation {act:?}: {fail:?}");
+            (ok, n.get_state_root().unwrap(), n.get_all_blocks().unwrap().iter().map(|b| b.hash.clone()).collect::<Vec<_>>())
+        };
+        let base = run(None);
+        assert_eq!(base.0, 137);
+        assert_eq!(run(Some(1)), base, "identical tip, root and block hashes");
+        set_test_contract_nft_royalty(None);
+    }
+
+    /// Royalty recipient = a royalty-splitter contract (40-hex address): the marketplace's
+    /// host_transfer credits the splitter's ledger entry, and the splitter can fan it out.
+    #[test]
+    fn nft_marketplace_royalty_to_a_splitter_contract_is_credited_and_split() {
+        use base64::Engine as _;
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        set_test_contract_nft_royalty(Some(1));
+        let seller = &e.player;
+        let spk = seller.public_key_hex.clone();
+        let buyer = pqc_keygen();
+        fund_xrge(&e.node, &buyer.public_key_hex, 100.0);
+        let ts = |n: u64| 1_790_000_000_000u64 + n;
+        // Same logic as contracts/royalty_splitter: split its whole balance 60/40 (floor; dust stays).
+        let splitter = deploy_wat(&e, r#"
+        (module
+          (import "env" "host_get_self_addr" (func $me (param i32 i32) (result i32)))
+          (import "env" "host_get_balance"   (func $bal (param i32 i32) (result i64)))
+          (import "env" "host_transfer"      (func $tr (param i32 i32 i64) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 100) "1111111111111111111111111111111111111111")
+          (data (i32.const 200) "2222222222222222222222222222222222222222")
+          (func (export "split") (local $b i64)
+            (local.set $b (call $bal (i32.const 0) (call $me (i32.const 0) (i32.const 64))))
+            (drop (call $tr (i32.const 100) (i32.const 40) (i64.div_u (i64.mul (local.get $b) (i64.const 6000)) (i64.const 10000))))
+            (drop (call $tr (i32.const 200) (i32.const 40) (i64.div_u (i64.mul (local.get $b) (i64.const 4000)) (i64.const 10000))))))
+        "#, 1);
+        let wasm = include_bytes!("../../../contracts/nft_marketplace/nft_marketplace.wasm");
+        let d = v2(seller, "contract_deploy", &json!({ "from": spk, "nonce": "fedcba9876543210",
+            "wasm": base64::engine::general_purpose::STANDARD.encode(wasm), "timestamp": 2 }), 2);
+        let market = d.payload.contract_addr.clone().unwrap();
+        mine(&e, d).expect("deploy market");
+        mine(&e, v2(seller, "nft_create_collection", &json!({ "from": spk, "symbol": "SPL", "name": "Split", "royaltyBps": 1000,
+            "royaltyRecipient": splitter, "timestamp": ts(3) }), 3)).unwrap();
+        let col = crate::nft_store::NftCollection::make_collection_id(&spk, "SPL");
+        mine(&e, v2(seller, "nft_mint", &json!({ "from": spk, "collectionId": col, "name": "S", "timestamp": ts(4) }), 4)).unwrap();
+        // The seller holds the NFT under their rouge1 ADDRESS (not the raw key): listing still works
+        // (the contract derives the caller's address with host_pqc_pubkey_to_address).
+        mine(&e, v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": 1, "to": canon_addr(&spk), "timestamp": ts(5) }), 5)).unwrap();
+        assert_eq!(e.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, canon_addr(&spk));
+        let ok = |h: String| assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+        ok(mine(&e, call_tx(seller, &market, "list", json!({ "collection": col, "token_id": 1, "price": 5_000_000_001u64 }), Value::Null, 6)).unwrap());
+        mine(&e, v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": 1, "to": market, "timestamp": ts(7) }), 7)).unwrap();
+        assert_eq!(e.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, market);
+        ok(mine(&e, call_tx(&buyer, &market, "buy", json!({ "listing": 1 }), json!({ "symbol": "XRGE", "amount": 5_000_000_001u64 }), 1)).unwrap());
+        let q = |k: &str| *e.node.balances.lock().unwrap().get(k).unwrap_or(&0);
+        assert_eq!(q(&splitter), 500_000_000, "10% of 5.000000001 XRGE, floored, on the splitter's entry");
+        ok(mine(&e, call_tx(seller, &splitter, "split", json!({}), Value::Null, 8)).unwrap());
+        assert_eq!((q("1111111111111111111111111111111111111111"), q("2222222222222222222222222222222222222222"), q(&splitter)),
+            (300_000_000, 200_000_000, 0));
+        royalty_forks_off();
     }
 }
 

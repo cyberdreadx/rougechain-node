@@ -189,6 +189,8 @@ export interface UpgradeSchedule {
   payable_calls?: number | null;
   /** TOKEN_MINTING: mintable custom tokens + creator-only capped `mint_tokens`. */
   token_minting?: number | null;
+  /** CONTRACT_NFT_ROYALTY: contracts can read a collection's royalty (`host_nft_royalty_bps` / `host_nft_royalty_recipient`). */
+  contract_nft_royalty?: number | null;
   [upgrade: string]: unknown;
 }
 

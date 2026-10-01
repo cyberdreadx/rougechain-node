@@ -4,6 +4,20 @@ All notable changes to RougeChain.
 
 ---
 
+## Node: contracts can read NFT royalties (CONTRACT_NFT_ROYALTY) — built, activation not scheduled — 2026-10-01
+
+- Consensus upgrade, **not active on any network** (`upgrade_schedule.contract_nft_royalty` is
+  `null`). From its height contracts get two read-only host functions:
+  `host_nft_royalty_bps(col, clen) → i32` (`0`–`10000`, `-1` not found) and
+  `host_nft_royalty_recipient(col, clen, out, cap) → i32` (length, `-1` not found, `-2` buffer too
+  small). The recipient is the canonical ledger key the wallet royalty path credits, so a contract
+  that sells NFTs can pay royalty with `host_transfer`. Planned to activate at the same height as
+  TOKEN_MINTING.
+- Before activation nothing changes: a contract importing them fails exactly like one importing an
+  unknown function. No new transaction fields, no state-root change; mainnet replay 0–137 identical.
+- New example: `contracts/nft_marketplace` — an escrow marketplace (list → escrow → buy with an
+  attached XRGE payment → royalty + seller paid in integer quanta → NFT to the buyer; cancel).
+
 ## Node: mintable tokens (TOKEN_MINTING) — built, activation not scheduled — 2026-10-01
 
 - Consensus upgrade, **not active on any network** (`upgrade_schedule.token_minting` is `null`).
