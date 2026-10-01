@@ -15,6 +15,11 @@ All notable changes to RougeChain.
   TOKEN_MINTING.
 - Before activation nothing changes: a contract importing them fails exactly like one importing an
   unknown function. No new transaction fields, no state-root change; mainnet replay 0–137 identical.
+- Same activation: `nft_create_collection` with `royaltyBps` above `10000` (over 100%) or not an
+  exact integer (negative, fractional, a string, or wider than 16 bits — previously truncated) is
+  rejected at creation: the API returns `400 royaltyBps must be an integer between 0 and 10000`, the
+  mempool and producer refuse it, and a block carrying one is invalid. Before activation creation
+  behaves exactly as before (history replays unchanged).
 - New example: `contracts/nft_marketplace` — an escrow marketplace (list → escrow → buy with an
   attached XRGE payment → royalty + seller paid in integer quanta → NFT to the buyer; cancel).
 

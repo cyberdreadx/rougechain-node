@@ -444,6 +444,42 @@ pub fn token_minting_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Largest NFT royalty a collection may be created with from CONTRACT_NFT_ROYALTY: 100%.
+pub const NFT_ROYALTY_MAX_BPS: u64 = 10_000;
+pub const NFT_ROYALTY_BPS_ERROR: &str = "royaltyBps must be an integer between 0 and 10000";
+
+/// CONTRACT_NFT_ROYALTY — the stateless royalty-cap rule for a block at `height` (consensus at
+/// import; also applied by the mempool, the producer and the API). From activation an
+/// `nft_create_collection` is invalid when its royalty exceeds 10000 bps, or — for the `/api/v2`
+/// signed-JSON format — when the signed `royaltyBps` is present (not null) but is not a JSON
+/// integer in 0..=10000 (negative, fractional, a string, or wider than u16 would otherwise be
+/// dropped or truncated by the historical `as u16` derivation). Before activation: no check
+/// (history replays byte-identically, truncation included).
+pub fn nft_royalty_cap_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
+    if tx.tx_type != "nft_create_collection" || !contract_nft_royalty_active(height) {
+        return Ok(());
+    }
+    if tx.payload.nft_royalty_bps.map(|b| b as u64 > NFT_ROYALTY_MAX_BPS).unwrap_or(false) {
+        return Err(NFT_ROYALTY_BPS_ERROR.to_string());
+    }
+    if let Some(sp) = tx.signed_payload.as_deref() {
+        // Unparseable / CLI-envelope payloads are judged by the V2 binding (an envelope's payload
+        // is a typed `TxPayload`, so its bps is already the u16 checked above).
+        if let Ok(p) = serde_json::from_str::<serde_json::Value>(sp) {
+            if !crate::v2_binding::is_cli_envelope(&p) {
+                match p.get("royaltyBps") {
+                    None | Some(serde_json::Value::Null) => {}
+                    Some(v) => match v.as_u64() {
+                        Some(b) if b <= NFT_ROYALTY_MAX_BPS => {}
+                        _ => return Err(NFT_ROYALTY_BPS_ERROR.to_string()),
+                    },
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `snapshot_db` key of the finality replay base pinned at a validator retirement (testnet).
 const RETIREMENT_REPLAY_BASE_KEY: &[u8] = b"__validator_replay_base_at_retirement";
 
@@ -1450,6 +1486,8 @@ impl L1Node {
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
             token_minting_tx_rule(tx, block.header.height)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
+            nft_royalty_cap_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
         }
         // Proposer selection (consensus rule from PROPOSER_SELECTION_ACTIVATION_HEIGHT): judged
         // against the validator state after H-1 = the store as it is right now, before any
@@ -2396,6 +2434,7 @@ impl L1Node {
         crate::v2_binding::verify_v2_binding_at(&tx, next_height)?;
         game_ready_tx_rule(&tx, next_height)?;
         token_minting_tx_rule(&tx, next_height)?;
+        nft_royalty_cap_tx_rule(&tx, next_height)?;
         if tx.tx_type == "mint_tokens" && token_minting_active(next_height) {
             self.check_token_mint_now(&tx)?;
         }
@@ -3584,6 +3623,7 @@ impl L1Node {
             // TOKEN_MINTING: the binding and the payload rule are judged at the height being
             // produced (a tx admitted just before activation must still bind after it).
             .filter(|(_, tx)| token_minting_tx_rule(tx, producing_height).is_ok())
+            .filter(|(_, tx)| nft_royalty_cap_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| crate::v2_binding::verify_v2_binding_at(tx, producing_height).is_ok())
             .collect();
         if verified_entries.is_empty() {
@@ -13239,5 +13279,126 @@ mod token_minting_tests {
         n.mine(vec![n.create("LATE", 5, json!({ "mintable": true }))]);
         assert!(n.meta(&n.b, "LATE").consensus_mintable());
         assert_eq!(n.meta(&n.b, "LATE").mint_enabled_height, Some(3));
+    }
+}
+
+#[cfg(test)]
+mod nft_royalty_cap_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, TmpDir};
+    use crate::v2_binding::build_v2_tx;
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use serde_json::{json, Value};
+
+    /// Producer A, importer B (blocks relayed as JSON); CONTRACT_NFT_ROYALTY at `activation`.
+    struct Net { _d: Vec<TmpDir>, a: L1Node, b: L1Node, creator: PQKeypair, seq: std::cell::Cell<u64> }
+
+    fn net(activation: Option<u64>) -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(1))));
+        set_test_contract_nft_royalty(activation);
+        let (da, a, _) = node_with_store();
+        let (db, b, _) = node_with_store();
+        let creator = pqc_keygen();
+        for n in [&a, &b] { fund_xrge(n, &creator.public_key_hex, 1_000.0); }
+        Net { _d: vec![da, db], a, b, creator, seq: std::cell::Cell::new(0) }
+    }
+
+    impl Net {
+        /// A client-signed `/api/v2/nft/collection/create` tx, built exactly like the handler does.
+        fn create(&self, sym: &str, royalty: Value) -> TxV1 {
+            self.seq.set(self.seq.get() + 1);
+            let mut p = json!({ "from": self.creator.public_key_hex, "symbol": sym, "name": sym, "timestamp": self.seq.get() });
+            if !royalty.is_null() || sym.starts_with("NUL") { p["royaltyBps"] = royalty; }
+            let sp = serde_json::to_string(&p).unwrap();
+            let sig = pqc_sign(&self.creator.secret_key_hex, sp.as_bytes()).unwrap();
+            build_v2_tx("nft_create_collection", self.creator.public_key_hex.clone(), self.seq.get(), &p, sig, sp).unwrap()
+        }
+        fn mine(&self, txs: Vec<TxV1>) -> BlockV1 {
+            for tx in txs { self.a.add_tx_to_mempool_verified(tx).expect("admitted"); }
+            let blk = self.a.mine_pending().unwrap().expect("block produced");
+            let relayed: BlockV1 = serde_json::from_str(&serde_json::to_string(&blk).unwrap()).unwrap();
+            self.b.import_block(relayed).expect("B imports A's block");
+            assert_eq!(self.a.get_state_root().unwrap(), self.b.get_state_root().unwrap(), "A and B agree at {}", blk.header.height);
+            blk
+        }
+        fn bps(&self, n: &L1Node, sym: &str) -> u16 {
+            n.get_nft_collection(&NftCollection::make_collection_id(&self.creator.public_key_hex, sym)).unwrap().expect("collection").royalty_bps
+        }
+        fn forged_import(&self, tx: TxV1) -> Result<(), String> {
+            let p = pqc_keygen();
+            self.b.import_block(sealed_block(&self.b, &p.public_key_hex, &p.secret_key_hex, vec![tx], None, 1))
+        }
+    }
+
+    #[test]
+    fn rule_bounds_and_inactive_before_activation() {
+        set_test_contract_nft_royalty(Some(10));
+        let tx = |bps: Option<u16>, ty: &str| TxV1 { version: 1, tx_type: ty.into(), from_pub_key: "k".into(), nonce: 1,
+            payload: TxPayload { nft_royalty_bps: bps, ..Default::default() }, fee: 50.0, sig: String::new(), signed_payload: None };
+        assert!(nft_royalty_cap_tx_rule(&tx(Some(20_000), "nft_create_collection"), 9).is_ok(), "inactive before activation");
+        assert_eq!(nft_royalty_cap_tx_rule(&tx(Some(20_000), "nft_create_collection"), 10).unwrap_err(), NFT_ROYALTY_BPS_ERROR);
+        assert!(nft_royalty_cap_tx_rule(&tx(Some(10_001), "nft_create_collection"), 10).is_err());
+        assert!(nft_royalty_cap_tx_rule(&tx(Some(10_000), "nft_create_collection"), 10).is_ok());
+        assert!(nft_royalty_cap_tx_rule(&tx(None, "nft_create_collection"), 10).is_ok());
+        assert!(nft_royalty_cap_tx_rule(&tx(Some(20_000), "transfer"), 10).is_ok(), "only collection creation is judged");
+        // CLI envelope: the typed payload's bps is what counts.
+        let env = |bps: u64| { let mut t = tx(Some(bps as u16), "nft_create_collection");
+            t.signed_payload = Some(json!({ "tx_type": "nft_create_collection", "payload": { "nft_royalty_bps": bps } }).to_string()); t };
+        assert!(nft_royalty_cap_tx_rule(&env(10_000), 10).is_ok());
+        assert!(nft_royalty_cap_tx_rule(&env(10_001), 10).is_err());
+        set_test_contract_nft_royalty(None);
+    }
+
+    #[test]
+    fn before_activation_out_of_range_royalties_behave_exactly_as_today() {
+        let n = net(None);
+        n.mine(vec![n.create("BIG", json!(20_000)), n.create("WRAP", json!(65_536 + 250)), n.create("NEG", json!(-5)), n.create("FRAC", json!(2.5))]);
+        for node in [&n.a, &n.b] {
+            assert_eq!(n.bps(node, "BIG"), 20_000, ">100% stored as signed");
+            assert_eq!(n.bps(node, "WRAP"), 250, "historical truncating u16 cast");
+            assert_eq!(n.bps(node, "NEG"), 0, "non-u64 ignored");
+            assert_eq!(n.bps(node, "FRAC"), 0);
+        }
+    }
+
+    #[test]
+    fn from_activation_cap_is_enforced_at_mempool_producer_and_import() {
+        let n = net(Some(1));
+        // 10000 (100%) and absent / null are valid; two nodes agree after JSON relay.
+        n.mine(vec![n.create("MAX", json!(10_000)), n.create("NONE", Value::Null), n.create("NUL", Value::Null), n.create("ZERO", json!(0))]);
+        assert_eq!(n.bps(&n.b, "MAX"), 10_000);
+        assert_eq!((n.bps(&n.b, "NONE"), n.bps(&n.b, "NUL"), n.bps(&n.b, "ZERO")), (0, 0, 0));
+        // Mempool refuses everything out of range or not an exact integer (the API runs the same rule).
+        for (sym, v) in [("A", json!(10_001)), ("B", json!(20_000)), ("C", json!(65_536 + 250)), ("D", json!(-1)),
+                         ("E", json!(1.5)), ("F", json!("500")), ("G", json!(1e4)), ("H", json!(u64::MAX))] {
+            let tx = n.create(sym, v.clone());
+            assert_eq!(n.a.add_tx_to_mempool_verified(tx.clone()).unwrap_err(), NFT_ROYALTY_BPS_ERROR, "{sym}={v}");
+            assert!(n.forged_import(tx).unwrap_err().contains(NFT_ROYALTY_BPS_ERROR), "{sym}={v}: forged block rejected");
+        }
+        // Producer: a stale mempool entry is never included.
+        let stale = n.create("STALE", json!(20_000));
+        let id = compute_single_tx_hash(&stale);
+        n.a.verified_tx_ids.lock().unwrap().insert(id.clone());
+        n.a.mempool.lock().unwrap().insert(id, stale);
+        assert!(n.a.mine_pending().unwrap().is_none(), "producer filters it out");
+        let tip = n.b.tip_height().unwrap();
+        assert!(n.b.get_nft_collection(&NftCollection::make_collection_id(&n.creator.public_key_hex, "B")).unwrap().is_none());
+        assert_eq!(n.b.tip_height().unwrap(), tip);
+        set_test_contract_nft_royalty(None);
+    }
+
+    #[test]
+    fn activation_boundary_judges_by_block_height() {
+        let n = net(Some(2));
+        let early = n.create("EARLY", json!(20_000));
+        n.mine(vec![early]); // block 1: before activation, accepted as today
+        assert_eq!(n.bps(&n.b, "EARLY"), 20_000);
+        let late = n.create("LATE", json!(20_000)); // judged at block 2
+        assert!(n.a.add_tx_to_mempool_verified(late.clone()).is_err());
+        assert!(n.forged_import(late).is_err());
+        n.mine(vec![n.create("OK", json!(10_000))]);
+        assert_eq!(n.bps(&n.b, "OK"), 10_000);
+        set_test_contract_nft_royalty(None);
     }
 }
