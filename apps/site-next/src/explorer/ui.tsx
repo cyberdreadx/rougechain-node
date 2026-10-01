@@ -552,6 +552,35 @@ export function SafeImage({
   );
 }
 
+/**
+ * Logos that ship with the site, by upper-case symbol: the native token and the bridged majors,
+ * which carry no on-chain metadata image (also used for their Base-side ETH / USDC / XRGE).
+ */
+const BUILTIN_TOKEN_LOGOS: Record<string, string> = {
+  XRGE: "/xrge-logo.webp",
+  QETH: "/tokens/qeth.webp",
+  ETH: "/tokens/qeth.webp",
+  QUSDC: "/tokens/qusdc.webp",
+  USDC: "/tokens/qusdc.webp",
+};
+
+/** Token avatar: a built-in logo, a ₿ mark for qBTC, else the metadata image (or monogram). */
+export function TokenLogo({ symbol, image, className = "" }: { symbol: string; image?: unknown; className?: string }) {
+  const upper = (symbol ?? "").toUpperCase();
+  const builtin = BUILTIN_TOKEN_LOGOS[upper];
+  if (builtin) return <img className={className} src={builtin} alt="" decoding="async" />;
+  if (upper === "QBTC" || upper === "BTC")
+    return (
+      <svg className={className} viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="50" fill="#F7931A" />
+        <text x="50" y="71" fontSize="62" fontWeight="700" fill="#fff" textAnchor="middle" fontFamily="system-ui, sans-serif">
+          ₿
+        </text>
+      </svg>
+    );
+  return <SafeImage src={image} alt="" fallback={symbol} className={className} />;
+}
+
 export function NotFoundState({
   title,
   children,

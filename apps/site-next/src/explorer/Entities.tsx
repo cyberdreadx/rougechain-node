@@ -35,6 +35,7 @@ import {
   Pager,
   ReadGate,
   SafeImage,
+  TokenLogo,
   Section,
   SourceNote,
   Timestamp,
@@ -333,11 +334,10 @@ export function TokenDetailPage() {
         eyebrow={t("col.token")}
         title={
           <span className="token-title">
-            <SafeImage
+            <TokenLogo
               className="token-mark large"
-              src={meta.data?.image}
-              alt=""
-              fallback={symbol}
+              symbol={symbol}
+              image={meta.data?.image}
             />
             {meta.data?.name || symbol}
           </span>

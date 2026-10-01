@@ -14,6 +14,7 @@ import {
   Pager,
   ReadGate,
   SafeImage,
+  TokenLogo,
   Section,
   SourceNote,
   usePageParam,
@@ -223,11 +224,10 @@ export function TokensPage() {
                             className="token-cell"
                             to={`/token/${encodeURIComponent(tok.symbol)}`}
                           >
-                            <SafeImage
+                            <TokenLogo
                               className="token-mark"
-                              src={tok.image}
-                              alt=""
-                              fallback={tok.symbol}
+                              symbol={tok.symbol}
+                              image={tok.image}
                             />
                             <span>
                               <strong>{tok.symbol}</strong>
