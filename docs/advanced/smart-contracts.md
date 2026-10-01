@@ -128,7 +128,10 @@ marketplace, an auction — reads the royalty and pays it itself:
   recipient = the creating contract's address. A collection created earlier in the same call (or by
   the caller of a cross-contract call) is visible immediately.
 - Royalty is immutable: it is set once by `nft_create_collection` (`royaltyBps`, `royaltyRecipient`,
-  defaulting to the creator).
+  defaulting to the creator). From CONTRACT_NFT_ROYALTY activation, creating a collection with
+  `royaltyBps` above `10000` (more than 100%) — or one that is not an exact integer (negative,
+  fractional, a string) — is rejected (`400 royaltyBps must be an integer between 0 and 10000`, and
+  invalid in a block). Collections created before it keep their stored value; reads clamp it to 10000.
 - **Integer math.** Compute `royalty = price × bps / 10000` in integer quanta (round down) and pay the
   seller `price − royalty`. Never use floats.
 

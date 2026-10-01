@@ -6779,6 +6779,11 @@ async fn v2_nft_create_collection(
 
     // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
     let tx = match crate::v2_binding::build_v2_tx("nft_create_collection", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
+    // CONTRACT_NFT_ROYALTY: royalties above 100% (or a non-integer royaltyBps) are invalid from activation.
+    let next_height = state.node.get_tip_height().unwrap_or(0) + 1;
+    if let Err(e) = crate::node::nft_royalty_cap_tx_rule(&tx, next_height) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+    }
 
     let creator_short = if body.public_key.len() >= 16 { &body.public_key[..16] } else { &body.public_key };
     let collection_id = format!("col:{}:{}", creator_short, symbol.to_uppercase());
