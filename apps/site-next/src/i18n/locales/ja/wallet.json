@@ -314,7 +314,7 @@
     "title": "Base ウォレット",
     "testnetPill": "{{chain}} · テストネット",
     "noAccountTitle": "このウォレットには Base アカウントがありません",
-    "noAccountBody": "Base アドレスはリカバリーフレーズから導出されます。このウォレットは秘密鍵でインポートされたか拡張機能経由で接続されているため、ここでは Base アドレスがありません。Base を使うには、リカバリーフレーズで復元してください（または Qwalla / 拡張機能を使用）。",
+    "noAccountBody": "このサイトでは、Base アドレスはリカバリーフレーズから導出されますが、このウォレットにはここでフレーズがありません（生の鍵からインポートされたか、Qwalla または拡張機能経由で接続されています）。Base アカウントを使うには、Qwalla のアプリ内ブラウザで rougechain.io を開くか、RougeChain ブラウザ拡張機能を使うか、ここでリカバリーフレーズからウォレットを復元してください。",
     "deriving": "Base アドレスを導出中…",
     "sameAsQwalla": "Qwalla と同じリカバリーフレーズなので、Base アドレスも同じです。",
     "viewOnBaseScan": "BaseScan で見る ↗",
@@ -330,7 +330,11 @@
       "checksum": "チェックサムが一致しません。アドレスを再確認してください（大文字小文字混在の場合は EIP-55 に一致する必要があります）。",
       "feeShortBy": "ネットワーク手数料（約 {{fee}} ETH）を支払う ETH が不足しています。",
       "estimate": "手数料を見積もれませんでした。この送金は失敗する可能性が高いです。",
-      "feeShort": "ネットワーク手数料を支払う ETH が不足しています。"
+      "feeShort": "ネットワーク手数料を支払う ETH が不足しています。",
+      "rejected": "ウォレットでリクエストが拒否されました。",
+      "connectFailed": "{{wallet}} に接続できませんでした。",
+      "noHash": "{{wallet}} から取引ハッシュが返されませんでした。",
+      "wrongChain": "{{wallet}} はチェーン {{actual}} 上にあり、{{chain}}（{{expected}}）ではなく、切り替えもされませんでした。{{wallet}} でネットワークを切り替えてから、もう一度お試しください。"
     },
     "warnMainnet": "これは実際の資金を扱う Base メインネットです。取引は取り消せません。アドレスを確認してください。",
     "warnTestnet": "Base Sepolia テストネット：これらのトークンに価値はありません。",
@@ -349,7 +353,16 @@
     "sending": "送金中…",
     "signAndSend": "署名して送金",
     "confirmSoon": "数秒で {{chain}} 上で承認されます。",
-    "done": "完了"
+    "done": "完了",
+    "injectedFallbackName": "ブラウザウォレット",
+    "checkingWallet": "{{wallet}} の Base アカウントを確認しています…",
+    "injectedConnectBody": "{{wallet}} の Base アカウントをここで使えます：残高を表示し、そこから送金できます。すべての取引は {{wallet}} で承認します。",
+    "injectedConnect": "{{wallet}} の Base アカウントを接続",
+    "viaWallet": "{{wallet}} 経由の Base アカウント — 取引はそちらで承認します。",
+    "approveInWallet": "{{wallet}} がこの取引の承認を求め、自身の鍵で署名します。",
+    "walletSetsFee": "ネットワーク手数料は {{wallet}} が設定します。",
+    "waitingWallet": "{{wallet}} を待っています…",
+    "confirmInWallet": "{{wallet}} で確認"
   },
   "control": {
     "wallet": "ウォレット",

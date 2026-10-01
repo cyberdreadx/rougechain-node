@@ -58,6 +58,21 @@ export function pickWallet(discovered: Eip6963Detail[], selectedRdns: string | n
   return discovered.find((d) => d.info.rdns === selectedRdns) ?? preferred ?? discovered[0];
 }
 
+/**
+ * The injected EVM wallet to use when nothing was picked by hand: the RougeChain extension or
+ * Qwalla (announced via EIP-6963 — pickWallet's preference — or a window.ethereum that says it is
+ * one, e.g. Qwalla's in-app browser), else the first announced wallet, else window.ethereum.
+ */
+export function pickInjected(discovered: Eip6963Detail[]): { provider: Eip1193Provider; name: string | null; rdns: string | null } | undefined {
+  const legacy = legacyEthereum();
+  const announced = pickWallet(discovered, null);
+  const announcedPreferred = announced && (announced.info.rdns === ROUGECHAIN_RDNS || announced.info.rdns === QWALLA_RDNS);
+  if (announced && (announcedPreferred || !(legacy?.isQwalla || legacy?.isRougeChain))) {
+    return { provider: announced.provider, name: announced.info.name, rdns: announced.info.rdns };
+  }
+  return legacy ? { provider: legacy, name: legacyWalletName(legacy), rdns: null } : undefined;
+}
+
 export class WrongChainError extends Error {
   constructor(
     readonly actual: number | null,
@@ -82,6 +97,20 @@ export async function readChainId(provider: Eip1193Provider): Promise<number | n
 export async function assertChain(provider: Eip1193Provider, expected: number): Promise<void> {
   const actual = await readChainId(provider);
   if (actual !== expected) throw new WrongChainError(actual, expected);
+}
+
+/**
+ * Make sure the wallet is on `expected`: ask it to switch (wallet_switchEthereumChain) when it
+ * isn't, then re-read. Throws WrongChainError if it stays elsewhere (declined / unsupported).
+ */
+export async function ensureChain(provider: Eip1193Provider, expected: number): Promise<void> {
+  if ((await readChainId(provider)) === expected) return;
+  try {
+    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: `0x${expected.toString(16)}` }] });
+  } catch {
+    // Declined or unsupported: the re-read below reports the chain it stayed on.
+  }
+  await assertChain(provider, expected);
 }
 
 // ── Exact encodings used by apps/web ─────────────────────────────────────────

@@ -317,7 +317,7 @@
     "title": "Base wallet",
     "testnetPill": "{{chain}} · Testnet",
     "noAccountTitle": "No Base account for this wallet",
-    "noAccountBody": "Base addresses are derived from a recovery phrase. This wallet was imported from raw keys or connected through the extension, so it has none here. Recover it from its recovery phrase (or use Qwalla / the extension) to use Base.",
+    "noAccountBody": "On this site, Base addresses are derived from a recovery phrase — and this wallet has none here (it was imported from raw keys or connected through Qwalla or the extension). To use its Base account, open rougechain.io in Qwalla's in-app browser, use the RougeChain browser extension, or recover the wallet here from its recovery phrase.",
     "deriving": "Deriving your Base address…",
     "sameAsQwalla": "Same recovery phrase as Qwalla — same Base address.",
     "viewOnBaseScan": "View on BaseScan ↗",
@@ -333,7 +333,11 @@
       "checksum": "Checksum mismatch — double-check this address (mixed case must match EIP-55).",
       "feeShortBy": "Not enough ETH to pay the network fee (~{{fee}} ETH).",
       "estimate": "Couldn't estimate the fee — this transfer would probably fail.",
-      "feeShort": "Not enough ETH to pay the network fee."
+      "feeShort": "Not enough ETH to pay the network fee.",
+      "rejected": "The request was rejected in the wallet.",
+      "connectFailed": "Couldn't connect {{wallet}}.",
+      "noHash": "{{wallet}} didn't return a transaction hash.",
+      "wrongChain": "{{wallet}} is on chain {{actual}}, not {{chain}} ({{expected}}), and didn't switch. Switch networks in {{wallet}} and try again."
     },
     "warnMainnet": "This is Base mainnet with real funds. Transactions can't be reversed — check the address.",
     "warnTestnet": "Base Sepolia testnet — these tokens have no value.",
@@ -352,7 +356,16 @@
     "sending": "Sending…",
     "signAndSend": "Sign & send",
     "confirmSoon": "It will confirm on {{chain}} in a few seconds.",
-    "done": "Done"
+    "done": "Done",
+    "injectedFallbackName": "browser wallet",
+    "checkingWallet": "Checking {{wallet}} for a Base account…",
+    "injectedConnectBody": "Use the Base account of {{wallet}} here: see its balances and send from it. Every transaction is approved in {{wallet}}.",
+    "injectedConnect": "Connect {{wallet}} Base account",
+    "viaWallet": "Base account via {{wallet}} — transactions are approved there.",
+    "approveInWallet": "{{wallet}} will ask you to approve this transaction and signs it with its own key.",
+    "walletSetsFee": "{{wallet}} sets the network fee.",
+    "waitingWallet": "Waiting for {{wallet}}…",
+    "confirmInWallet": "Confirm in {{wallet}}"
   },
   "control": {
     "wallet": "Wallet",

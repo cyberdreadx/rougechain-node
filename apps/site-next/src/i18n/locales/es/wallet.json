@@ -317,7 +317,7 @@
     "title": "Billetera de Base",
     "testnetPill": "{{chain}} · Testnet",
     "noAccountTitle": "Esta billetera no tiene cuenta de Base",
-    "noAccountBody": "Las direcciones de Base se derivan de una frase de recuperación. Esta billetera se importó con claves sin frase o se conectó mediante la extensión, así que aquí no tiene ninguna. Recupérala con su frase de recuperación (o usa Qwalla / la extensión) para usar Base.",
+    "noAccountBody": "En este sitio, las direcciones de Base se derivan de una frase de recuperación, y esta billetera no tiene ninguna aquí (se importó con claves sin frase o se conectó mediante Qwalla o la extensión). Para usar su cuenta de Base, abre rougechain.io en el navegador integrado de Qwalla, usa la extensión de navegador de RougeChain o recupera la billetera aquí con su frase de recuperación.",
     "deriving": "Derivando tu dirección de Base…",
     "sameAsQwalla": "Misma frase de recuperación que Qwalla: misma dirección de Base.",
     "viewOnBaseScan": "Ver en BaseScan ↗",
@@ -333,7 +333,11 @@
       "checksum": "La suma de verificación no coincide: revisa la dirección (las mayúsculas/minúsculas deben cumplir EIP-55).",
       "feeShortBy": "No tienes suficiente ETH para la comisión de red (~{{fee}} ETH).",
       "estimate": "No se pudo estimar la comisión; probablemente esta transferencia fallaría.",
-      "feeShort": "No tienes suficiente ETH para la comisión de red."
+      "feeShort": "No tienes suficiente ETH para la comisión de red.",
+      "rejected": "La solicitud se rechazó en la billetera.",
+      "connectFailed": "No se pudo conectar {{wallet}}.",
+      "noHash": "{{wallet}} no devolvió un hash de transacción.",
+      "wrongChain": "{{wallet}} está en la cadena {{actual}}, no en {{chain}} ({{expected}}), y no cambió de red. Cambia de red en {{wallet}} e inténtalo de nuevo."
     },
     "warnMainnet": "Esto es Base mainnet con fondos reales. Las transacciones no se pueden revertir: revisa la dirección.",
     "warnTestnet": "Testnet Base Sepolia: estos tokens no tienen valor.",
@@ -352,7 +356,16 @@
     "sending": "Enviando…",
     "signAndSend": "Firmar y enviar",
     "confirmSoon": "Se confirmará en {{chain}} en unos segundos.",
-    "done": "Listo"
+    "done": "Listo",
+    "injectedFallbackName": "billetera del navegador",
+    "checkingWallet": "Buscando una cuenta de Base en {{wallet}}…",
+    "injectedConnectBody": "Usa aquí la cuenta de Base de {{wallet}}: consulta sus saldos y envía desde ella. Cada transacción se aprueba en {{wallet}}.",
+    "injectedConnect": "Conectar la cuenta de Base de {{wallet}}",
+    "viaWallet": "Cuenta de Base a través de {{wallet}}: las transacciones se aprueban allí.",
+    "approveInWallet": "{{wallet}} te pedirá que apruebes esta transacción y la firmará con su propia clave.",
+    "walletSetsFee": "{{wallet}} fija la comisión de red.",
+    "waitingWallet": "Esperando a {{wallet}}…",
+    "confirmInWallet": "Confirmar en {{wallet}}"
   },
   "control": {
     "wallet": "Billetera",

@@ -1,8 +1,13 @@
 /**
  * The wallet's Base (Ethereum L2) account: same recovery phrase, standard Ethereum path — the
  * address Qwalla shows. Derivation, fee quotes and signing are core's evm-wallet / base-wallet.
+ *
+ * A wallet without a phrase here (connected through Qwalla's in-app browser or the RougeChain
+ * extension) uses the injected EVM wallet's own Base account instead: read silently with
+ * eth_accounts (never a popup on load), connected on click, and sends go through the wallet's
+ * eth_sendTransaction so the key never leaves it.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Dialog, Button } from "@rougechain/ui";
@@ -31,6 +36,75 @@ import type { NetworkType } from "@rougechain/core/network";
 import { MASKED_AMOUNT } from "./hooks";
 import { CopyText, TokenIcon } from "./parts";
 import { useQr } from "./ReceiveDialog";
+import { WrongChainError, ensureChain, pickInjected, toHex, useEip6963Wallets, type Eip1193Provider } from "../bridge/evm";
+
+/** How a Base send is signed: locally from the phrase, or by the injected wallet (its approval). */
+export type BaseSigner = { kind: "phrase"; mnemonic: string } | { kind: "injected"; provider: Eip1193Provider; walletName: string };
+
+function isAddress(v: unknown): v is `0x${string}` {
+  return typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v);
+}
+
+/**
+ * The injected EVM wallet's Base account (Qwalla in-app browser / RougeChain extension / other).
+ * On mount only eth_accounts is asked — it never prompts; `connect()` (a click) asks
+ * eth_requestAccounts.
+ */
+export function useInjectedBaseAccount(enabled: boolean): {
+  provider: Eip1193Provider | null;
+  walletName: string | null;
+  address: `0x${string}` | null;
+  checked: boolean;
+  connecting: boolean;
+  error: unknown;
+  connect(): Promise<void>;
+} {
+  const discovered = useEip6963Wallets();
+  const picked = enabled ? pickInjected(discovered) : undefined;
+  const provider = picked?.provider ?? null;
+  const [state, setState] = useState<{ p: Eip1193Provider; address: `0x${string}` | null } | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  useEffect(() => {
+    if (!provider) return;
+    let cancelled = false;
+    provider
+      .request({ method: "eth_accounts" })
+      .then((list) => {
+        if (!cancelled) setState({ p: provider, address: Array.isArray(list) && isAddress(list[0]) ? list[0] : null });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ p: provider, address: null });
+      });
+    const onAccounts = (...args: unknown[]) => {
+      const list = args[0];
+      setState({ p: provider, address: Array.isArray(list) && isAddress(list[0]) ? list[0] : null });
+    };
+    provider.on?.("accountsChanged", onAccounts);
+    return () => {
+      cancelled = true;
+      provider.removeListener?.("accountsChanged", onAccounts);
+    };
+  }, [provider]);
+
+  const connect = useCallback(async () => {
+    if (!provider) return;
+    setConnecting(true);
+    setError(null);
+    try {
+      const list = await provider.request({ method: "eth_requestAccounts" });
+      setState({ p: provider, address: Array.isArray(list) && isAddress(list[0]) ? list[0] : null });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setConnecting(false);
+    }
+  }, [provider]);
+
+  const current = state && state.p === provider ? state : null;
+  return { provider, walletName: picked?.name ?? null, address: current?.address ?? null, checked: !!current, connecting, error, connect };
+}
 
 /** Base address for a phrase; derivation (BIP-39 PBKDF2) runs after the first paint. */
 export function useBaseAddress(mnemonic: string | null | undefined): { address: `0x${string}` | null; ready: boolean; hasAccount: boolean } {
@@ -68,7 +142,20 @@ export function BaseWalletCard({
 }) {
   const { t } = useTranslation("wallet");
   const chain = useMemo(() => getBaseChain(network), [network]);
-  const { address, ready, hasAccount } = useBaseAddress(mnemonic);
+  const derived = useBaseAddress(mnemonic);
+  const injected = useInjectedBaseAccount(!derived.hasAccount);
+  const injectedName = injected.walletName ?? t("base.injectedFallbackName");
+  const viaInjected = !derived.hasAccount && !!injected.provider;
+  const address = derived.hasAccount ? derived.address : injected.address;
+  const hasAccount = derived.hasAccount || viaInjected;
+  const ready = derived.hasAccount ? derived.ready : injected.checked;
+  const signer: BaseSigner | null = derived.hasAccount
+    ? mnemonic
+      ? { kind: "phrase", mnemonic }
+      : null
+    : injected.provider
+      ? { kind: "injected", provider: injected.provider, walletName: injectedName }
+      : null;
   const q = useQuery({
     queryKey: ["wallet", "base-balances", chain.chainId, address],
     enabled: !!address,
@@ -97,13 +184,25 @@ export function BaseWalletCard({
           <h3>{t("base.noAccountTitle")}</h3>
           <p>{t("base.noAccountBody")}</p>
         </div>
-      ) : !ready || !address ? (
-        <p className="muted">{t("base.deriving")}</p>
+      ) : !ready ? (
+        <p className="muted">{viaInjected ? t("base.checkingWallet", { wallet: injectedName }) : t("base.deriving")}</p>
+      ) : !address ? (
+        viaInjected ? (
+          <div className="empty-state compact">
+            <p>{t("base.injectedConnectBody", { wallet: injectedName })}</p>
+            <Button variant="outline small" disabled={injected.connecting} onClick={() => void injected.connect()}>
+              {t("base.injectedConnect", { wallet: injectedName })}
+            </Button>
+            {injected.error != null && <p className="form-error" role="alert">{providerErrorMessage(injected.error, t("base.errors.connectFailed", { wallet: injectedName }), t)}</p>}
+          </div>
+        ) : (
+          <p className="muted">{t("base.deriving")}</p>
+        )
       ) : (
         <>
           <CopyText value={address} label={t("copy.baseAddress")} />
           <p className="form-hint">
-            {t("base.sameAsQwalla")}{" "}
+            {viaInjected ? t("base.viaWallet", { wallet: injectedName }) : t("base.sameAsQwalla")}{" "}
             <a className="inline-link" href={baseAddressUrl(chain, address)} target="_blank" rel="noreferrer">
               {t("base.viewOnBaseScan")}
             </a>
@@ -133,13 +232,13 @@ export function BaseWalletCard({
             </Button>
           </div>
           <BaseReceiveDialog open={dialog === "receive"} onClose={() => setDialog(null)} chain={chain} address={address} />
-          {balances && mnemonic && (
+          {balances && signer && (
             <BaseSendDialog
               open={dialog === "send"}
               onClose={() => setDialog(null)}
               chain={chain}
               address={address}
-              mnemonic={mnemonic}
+              signer={signer}
               balances={balances}
               ethPriceUsd={ethPriceUsd}
               xrgePriceUsd={xrgePriceUsd}
@@ -172,13 +271,26 @@ function BaseReceiveDialog({ open, onClose, chain, address }: { open: boolean; o
 
 type Step = "form" | "review" | "sending" | "done";
 
-/** Base send: form → fee quote review → local sign (core) → broadcast. */
+type T = (key: string, opts?: Record<string, unknown>) => string;
+
+/** A wallet (EIP-1193) error as text: user rejection (4001) in the site's words, else its message. */
+function providerErrorMessage(e: unknown, fallback: string, t: T): string {
+  if ((e as { code?: unknown } | null)?.code === 4001) return t("base.errors.rejected");
+  if (e instanceof Error && e.message) return e.message;
+  const m = (e as { message?: unknown } | null)?.message;
+  return typeof m === "string" && m ? m : fallback;
+}
+
+/**
+ * Base send: form → fee quote review → local sign (core) → broadcast; or, for an injected wallet,
+ * the same call handed to its eth_sendTransaction (chain checked / switched first).
+ */
 export function BaseSendDialog({
   open,
   onClose,
   chain,
   address,
-  mnemonic,
+  signer,
   balances,
   ethPriceUsd,
   xrgePriceUsd,
@@ -188,8 +300,8 @@ export function BaseSendDialog({
   onClose: () => void;
   chain: BaseChainInfo;
   address: `0x${string}`;
-  /** Read only at signing time; never stored or logged. */
-  mnemonic: string;
+  /** Phrase: read only at signing time; never stored or logged. Injected: the wallet signs. */
+  signer: BaseSigner;
   balances: BaseBalance[];
   ethPriceUsd: number | null;
   xrgePriceUsd: number | null;
@@ -272,17 +384,40 @@ export function BaseSendDialog({
     }
   };
 
+  const injected = signer.kind === "injected" ? signer : null;
+  // A phrase send needs the quote (it signs those exact fees); an injected wallet can price it itself.
+  const canSend = units != null && !gasShort && (!!fee || !!injected);
+
   const send = async () => {
-    if (!fee || units == null || gasShort) return;
+    if (!canSend || units == null) return;
     setStep("sending");
     setError(null);
     try {
-      const h = await signAndSendBase({ chain, mnemonic, from: address, call: buildSendCall(asset, recipient, units), fee });
+      const call = buildSendCall(asset, recipient, units);
+      let h: Hex;
+      if (signer.kind === "phrase") {
+        h = await signAndSendBase({ chain, mnemonic: signer.mnemonic, from: address, call, fee: fee! });
+      } else {
+        await ensureChain(signer.provider, chain.chainId);
+        const tx: Record<string, string> = { from: address, to: call.to, value: toHex(call.value), data: call.data };
+        if (fee) {
+          tx.gas = toHex(fee.gasLimit);
+          tx.maxFeePerGas = toHex(fee.maxFeePerGas);
+          tx.maxPriorityFeePerGas = toHex(fee.maxPriorityFeePerGas);
+        }
+        const r = await signer.provider.request({ method: "eth_sendTransaction", params: [tx] });
+        if (typeof r !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(r)) throw new Error(t("base.errors.noHash", { wallet: signer.walletName }));
+        h = r as Hex;
+      }
       setHash(h);
       setStep("done");
       onSent?.(h);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(
+        e instanceof WrongChainError
+          ? t("base.errors.wrongChain", { wallet: injected?.walletName ?? "", actual: e.actual ?? "?", expected: e.expected, chain: chain.name })
+          : providerErrorMessage(e, String(e), t),
+      );
       setStep("review");
     }
   };
@@ -376,13 +511,26 @@ export function BaseSendDialog({
           </dl>
           {gasShort && <p className="form-error">{t("base.errors.feeShort")}</p>}
           {error && <p className="form-error">{error}</p>}
-          <p className="form-hint">{t("base.signedLocally")}</p>
+          {injected ? (
+            <p className="form-hint">
+              {t("base.approveInWallet", { wallet: injected.walletName })}
+              {!fee && ` ${t("base.walletSetsFee", { wallet: injected.walletName })}`}
+            </p>
+          ) : (
+            <p className="form-hint">{t("base.signedLocally")}</p>
+          )}
           <div className="actions">
             <Button variant="outline" onClick={() => setStep("form")} disabled={step === "sending"}>
               {t("send.back")}
             </Button>
-            <Button onClick={send} disabled={!fee || gasShort || step === "sending"}>
-              {step === "sending" ? t("base.sending") : t("base.signAndSend")}
+            <Button onClick={send} disabled={!canSend || step === "sending"}>
+              {step === "sending"
+                ? injected
+                  ? t("base.waitingWallet", { wallet: injected.walletName })
+                  : t("base.sending")
+                : injected
+                  ? t("base.confirmInWallet", { wallet: injected.walletName })
+                  : t("base.signAndSend")}
             </Button>
           </div>
         </div>
