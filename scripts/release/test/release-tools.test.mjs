@@ -642,14 +642,16 @@ describe('repository state', () => {
       assert.match(r.stdout, /VERIFIED|UNSIGNED/);
     }
   });
-  it('the committed manifests (signed before the `installer` field existed) are untouched by the schema change', () => {
+  it('the committed manifests are schema-valid and the serialiser reproduces their exact (signed) bytes', () => {
     for (const net of ['mainnet', 'testnet']) {
       const file = join(REPO, 'releases', `manifest-${net}.json`);
       const bytes = readFileSync(file);
       const m = parseManifestBytes(bytes);
       assert.deepEqual(validateManifest(m), [], net);
-      assert.ok(!('installer' in m), `${net}: 1.6.0 has no installer entry`);
-      // the serialiser still writes exactly these bytes: nothing was added to manifests without the field
+      // `installer` is optional: absent in 1.6.0, present from 1.6.1 — never null
+      if ('installer' in m) assert.ok(m.installer && typeof m.installer.sha256 === 'string', `${net}: installer entry is complete`);
+      // the serialiser writes exactly these bytes, with or without the optional field — a
+      // re-serialised manifest keeps its signatures
       assert.equal(serializeManifest(m), bytes.toString('utf8'), net);
     }
   });
