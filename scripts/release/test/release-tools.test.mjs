@@ -9,7 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { decryptKeyFile, encryptKeyFile, generateKeys, signBytes } from '../lib/keys.mjs';
-import { validateManifest } from '../lib/manifest.mjs';
+import { parseManifestBytes, serializeManifest, validateManifest } from '../lib/manifest.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS = resolve(HERE, '..');
@@ -466,36 +466,171 @@ describe('cli in a signed release', () => {
 });
 
 describe('installer key embedding', () => {
-  const fakeInstaller = (value) => {
+  const PLACEHOLDER = 'PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED';
+  const fakeInstaller = (ed, ml = PLACEHOLDER, { version = '2.1.0', mlLine = true } = {}) => {
     const p = join(dir, `installer-${Math.random().toString(36).slice(2)}.sh`);
-    writeFileSync(p, `#!/usr/bin/env bash\nRELEASE_ED25519_PUBKEY_B64="${value}"\necho hi\n`);
+    writeFileSync(
+      p,
+      `#!/usr/bin/env bash\nINSTALLER_VERSION="${version}"\nRELEASE_ED25519_PUBKEY_B64="${ed}"\n${mlLine ? `RELEASE_MLDSA65_PUBKEY_HEX="${ml}"\n` : ''}echo hi\n`,
+    );
     return p;
   };
-  it('embeds the committed key, is idempotent, and needs --rotate to replace a real key', () => {
-    const inst = fakeInstaller('PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED');
-    const key = join(keysDir, 'release-ed25519.pub.pem');
-    const r = run('embed-installer-key.mjs', ['--key', key, '--installer', inst]);
+  const pub = () => JSON.parse(readFileSync(keyFile, 'utf8')).public;
+
+  it('embeds BOTH committed keys, is idempotent, and needs --rotate to replace a real key', () => {
+    const inst = fakeInstaller(PLACEHOLDER);
+    const args = ['--key', join(keysDir, 'release-ed25519.pub.pem'), '--mldsa-key', join(keysDir, 'release-mldsa65.pub'), '--installer', inst];
+    const r = run('embed-installer-key.mjs', args);
     assert.equal(r.status, 0, out(r));
-    const b64 = JSON.parse(readFileSync(keyFile, 'utf8')).public.ed25519_raw_b64;
-    assert.ok(readFileSync(inst, 'utf8').includes(`RELEASE_ED25519_PUBKEY_B64="${b64}"`));
-    assert.equal(run('embed-installer-key.mjs', ['--key', key, '--installer', inst]).status, 0);
-    const otherKey = join(dir, 'other-keys', 'release-ed25519.pub.pem');
-    assert.notEqual(run('embed-installer-key.mjs', ['--key', otherKey, '--installer', inst]).status, 0);
-    assert.equal(run('embed-installer-key.mjs', ['--key', otherKey, '--installer', inst, '--rotate']).status, 0);
+    const text = readFileSync(inst, 'utf8');
+    assert.ok(text.includes(`RELEASE_ED25519_PUBKEY_B64="${pub().ed25519_raw_b64}"`));
+    assert.ok(text.includes(`RELEASE_MLDSA65_PUBKEY_HEX="${pub().mldsa65_hex}"`));
+    assert.equal(run('embed-installer-key.mjs', args).status, 0);
+    assert.equal(readFileSync(inst, 'utf8'), text, 'a second run changes nothing');
+    const other = ['--key', join(dir, 'other-keys', 'release-ed25519.pub.pem'), '--mldsa-key', join(dir, 'other-keys', 'release-mldsa65.pub'), '--installer', inst];
+    assert.notEqual(run('embed-installer-key.mjs', other).status, 0);
+    assert.equal(readFileSync(inst, 'utf8'), text, 'a refused rotation changes nothing');
+    assert.equal(run('embed-installer-key.mjs', [...other, '--rotate']).status, 0);
+    assert.ok(!readFileSync(inst, 'utf8').includes(pub().mldsa65_hex));
   });
-  it('verify --check-installer ties the embedded key to the committed key', () => {
+  it('never rotates one key without the other', () => {
+    // Ed25519 already the committed one, ML-DSA-65 a different real key: without --rotate nothing changes.
+    const inst = fakeInstaller(pub().ed25519_raw_b64, 'ab'.repeat(1952));
+    const before = readFileSync(inst, 'utf8');
+    const r = run('embed-installer-key.mjs', ['--key', join(keysDir, 'release-ed25519.pub.pem'), '--mldsa-key', join(keysDir, 'release-mldsa65.pub'), '--installer', inst]);
+    assert.notEqual(r.status, 0);
+    assert.match(out(r), /different ML-DSA-65 release key/);
+    assert.equal(readFileSync(inst, 'utf8'), before);
+  });
+  it('refuses an installer without the ML-DSA-65 key line', () => {
+    const inst = fakeInstaller(PLACEHOLDER, PLACEHOLDER, { mlLine: false });
+    const r = run('embed-installer-key.mjs', ['--key', join(keysDir, 'release-ed25519.pub.pem'), '--mldsa-key', join(keysDir, 'release-mldsa65.pub'), '--installer', inst]);
+    assert.notEqual(r.status, 0);
+    assert.match(out(r), /RELEASE_MLDSA65_PUBKEY_HEX/);
+  });
+  it('verify --check-installer ties BOTH embedded keys to the committed keys', () => {
     const { manifest } = freshRelease('check-installer');
-    const b64 = JSON.parse(readFileSync(keyFile, 'utf8')).public.ed25519_raw_b64;
-    assert.equal(verify(manifest, ['--check-installer', fakeInstaller(b64)]).status, 0);
-    assert.equal(verify(manifest, ['--check-installer', fakeInstaller('PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED')]).status, 1);
-    assert.equal(verify(manifest, ['--check-installer', fakeInstaller(Buffer.alloc(32, 9).toString('base64'))]).status, 1);
-    // keys not provisioned: only the placeholder is acceptable
+    const { ed25519_raw_b64: b64, mldsa65_hex: hex } = pub();
+    assert.equal(verify(manifest, ['--check-installer', fakeInstaller(b64, hex)]).status, 0);
+    assert.equal(verify(manifest, ['--check-installer', fakeInstaller(PLACEHOLDER, hex)]).status, 1);
+    assert.equal(verify(manifest, ['--check-installer', fakeInstaller(Buffer.alloc(32, 9).toString('base64'), hex)]).status, 1);
+    const r = verify(manifest, ['--check-installer', fakeInstaller(b64, PLACEHOLDER)]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /embedded ML-DSA-65 key does not match/);
+    assert.equal(verify(manifest, ['--check-installer', fakeInstaller(b64, 'cd'.repeat(1952))]).status, 1);
+    assert.equal(verify(manifest, ['--check-installer', fakeInstaller(b64, hex, { mlLine: false })]).status, 1);
+    // keys not provisioned: only the placeholders are acceptable
     const empty = join(dir, 'no-keys-2');
     mkdirSync(empty);
     const unsigned = freshRelease('check-installer-unsigned', { sign: false });
     const v = (inst) => run('verify-manifest.mjs', ['--keys-dir', empty, '--allow-unsigned', '--check-installer', inst, unsigned.manifest]);
-    assert.equal(v(fakeInstaller('PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED')).status, 0);
+    assert.equal(v(fakeInstaller(PLACEHOLDER)).status, 0);
     assert.equal(v(fakeInstaller(b64)).status, 1);
+    assert.equal(v(fakeInstaller(PLACEHOLDER, hex)).status, 1);
+  });
+
+  describe('the optional `installer` manifest entry', () => {
+    const makeArgs = (manifest, extra = []) => [
+      '--network', 'mainnet', '--version', '9.9.9', '--released', '2026-10-01',
+      '--binary', binary, '--source-commit', '03613ef', '--genesis', genesis, '--cli', cli,
+      '--activation', 'token_minting=235', '--out', manifest, ...extra,
+    ];
+    const realKeys = () => fakeInstaller(pub().ed25519_raw_b64, pub().mldsa65_hex, { version: '2.3.4' });
+    const fresh = (name) => {
+      const d = join(dir, name);
+      mkdirSync(d);
+      return join(d, 'manifest-mainnet.json');
+    };
+
+    it('make-manifest --installer records name, sha256 and size; the release signs and verifies', () => {
+      const inst = realKeys();
+      const manifest = fresh('ins-ok');
+      const r = run('make-manifest.mjs', makeArgs(manifest, ['--installer', inst, '--installer-mirror', 'https://github.com/cyberdreadx/rougechain-node/releases/download/v9.9.9/x.sh']));
+      assert.equal(r.status, 0, out(r));
+      const m = JSON.parse(readFileSync(manifest, 'utf8'));
+      assert.deepEqual(validateManifest(m), []);
+      assert.equal(m.installer.size, statSync(inst).size);
+      assert.match(m.installer.sha256, /^[0-9a-f]{64}$/);
+      assert.equal(m.installer.name, `install-validator-2.3.4-${m.installer.sha256.slice(0, 8)}.sh`);
+      assert.equal(m.installer.url, `https://api.rougechain.io/releases/${m.installer.name}`);
+      assert.equal(m.installer.mirrors.length, 1);
+      const keys = Object.keys(m);
+      assert.equal(keys.indexOf('installer'), keys.indexOf('genesis') + 1, 'installer follows genesis');
+      assert.equal(m.schema, 1, 'still schema 1: the field is an optional addition');
+      assert.equal(run('sign-manifest.mjs', ['--key', keyFile, '--yes', manifest]).status, 0);
+      const v = verify(manifest, ['--installer', inst, '--check-installer', inst]);
+      assert.equal(v.status, 0, out(v));
+      assert.match(v.stdout, /installer \/ updater\s+install-validator-2\.3\.4-/);
+      // a different file under --installer is caught
+      const other = realKeys();
+      writeFileSync(other, readFileSync(other, 'utf8') + '# changed\n');
+      const bad = verify(manifest, ['--installer', other]);
+      assert.equal(bad.status, 1);
+      assert.match(bad.stderr, /installer: (size|sha256)/);
+      // changing the installer entry of a signed manifest breaks both signatures
+      const t = JSON.parse(readFileSync(manifest, 'utf8'));
+      t.installer.sha256 = 'f'.repeat(64);
+      writeFileSync(manifest, serializeManifest(t));
+      const tampered = verify(manifest);
+      assert.equal(tampered.status, 1);
+      assert.equal((tampered.stderr.match(/does NOT verify/g) || []).length, 2);
+    });
+    it('a manifest without the entry stays valid; verify --installer then fails', () => {
+      const { manifest } = freshRelease('ins-absent');
+      const m = JSON.parse(readFileSync(manifest, 'utf8'));
+      assert.ok(!('installer' in m));
+      assert.equal(verify(manifest).status, 0);
+      const r = verify(manifest, ['--installer', realKeys()]);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /manifest has no installer entry/);
+    });
+    it('schema: installer must be a complete file entry when present', () => {
+      const { manifest } = freshRelease('ins-schema', { sign: false });
+      const base = JSON.parse(readFileSync(manifest, 'utf8'));
+      const entry = { name: 'install-validator-2.1.0.sh', url: 'https://api.rougechain.io/releases/install-validator-2.1.0.sh', mirrors: [], sha256: 'a'.repeat(64), size: 10 };
+      assert.deepEqual(validateManifest({ ...base, installer: entry }), []);
+      assert.match(validateManifest({ ...base, installer: null }).join('\n'), /installer: must be an object/);
+      assert.match(validateManifest({ ...base, installer: { ...entry, run: 'x' } }).join('\n'), /installer\.run: unknown field/);
+      assert.match(validateManifest({ ...base, installer: { ...entry, sha256: 'A'.repeat(64) } }).join('\n'), /installer\.sha256/);
+      assert.match(validateManifest({ ...base, installer: { ...entry, url: 'http://example.com/x.sh' } }).join('\n'), /installer\.url: must be an https/);
+      assert.match(validateManifest({ ...base, installer: { ...entry, name: base.binary.name } }).join('\n'), /installer\.name: must differ from binary\.name/);
+      const { sha256: _omit, ...noSha } = entry;
+      assert.match(validateManifest({ ...base, installer: noSha }).join('\n'), /installer\.sha256: missing/);
+      assert.match(validateManifest({ ...base, updater: entry }).join('\n'), /updater: unknown field/);
+    });
+    it('make-manifest refuses an installer that is not provisioned, too old, or not an installer', () => {
+      const cases = [
+        [fakeInstaller(PLACEHOLDER, pub().mldsa65_hex), [], /Ed25519 release key is still the placeholder/],
+        [fakeInstaller(pub().ed25519_raw_b64, PLACEHOLDER), [], /ML-DSA-65 release key is still the placeholder/],
+        [fakeInstaller(pub().ed25519_raw_b64, pub().mldsa65_hex, { version: '1.9.0' }), [], /older than --min-installer-version 2\.0\.0/],
+        [fakeInstaller(pub().ed25519_raw_b64, pub().mldsa65_hex, { version: '2.1.0' }), ['--min-installer-version', '2.2.0'], /older than --min-installer-version 2\.2\.0/],
+        [binary, [], /no INSTALLER_VERSION/],
+        [join(dir, 'does-not-exist.sh'), [], /not a file/],
+      ];
+      cases.forEach(([inst, extra, re], n) => {
+        const manifest = fresh(`ins-refuse-${n}`);
+        const r = run('make-manifest.mjs', makeArgs(manifest, ['--installer', inst, ...extra]));
+        assert.notEqual(r.status, 0, `case ${n}`);
+        assert.match(out(r), re, `case ${n}`);
+        assert.ok(!existsSync(manifest), `case ${n}: no manifest written`);
+      });
+      const manifest = fresh('ins-refuse-name');
+      const r = run('make-manifest.mjs', makeArgs(manifest, ['--installer-name', 'x.sh']));
+      assert.notEqual(r.status, 0);
+      assert.match(out(r), /need --installer/);
+    });
+    it('verify --installer rejects an installer older than min_installer_version', () => {
+      const inst = fakeInstaller(pub().ed25519_raw_b64, pub().mldsa65_hex, { version: '2.5.0' });
+      const manifest = fresh('ins-min');
+      assert.equal(run('make-manifest.mjs', makeArgs(manifest, ['--installer', inst, '--min-installer-version', '2.5.0'])).status, 0);
+      const m = JSON.parse(readFileSync(manifest, 'utf8'));
+      m.min_installer_version = '2.6.0';
+      writeFileSync(manifest, serializeManifest(m));
+      assert.equal(run('sign-manifest.mjs', ['--key', keyFile, '--yes', manifest]).status, 0);
+      const r = verify(manifest, ['--installer', inst]);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /older than min_installer_version 2\.6\.0/);
+    });
   });
 });
 
@@ -506,6 +641,24 @@ describe('repository state', () => {
       assert.equal(r.status, 0, out(r));
       assert.match(r.stdout, /VERIFIED|UNSIGNED/);
     }
+  });
+  it('the committed manifests (signed before the `installer` field existed) are untouched by the schema change', () => {
+    for (const net of ['mainnet', 'testnet']) {
+      const file = join(REPO, 'releases', `manifest-${net}.json`);
+      const bytes = readFileSync(file);
+      const m = parseManifestBytes(bytes);
+      assert.deepEqual(validateManifest(m), [], net);
+      assert.ok(!('installer' in m), `${net}: 1.6.0 has no installer entry`);
+      // the serialiser still writes exactly these bytes: nothing was added to manifests without the field
+      assert.equal(serializeManifest(m), bytes.toString('utf8'), net);
+    }
+  });
+  it('the committed installer embeds both committed release keys', () => {
+    const text = readFileSync(join(REPO, 'scripts', 'install-validator.sh'), 'utf8');
+    const hex = readFileSync(join(REPO, 'releases', 'keys', 'release-mldsa65.pub'), 'utf8').trim();
+    assert.ok(text.includes(`RELEASE_MLDSA65_PUBKEY_HEX="${hex}"`));
+    assert.equal((text.match(/^RELEASE_MLDSA65_PUBKEY_HEX=/gm) || []).length, 1);
+    assert.equal((text.match(/^RELEASE_ED25519_PUBKEY_B64=/gm) || []).length, 1);
   });
   it('lib: encrypt/decrypt round trip keeps the keys', () => {
     const keys = generateKeys();

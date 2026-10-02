@@ -201,13 +201,24 @@ release mirror mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$DOWN_URL/files/v1/
   --genesis "$FILES/genesis-mainnet.json" --genesis-url "$WEB_URL/files/missing.json" --genesis-mirror "$WEB_URL/files/genesis-mainnet.json"
 release mininst mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}" --no-cli --min-installer-version 99.0.0
 release testnet testnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" --no-genesis "${CLI1[@]}"
+# a release that names its installer/updater script in the signed manifest (the optional `installer`
+# entry), and one whose URL serves different bytes of the same size
+mkdir -p "$FILES/ins" "$FILES/insbad"
+cp "$REPO/scripts/install-validator.sh" "$FILES/ins/install-validator-test.sh"
+sed 's/^# RougeChain node \/ validator installer/# RougeChain node \/ validator installeR/' "$REPO/scripts/install-validator.sh" > "$FILES/insbad/install-validator-test.sh"
+[ "$(stat -c %s "$FILES/ins/install-validator-test.sh")" = "$(stat -c %s "$FILES/insbad/install-validator-test.sh")" ] || { echo "fixture error: tampered installer size differs" >&2; exit 1; }
+cmp -s "$FILES/ins/install-validator-test.sh" "$FILES/insbad/install-validator-test.sh" && { echo "fixture error: tampered installer is identical" >&2; exit 1; }
+release v1ins mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}" "${CLI1[@]}" \
+  --installer "$FILES/ins/install-validator-test.sh" --installer-name install-validator-test.sh --installer-url "$WEB_URL/files/ins/install-validator-test.sh"
+release insbad mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}" "${CLI1[@]}" \
+  --installer "$FILES/ins/install-validator-test.sh" --installer-name install-validator-test.sh --installer-url "$WEB_URL/files/insbad/install-validator-test.sh"
 # wrongnet: a correctly signed TESTNET manifest served under the mainnet file name
 mkdir -p "$WWW/rel/wrongnet"
 cp "$WWW/rel/testnet/manifest-testnet.json" "$WWW/rel/wrongnet/$MF"
 cp "$WWW/rel/testnet/manifest-testnet.json.ed25519.sig" "$WWW/rel/wrongnet/$MF.ed25519.sig"
 
 # Every fixture that is meant to be validly signed must pass the real verifier (both signatures).
-for d in v1 v2 nocli badcli redirect badredirect badsha badsize badgenesis mirror mininst; do
+for d in v1 v2 nocli badcli redirect badredirect badsha badsize badgenesis mirror mininst v1ins insbad; do
   tool verify-manifest.mjs --allow-http --keys-dir "$CTX/keys" "$WWW/rel/$d/$MF"
 done
 tool verify-manifest.mjs --allow-http --keys-dir "$CTX/keys" "$WWW/rel/testnet/manifest-testnet.json"

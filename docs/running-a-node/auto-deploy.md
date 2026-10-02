@@ -1,71 +1,26 @@
-# Auto-Deploy Setup
+# Auto-deploy (retired)
 
-> **Deprecated for mainnet.** Mainnet nodes should run [signed releases](releases.md): a binary
-> whose manifest is signed by the release key and verified before it is installed
-> (`scripts/install-validator.sh`). Auto-deploy builds and runs whatever is on `main`, with no
-> signature check. This page remains for testnet and development nodes only.
+> **Retired.** The git-pull "auto-deploy" cron job (`scripts/auto-deploy.sh`: `git pull` →
+> `cargo build` → `systemctl restart` whenever `main` changed) is no longer a supported way to run
+> a node. It built and ran whatever was on `main` — no release, no signature — and restarted the
+> node at arbitrary times.
+>
+> Use **[Automatic updates](auto-update.md)** instead: nodes installed with
+> [`install-validator.sh`](releases.md) upgrade themselves from **signed releases** only, health-check
+> the node after the restart and roll back if the check fails.
 
-> ⚠️ **Never use auto-deploy on a mainnet validator.** It restarts the daemon
-> whenever `main` changes — an unattended restart while your validator is the
-> designated proposer stalls block production — and it auto-builds and runs **unreviewed
-> upstream code** (a supply-chain risk). Use it only for testnet/dev or
-> non-validating nodes, and upgrade validators deliberately (pull a reviewed tag,
-> build, restart during a quiet window).
+## If a node still runs the old cron job
 
-RougeChain daemon auto-deploys on all servers when code is pushed to `main`.
-
-## How It Works
-
-A cron job runs every 2 minutes on each server:
-1. `git fetch` checks for new commits
-2. If new commits exist: `git pull` → `cargo build --release` → `systemctl restart`
-3. If no new commits: exits silently (no build, no restart)
-4. Lock file prevents overlapping builds
-
-## Quick Setup (Per Server)
+Remove it, then move the node to signed releases:
 
 ```bash
-# 1. Make the script executable
-chmod +x /opt/quantum-vault/scripts/auto-deploy.sh
-
-# 2. Allow the deploy user to restart the service without a password
-echo "$(whoami) ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart rougechain, /usr/bin/systemctl status rougechain, /usr/bin/systemctl is-active rougechain" | sudo tee /etc/sudoers.d/rougechain-deploy
-
-# 3. Add cron job (runs every 2 minutes)
-(crontab -l 2>/dev/null; echo "*/2 * * * * /opt/quantum-vault/scripts/auto-deploy.sh >> /var/log/rougechain-deploy.log 2>&1") | crontab -
-
-# 4. Create log file
-sudo touch /var/log/rougechain-deploy.log
-sudo chown $(whoami) /var/log/rougechain-deploy.log
+crontab -l | grep -v auto-deploy | crontab -            # stop the cron job
+sudo rm -f /etc/sudoers.d/rougechain-deploy             # the passwordless-restart rule it used
 ```
 
-## Configuration
-
-Set these environment variables in crontab or `/etc/environment` to override defaults:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ROUGECHAIN_REPO` | `/opt/quantum-vault` | Path to the cloned repo |
-| `ROUGECHAIN_BRANCH` | `main` | Branch to track |
-| `ROUGECHAIN_SERVICE` | `rougechain` | systemd service name |
-
-Example with custom paths:
-```bash
-*/2 * * * * ROUGECHAIN_REPO=/home/user/quantum-vault ROUGECHAIN_SERVICE=rougechain-node /home/user/quantum-vault/scripts/auto-deploy.sh >> /var/log/rougechain-deploy.log 2>&1
-```
-
-## Monitoring
-
-```bash
-# Check recent deploys
-tail -20 /var/log/rougechain-deploy.log
-
-# Check if cron is running
-crontab -l | grep rougechain
-```
-
-## Disable Auto-Deploy
-
-```bash
-crontab -l | grep -v auto-deploy | crontab -
-```
+- A validator or full node on mainnet or testnet: follow
+  [Nodes installed from source](releases.md#nodes-installed-from-source) — it keeps the node's
+  `node-keys.json` and data and replaces the source build with a signed release and the
+  auto-updater.
+- A development node that must follow `main`: update it by hand (`git pull`, build, restart) when
+  you choose to. Do not automate it on a machine that holds a staked key.

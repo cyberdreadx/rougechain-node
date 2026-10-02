@@ -1,5 +1,12 @@
 #!/bin/bash
 # RougeChain Daemon Auto-Deploy Script
+#
+# RETIRED — do not set this up on new nodes. It builds and runs whatever is on `main`, with no
+# release and no signature check, and restarts the node at arbitrary times. Nodes installed with
+# scripts/install-validator.sh update themselves from SIGNED releases (docs/running-a-node/auto-update.md).
+# The script is kept only so that an existing cron job does not start failing unnoticed; see
+# docs/running-a-node/auto-deploy.md for how to remove it.
+#
 # Checks for new commits on main, pulls, builds, and restarts the service.
 # Run via cron every 2 minutes: */2 * * * * /path/to/auto-deploy.sh >> /var/log/rougechain-deploy.log 2>&1
 

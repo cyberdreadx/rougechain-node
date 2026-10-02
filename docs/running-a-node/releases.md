@@ -1,8 +1,9 @@
 # Signed releases
 
 Node releases are published as a prebuilt `quantum-vault-daemon` binary and the `rougechain` CLI
-(Linux x86_64), described by a **signed release manifest**. The installer and anyone verifying by hand check the same thing:
-the manifest's signature, then each file's sha256 and size against the manifest.
+(Linux x86_64), described by a **signed release manifest**. The installer, the
+[automatic updater](auto-update.md) and anyone verifying by hand check the same thing:
+the manifest's signatures, then each file's sha256 and size against the manifest.
 
 
 ## Where releases are published
@@ -13,6 +14,7 @@ the manifest's signature, then each file's sha256 and size against the manifest.
 | Node binary | `binary.url` in the manifest (`https://api.rougechain.io/releases/<name>`) | `binary.mirrors`: asset of the GitHub release `v<version>` |
 | `rougechain` CLI | `cli.url` in the manifest | `cli.mirrors`: asset of the GitHub release `v<version>` |
 | Genesis file | `genesis.url` in the manifest | `genesis.mirrors`: GitHub release asset, and `core/daemon/` in the public repository |
+| Installer / updater script (releases from 1.6.1) | `installer.url` in the manifest | `installer.mirrors`: asset of the GitHub release `v<version>` |
 | Public keys | [`releases/keys/`](https://github.com/cyberdreadx/rougechain-node/tree/main/releases/keys) in the public repository | — |
 
 `<network>` is `mainnet` or `testnet`. GitHub release assets are at
@@ -41,6 +43,7 @@ used only if the manifest's signature verifies and the file's sha256 matches the
   },
   "cli": { "name": "rougechain-03613ef", "url": "…", "mirrors": ["…"], "sha256": "…", "size": 0 },
   "genesis": { "name": "genesis-mainnet.json", "url": "…", "mirrors": ["…"], "sha256": "…", "size": 4460 },
+  "installer": { "name": "install-validator-2.1.0-1a2b3c4d.sh", "url": "…", "mirrors": ["…"], "sha256": "…", "size": 0 },
   "mandatory": true,
   "upgrade_before_height": 235,
   "activations": [ { "name": "token_minting", "height": 235 }, { "name": "contract_nft_royalty", "height": 235 } ],
@@ -61,16 +64,17 @@ used only if the manifest's signature verifies and the file's sha256 matches the
 | `binary` | object | The node (`quantum-vault-daemon`): `name`, `url` (primary), `mirrors` (array of URLs, tried in order after `url`), `sha256` (lowercase hex), `size` (bytes). |
 | `cli` | object or null | Same shape as `binary`, for the `rougechain` CLI built from the same commit. `null` when a release ships no CLI. |
 | `genesis` | object or null | Same shape as `binary`, for the genesis file the node is started with. `null` when the network runs on default parameters (testnet). |
+| `installer` | object, **optional** | Same shape as `binary`, for `install-validator.sh` — the script nodes keep as their [updater](auto-update.md). A node replaces its updater only with the file named here. The field is either absent or a complete entry (never `null`). The 1.6.0 manifests were signed before it existed and do not have it. |
 | `mandatory` | boolean | `true` if every node of the network must install this release. |
 | `upgrade_before_height` | integer or null | Install before this block height (the first activation the release introduces). |
 | `activations` | array | The network's upgrade schedule carried by this binary: `{ "name", "height" }`. Names are the `upgrade_schedule` fields of `GET /api/stats`. |
 | `notes_url` | string or null | Release / upgrade notes. |
 | `min_installer_version` | string | Oldest `install-validator.sh` that can install this release. |
 
-The example is abridged (`…`); the manifests currently in the repository still have `"cli": null`
-and no binary mirror — they are regenerated with the CLI and the GitHub mirrors before they are signed.
+The example is abridged (`…`).
 
-All URLs are `https://`. Unknown fields are not allowed in schema 1. The current manifests list the
+All URLs are `https://`. Unknown fields are not allowed in schema 1; `installer` is the one
+optional field (an addition that old installers ignore, so the schema number did not change). The current manifests list the
 full schedule in `activations` (mainnet: 49, 90, 100, 150, 150, 160, 170, 190, 235, 235) — see the
 [upgrade schedule](upgrade-schedule.md).
 
@@ -84,9 +88,12 @@ The signed object is the **manifest file itself**: both signatures are over its 
 | `manifest-<network>.json.ed25519.sig` | Ed25519 (RFC 8032) | base64 of the raw 64-byte signature |
 | `manifest-<network>.json.mldsa65.sig` | ML-DSA-65 (FIPS 204), empty context | base64 of the raw 3309-byte signature |
 
-A release must carry **both**. The installer checks the Ed25519 signature (available in the stock
-OpenSSL 3.0 of Ubuntu 22.04/24.04 and Debian 12); the ML-DSA-65 signature is checked by the
-release tooling and CI, and by hand with OpenSSL 3.5 or newer.
+A release must carry **both**, and the installer and updater refuse a manifest without a
+well-formed copy of each. They always verify the Ed25519 signature (stock OpenSSL 3.0 of Ubuntu
+22.04/24.04 and Debian 12). They verify the ML-DSA-65 signature with the installed `rougechain` CLI
+— `rougechain release verify`, CLI ≥ 1.2.0 — whenever one is installed, and refuse the release if it
+does not verify; details in [Automatic updates — trust model](auto-update.md#trust-model). The
+release tooling and CI check both, and OpenSSL 3.5 or newer can check ML-DSA-65 by hand.
 
 Public keys: `releases/keys/release-ed25519.pub.pem` (PEM) and `releases/keys/release-mldsa65.pub`
 (hex of the raw 1952-byte key). The private keys are held offline by the release owner; they are
@@ -128,7 +135,19 @@ done
 Get the public key from the Git repository (or from a copy you saved earlier), not from the same
 server that serves the manifest.
 
-**ML-DSA-65 signature** — with OpenSSL ≥ 3.5 (e.g. Debian 13):
+**ML-DSA-65 signature** — with the `rougechain` CLI (≥ 1.2.0; offline, no wallet or node needed):
+
+```bash
+curl -fsSLO $BASE/manifest-$NET.json.mldsa65.sig
+curl -fsSLO $KEYS/release-mldsa65.pub
+rougechain release verify --manifest manifest-$NET.json --sig manifest-$NET.json.mldsa65.sig --pubkey release-mldsa65.pub
+# VERIFIED: ML-DSA-65 signature of manifest-mainnet.json (release key ac449798…)     exit 0
+# exit 1 = the signature does not verify, exit 2 = a file is missing or malformed
+```
+
+The fingerprint it prints is the SHA-256 of the raw public key — compare it with the table above.
+
+or with OpenSSL ≥ 3.5 (e.g. Debian 13):
 
 ```bash
 curl -fsSLO $BASE/manifest-$NET.json.mldsa65.sig
@@ -154,16 +173,23 @@ node verify-manifest.mjs --binary /path/to/the/binary --cli /path/to/rougechain 
 [`scripts/install-validator.sh`](https://github.com/cyberdreadx/rougechain-node/blob/main/scripts/install-validator.sh)
 (Ubuntu 22.04 / 24.04, Debian 12; x86_64; run as root):
 
-1. downloads `manifest-<network>.json` and its `.ed25519.sig` from the primary, then from the
-   mirror if the primary is unreachable or serves a manifest that does not verify;
-2. verifies the signature with `openssl` against the release key **embedded in the script** — it
-   never downloads a key — and stops if no source provides a manifest that verifies;
+1. downloads `manifest-<network>.json`, its `.ed25519.sig` and its `.mldsa65.sig` from **every**
+   source (the primary and the mirror);
+2. verifies each copy's Ed25519 signature with `openssl` against the release key **embedded in the
+   script** — it never downloads a key — and, when a `rougechain` CLI with `release verify` is
+   already installed, its ML-DSA-65 signature against the embedded ML-DSA-65 key. It uses the
+   **newest** release that verifies (a stale mirror cannot hold a node back) and stops if no source
+   provides one;
 3. checks the manifest is for the requested network, and is not older than the release already
    installed (`ALLOW_DOWNGRADE=1` overrides);
-4. downloads the node binary, the `rougechain` CLI (when the manifest has one) and the genesis file
-   — primary URL, then mirrors, following redirects — and requires size and sha256 of each to match
-   the signed manifest;
-5. installs, as described below, and keeps the previous binaries as `<file>.prev`.
+4. downloads the node binary, the `rougechain` CLI (when the manifest has one), the genesis file
+   and the updater script (when the manifest names one) — primary URL, then mirrors, following
+   redirects — and requires size and sha256 of each to match the signed manifest;
+5. installs, as described below, and keeps the previous binaries as `<file>.prev`. If the
+   ML-DSA-65 signature could not be checked in step 2 (no CLI yet), it is checked now with the CLI
+   just installed, before the service is started; a release that fails is removed again;
+6. sets up [automatic updates](auto-update.md): the updater, `rougechain-update`, a systemd timer
+   and `/etc/rougechain/<network>/update.conf` (`AUTO_UPDATE=0` to opt out).
 
 It never overwrites `node-keys.json` or chain data. `--dry-run` performs steps 1–4 and changes
 nothing.
@@ -174,7 +200,8 @@ nothing.
 | Node binary | `/usr/local/bin/quantum-vault-daemon` | `/usr/local/bin/quantum-vault-daemon-testnet` |
 | CLI | `/usr/local/bin/rougechain` | `/usr/local/bin/rougechain-testnet` |
 | Data + `node-keys.json` (`DATA_DIR`) | `/var/lib/rougechain/mainnet` | `/var/lib/rougechain/testnet` |
-| Genesis, installed manifest, optional `node.env` | `/etc/rougechain/mainnet/` | `/etc/rougechain/testnet/` |
+| Genesis, installed manifest, optional `node.env`, `update.conf` | `/etc/rougechain/mainnet/` | `/etc/rougechain/testnet/` |
+| Auto-update timer | `rougechain-update.timer` | `rougechain-update-testnet.timer` |
 | API (`HOST`:`API_PORT`) | `127.0.0.1:5100` | `127.0.0.1:5101` |
 | gRPC port (`P2P_PORT`) | `4100` | `4101` |
 | Peer (`PEERS`) | `https://api.rougechain.io/api` | `https://testnet.rougechain.io/api` |
@@ -201,14 +228,20 @@ The CLI submits to the network's public node (`https://api.rougechain.io`, or
 [CLI Wallet](../advanced/cli.md).
 
 Settings: `NETWORK`, `NODE_NAME`, `PUBLIC_URL`, `VALIDATOR`, `DATA_DIR`, `API_PORT`, `P2P_PORT`,
-`HOST`, `PEERS`, `NO_START`, `ALLOW_DOWNGRADE`, `REPLACE_LEGACY_UNIT`, `RELEASE_BASE_URLS` — see the
-header of the script.
+`HOST`, `PEERS`, `AUTO_UPDATE`, `NO_START`, `ALLOW_DOWNGRADE`, `REPLACE_LEGACY_UNIT`,
+`RELEASE_BASE_URLS` — see the header of the script.
 
 ### Upgrading
 
-Re-run the installer. It verifies the new signed release, replaces the binary and the CLI, and restarts the
+**Automatic** — by default the node upgrades itself: see [Automatic updates](auto-update.md)
+(what it checks, how to make it notify-only, pin a version or turn it off, and what happens when an
+update fails). `rougechain-update status` shows where a node stands.
+
+**By hand** — re-run the installer; this always works, with auto-update on or off. It verifies the
+new signed release, replaces the binary and the CLI, and restarts the
 service (with `NO_START=1` it installs without restarting, so you can restart at a time you
-choose: `systemctl restart rougechain-validator`). To go back to the previous binary:
+choose: `systemctl restart rougechain-validator`). Unlike the updater, a manual run does not
+health-check the node afterwards or roll back. To go back to the previous binary:
 
 ```bash
 sudo systemctl stop rougechain-validator
@@ -216,7 +249,9 @@ sudo cp -p /usr/local/bin/quantum-vault-daemon.prev /usr/local/bin/quantum-vault
 sudo systemctl start rougechain-validator
 ```
 
-There is no automatic updater: upgrades happen when you run the installer.
+A node installed with installer 2.0.0 (before auto-update existed) has no updater: re-run the
+installer once to get it. Whether that run can install the updater depends on the release —
+see [where the updater comes from](auto-update.md#where-the-updater-comes-from-bootstrap).
 
 ### Nodes installed from source
 

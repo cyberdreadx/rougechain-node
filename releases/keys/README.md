@@ -3,9 +3,11 @@
 **Status: provisioned 2026-10-02.** This directory holds the two public keys every release is
 signed with:
 
-- `release-ed25519.pub.pem` — checked by `scripts/install-validator.sh` (the same key is embedded in
-  the installer) with stock OpenSSL,
-- `release-mldsa65.pub` — checked by `scripts/release/verify-manifest.mjs`.
+- `release-ed25519.pub.pem` — checked by `scripts/install-validator.sh` (installer and
+  auto-updater; the same key is embedded in the script) with stock OpenSSL,
+- `release-mldsa65.pub` — checked on nodes by the installed `rougechain release verify`
+  (CLI ≥ 1.2.0) against the copy embedded in the same script, and by
+  `scripts/release/verify-manifest.mjs`.
 
 The private keys exist only in a passphrase-encrypted file on the release owner's own machine.
 `releases/manifest-*.json` are signed (`.ed25519.sig` + `.mldsa65.sig`); `verify-manifest.mjs` must
@@ -43,8 +45,10 @@ tr -d '\n' < release-mldsa65.pub | xxd -r -p | sha256sum
 ```
 
 Compare them with the fingerprints published on <https://docs.rougechain.io/running-a-node/releases.html>
-and with the key embedded in `scripts/install-validator.sh` (`RELEASE_ED25519_PUBKEY_B64`, the raw
-Ed25519 key in base64).
+and with the keys embedded in `scripts/install-validator.sh` (`RELEASE_ED25519_PUBKEY_B64`, the raw
+Ed25519 key in base64, and `RELEASE_MLDSA65_PUBKEY_HEX`, the content of `release-mldsa65.pub`).
+`node scripts/release/verify-manifest.mjs --check-installer scripts/install-validator.sh <manifest>`
+checks both.
 
 ## Provisioning (release owner, once)
 

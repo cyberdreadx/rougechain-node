@@ -216,6 +216,26 @@ rougechain rpc eth_getBalance '["<pubkey-hex>"]'
 rougechain rpc rouge_getStats
 ```
 
+## Verifying a release (offline)
+
+Since CLI 1.2.0, `release verify` checks the **ML-DSA-65** signature of a
+[signed release manifest](../running-a-node/releases.md) — no wallet, no node, no network:
+
+```bash
+rougechain release verify \
+  --manifest manifest-mainnet.json \
+  --sig manifest-mainnet.json.mldsa65.sig \
+  --pubkey release-mldsa65.pub
+# VERIFIED: ML-DSA-65 signature of manifest-mainnet.json (release key ac449798…)
+```
+
+The signature covers the exact bytes of the manifest file; the signature file is base64 of the raw
+3309-byte signature and the key file is the hex of the raw 1952-byte public key
+(`releases/keys/release-mldsa65.pub`). Exit status: `0` verified, `1` the signature does not
+verify, `2` a file is missing or malformed. The printed fingerprint is the SHA-256 of the raw
+public key. This is the check a node's [automatic updater](../running-a-node/auto-update.md) runs
+before it installs a release.
+
 ## Signed Requests
 
 Transfers, staking, the faucet, names, mail, messenger and social use v2 signed requests — the same
@@ -283,3 +303,4 @@ request.
 | `like` | Toggle like |
 | `repost` | Toggle repost |
 | `rpc` | Raw JSON-RPC call |
+| `release verify` | Verify the ML-DSA-65 signature of a release manifest (offline) |
