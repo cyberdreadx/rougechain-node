@@ -348,8 +348,7 @@ function ValidateVisual() {
         <div className="validator-command-strip mono">
           <span className="terminal-prompt">$</span>
           <code>
-            PUBLIC_URL=https://node.example.com bash &lt;(curl -sSL
-            .../install-validator.sh)
+            curl -sSL .../install-validator.sh | sudo bash
           </code>
         </div>
       </div>

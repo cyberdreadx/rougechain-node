@@ -268,7 +268,7 @@
       "steps": {
         "install": {
           "title": "安装节点",
-          "detail": "依赖、构建、systemd 服务"
+          "detail": "签名发行版、systemd 服务"
         },
         "stake": {
           "title": "充值并质押",

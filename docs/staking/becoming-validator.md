@@ -4,19 +4,71 @@ Validators propose blocks and earn fees on RougeChain. This guide targets **main
 
 ## Quick install (one command)
 
-On a fresh Linux server (a ~$5/mo VPS is plenty), this installs dependencies, builds the node, sets up a `systemd` service, and starts syncing:
+On a fresh **Ubuntu 22.04 / 24.04 or Debian 12** server (x86_64; a ~$5/mo VPS is plenty), the
+installer downloads the current **signed release** of the node — nothing is compiled — sets it up as
+a `systemd` service under a dedicated user, and starts syncing:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh | bash
+curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh | sudo bash
 ```
 
-To be reachable by peers (so your votes and blocks propagate), pass a public URL that peers can reach over HTTPS (peers talk to each other over the REST API; there is no separate P2P port):
+> **Status (2026-10-01):** the release signing key is still being provisioned. Until it is embedded
+> in the installer, the script stops with a "no release signing key yet" message and changes
+> nothing; use the manual walkthrough below in the meantime. See [Signed releases](../running-a-node/releases.md).
+
+**What it verifies.** The installer fetches the release manifest and its Ed25519 signature
+(`api.rougechain.io`, falling back to the GitHub mirror), checks the signature with `openssl`
+against the release public key that is **embedded in the script**, and only then downloads the
+binary and checks its size and sha256 against the signed manifest. If anything does not match, it
+stops and installs nothing. To check a release yourself, or to see what the script would do
+without changing anything:
 
 ```bash
-PUBLIC_URL=https://node.example.com bash <(curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh)
+curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh | bash -s -- --dry-run
 ```
 
-When it finishes it prints your validator address and the exact fund → stake → verify steps. You still need to **fund and stake ≥ 10,000 XRGE** (step 3 below); once you're staked and in the active set, the node votes on blocks automatically and proposes whenever it is the [designated proposer](#proposer-selection). Re-run the command any time to upgrade. The rest of this page is the manual walkthrough if you'd rather do each step yourself.
+(`--dry-run` needs no root, but `curl`, `openssl` and `jq` must already be installed.) Verifying a
+release by hand with `openssl` is described in [Signed releases](../running-a-node/releases.md#verify-a-release-by-hand).
+
+**What it sets up.** Node `/usr/local/bin/quantum-vault-daemon` and the CLI
+`/usr/local/bin/rougechain`, both from the signed release; service `rougechain-validator`
+running as the system user `rougechain`; data and `node-keys.json` in `/var/lib/rougechain/mainnet`
+(key file mode `0600`); API on `127.0.0.1:5100`. It generates a node key only if there is none and
+never overwrites an existing key or chain data. Settings are environment variables placed after
+`sudo`, for example `NODE_NAME=my-validator`, `NETWORK=testnet`, `NO_START=1` — the full list is in
+[Signed releases](../running-a-node/releases.md#what-the-installer-does).
+
+**It installs a full node, not yet a validator.** Block production (`--mine`) stays off until you
+ask for it, because a node should not claim to produce blocks with a key that is not staked:
+
+1. Run the installer (above). **Back up `/var/lib/rougechain/mainnet/node-keys.json` offline.**
+2. **Fund and stake ≥ 10,000 XRGE** from that key with the installed `rougechain` CLI. The key
+   file is readable only by the `rougechain` user, so run the CLI as that user:
+
+   ```bash
+   K=/var/lib/rougechain/mainnet/node-keys.json
+   sudo -u rougechain rougechain --node-keys $K whoami            # your validator address
+   # send ≥ 10,000 XRGE (+ 1 XRGE fee) to that address from your main wallet, then:
+   sudo -u rougechain rougechain --node-keys $K stake 10000
+   sudo -u rougechain rougechain --node-keys $K validator-status
+   ```
+
+   (Without `sudo`, as root: `runuser -u rougechain -- rougechain …`.) Details of each command are
+   in [Step 2](#step-2--point-the-cli-at-your-nodes-key) and [Step 3](#step-3--fund-and-stake) below.
+3. Once `validator-status` shows `✓ Staked` and `✓ In active set`, turn on block production and
+   give peers a URL they can reach over HTTPS (peers talk to each other over the REST API; there is
+   no separate P2P port):
+
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh \
+     | sudo VALIDATOR=1 PUBLIC_URL=https://node.example.com bash
+   ```
+
+The node then votes on blocks automatically and proposes whenever it is the
+[designated proposer](#proposer-selection). **To upgrade, re-run the installer**: it verifies the
+new signed release, keeps the previous binary as `quantum-vault-daemon.prev`, and restarts the
+service (add `NO_START=1` to restart later yourself). The rest of this page is the manual
+walkthrough if you would rather do each step yourself.
 
 ## The one thing you must understand
 
@@ -75,7 +127,7 @@ No key copying needed — the CLI signs **directly** from your node's identity f
 rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json whoami
 ```
 
-This prints your validator's public key + `rouge1…` address — confirm it matches the key the daemon logged in Step 1. Every command below uses the same `--node-keys` flag. (The CLI defaults to the mainnet RPC.)
+This prints your validator's public key + `rouge1…` address — confirm it matches the key the daemon logged in Step 1. Every command below uses the same `--node-keys` flag. The CLI talks to the public mainnet node (`https://api.rougechain.io`) unless you pass `--network testnet` or `--rpc <your node>`; `stake`, `unstake` and `transfer` are submitted through the node's signed `/api/v2` routes, so they work from any machine. This needs a CLI built from the current source (or the one the installer provides): older builds default to a retired host and post to a route the public node refuses.
 
 ## Step 3 — Fund and stake
 
@@ -143,4 +195,8 @@ Since mainnet height 100 (Release 1), each block has exactly one **designated pr
 ## Testing on testnet first
 
 Practice the whole flow with no real value: swap the mainnet flags for testnet —
-`--chain-id rougechain-devnet-1`, `--peers https://testnet.rougechain.io/api`, `--data-dir ~/.quantum-vault/testnet` — point the CLI at it with `rougechain --rpc https://testnet.rougechain.io/api …`, and use the wallet **faucet** to get test XRGE. Everything else is identical.
+`--chain-id rougechain-devnet-1`, `--peers https://testnet.rougechain.io/api`, `--data-dir ~/.quantum-vault/testnet` — point the CLI at it with `rougechain --network testnet …`, and get test XRGE from the faucet (`rougechain --network testnet --node-keys <path> faucet`, 10,000 per key per 24 h — staking 10,000 needs 10,001 with the fee, so top up with a transfer from a second key or the wallet). Everything else is identical.
+
+With the installer: `curl -sSL …/install-validator.sh | sudo NETWORK=testnet bash` (service
+`rougechain-validator-testnet`, data in `/var/lib/rougechain/testnet`, API on `127.0.0.1:5101`, CLI
+installed as `rougechain-testnet`; run it as `sudo -u rougechain rougechain-testnet --network testnet --node-keys /var/lib/rougechain/testnet/node-keys.json …`).

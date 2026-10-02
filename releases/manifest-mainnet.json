@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "network": "mainnet",
+  "chain_id": "rougechain-mainnet-1",
+  "version": "1.6.0",
+  "released": "2026-10-01",
+  "source_commit": "03613ef",
+  "public_commit": "e048bf1",
+  "binary": {
+    "name": "quantum-vault-daemon-mint-royalty-03613ef",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-mint-royalty-03613ef",
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/quantum-vault-daemon-mint-royalty-03613ef"
+    ],
+    "sha256": "673bf7b1a469b7f9937b17228faab1e81ae48fb2a90aa32b2fd1b7fcc9cc2984",
+    "size": 28463856
+  },
+  "cli": {
+    "name": "rougechain-1725150",
+    "url": "https://api.rougechain.io/releases/rougechain-1725150",
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/rougechain-1725150"
+    ],
+    "sha256": "ac7ca208881408651461fd9a118fc1b194a4dc78338c1fab2c13135b7ba349fd",
+    "size": 5234312
+  },
+  "genesis": {
+    "name": "genesis-mainnet.json",
+    "url": "https://api.rougechain.io/releases/genesis-mainnet.json",
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/genesis-mainnet.json",
+      "https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/core/daemon/genesis-mainnet.json"
+    ],
+    "sha256": "28459ca0f9dce287f7eeac7148df252485a30ae7f42b4d63a192fc8f2eec101c",
+    "size": 4460
+  },
+  "mandatory": true,
+  "upgrade_before_height": 235,
+  "activations": [
+    {
+      "name": "canonical_ledger_fork",
+      "height": 49
+    },
+    {
+      "name": "tx_uniqueness",
+      "height": 90
+    },
+    {
+      "name": "proposer_selection",
+      "height": 100
+    },
+    {
+      "name": "finality_v2",
+      "height": 150
+    },
+    {
+      "name": "game_ready",
+      "height": 150
+    },
+    {
+      "name": "game_ready_2",
+      "height": 160
+    },
+    {
+      "name": "game_ready_3",
+      "height": 170
+    },
+    {
+      "name": "payable_calls",
+      "height": 190
+    },
+    {
+      "name": "token_minting",
+      "height": 235
+    },
+    {
+      "name": "contract_nft_royalty",
+      "height": 235
+    }
+  ],
+  "notes_url": "https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-10.html",
+  "min_installer_version": "2.0.0"
+}

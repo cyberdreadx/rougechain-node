@@ -268,7 +268,7 @@
       "steps": {
         "install": {
           "title": "Install node",
-          "detail": "Dependencies, build, systemd service"
+          "detail": "Signed release, systemd service"
         },
         "stake": {
           "title": "Fund & stake",

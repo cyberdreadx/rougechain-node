@@ -1,12 +1,18 @@
 {
   "_doc": "Public release facts shown on /status. Edit and redeploy the site; no code change needed.",
-  "updated": "2026-09-24",
-  "node": { "version": "v1.4.0", "tag": "https://github.com/cyberdreadx/rougechain-node/releases/tag/v1.4.0", "binarySha256": "d50f7e5d34d03200f6efc45c8b7b63c61079e7f9d5b5c70f5b3c3c3544105eba", "sourceCommit": "203507e", "mandatory": true, "notes": "https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-09.html" },
+  "updated": "2026-10-01",
+  "node": { "version": "v1.6.0", "tag": "https://github.com/cyberdreadx/rougechain-node/blob/main/releases/manifest-mainnet.json", "binarySha256": "673bf7b1a469b7f9937b17228faab1e81ae48fb2a90aa32b2fd1b7fcc9cc2984", "sourceCommit": "03613ef", "mandatory": true, "notes": "https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-10.html" },
   "consensus": [
     { "name": "Protocol upgrade (bridge hardening, stake accounting)", "activationHeight": 49, "state": "live" },
     { "name": "Transaction integrity (signed-payload binding, uniqueness)", "activationHeight": 90, "state": "live" },
     { "name": "Deterministic proposer selection, Release 1", "activationHeight": 100, "state": "live" },
-    { "name": "Verified BFT finality (FINALITY_V2)", "activationHeight": null, "state": "built, not activated" }
+    { "name": "Verified BFT finality (FINALITY_V2)", "activationHeight": 150, "state": "live" },
+    { "name": "Player-signed contracts (GAME_READY)", "activationHeight": 150, "state": "live" },
+    { "name": "Contract tokens, NFTs, randomness, state root v2 (GAME_READY 2)", "activationHeight": 160, "state": "live" },
+    { "name": "Block-hash commit-then-settle (GAME_READY 3)", "activationHeight": 170, "state": "live" },
+    { "name": "Payable contract calls", "activationHeight": 190, "state": "live" },
+    { "name": "Mintable tokens (TOKEN_MINTING)", "activationHeight": 235, "state": "scheduled" },
+    { "name": "Contracts read NFT royalties (CONTRACT_NFT_ROYALTY)", "activationHeight": 235, "state": "scheduled" }
   ],
   "bridge": [
     { "name": "XRGE bridge (BridgeVaultV2, Base mainnet)", "state": "live", "auth": "classical (Safe 2-of-3 + capped relayer)", "address": "0x7BB10752E99e8872d7D2DE5D92bfd43cd935Cd2D" },

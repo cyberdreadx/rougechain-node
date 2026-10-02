@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "network": "testnet",
+  "chain_id": "rougechain-devnet-1",
+  "version": "1.6.0",
+  "released": "2026-10-01",
+  "source_commit": "03613ef",
+  "public_commit": "e048bf1",
+  "binary": {
+    "name": "quantum-vault-daemon-mint-royalty-03613ef",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-mint-royalty-03613ef",
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/quantum-vault-daemon-mint-royalty-03613ef"
+    ],
+    "sha256": "673bf7b1a469b7f9937b17228faab1e81ae48fb2a90aa32b2fd1b7fcc9cc2984",
+    "size": 28463856
+  },
+  "cli": {
+    "name": "rougechain-1725150",
+    "url": "https://api.rougechain.io/releases/rougechain-1725150",
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/rougechain-1725150"
+    ],
+    "sha256": "ac7ca208881408651461fd9a118fc1b194a4dc78338c1fab2c13135b7ba349fd",
+    "size": 5234312
+  },
+  "genesis": null,
+  "mandatory": true,
+  "upgrade_before_height": 1360,
+  "activations": [
+    {
+      "name": "tx_uniqueness",
+      "height": 1200
+    },
+    {
+      "name": "game_ready",
+      "height": 1200
+    },
+    {
+      "name": "game_ready_2",
+      "height": 1200
+    },
+    {
+      "name": "game_ready_3",
+      "height": 1200
+    },
+    {
+      "name": "payable_calls",
+      "height": 1200
+    },
+    {
+      "name": "validator_retirement",
+      "height": 1240
+    },
+    {
+      "name": "proposer_selection",
+      "height": 1250
+    },
+    {
+      "name": "finality_v2",
+      "height": 1250
+    },
+    {
+      "name": "token_minting",
+      "height": 1360
+    },
+    {
+      "name": "contract_nft_royalty",
+      "height": 1360
+    }
+  ],
+  "notes_url": "https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-10.html",
+  "min_installer_version": "2.0.0"
+}

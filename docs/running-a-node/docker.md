@@ -137,7 +137,7 @@ docker run -d \
 Once your Docker node is running and synced:
 
 1. Fund your node's own key (`/data/rougechain/node-keys.json`) with ≥ 10,000 XRGE plus the fee
-2. Stake **from that key** with the bundled CLI, e.g. `docker exec rougechain-node rougechain --node-keys /data/rougechain/node-keys.json stake 10000` (add `--rpc` for testnet). Staking from a browser wallet stakes the wallet's key, not the node's, and the node then never counts as a validator. See [Becoming a Validator](../staking/becoming-validator.md)
+2. Stake **from that key** with the bundled CLI, e.g. `docker exec rougechain-node rougechain --node-keys /data/rougechain/node-keys.json stake 10000` (add `--network testnet` for testnet). Staking from a browser wallet stakes the wallet's key, not the node's, and the node then never counts as a validator. See [Becoming a Validator](../staking/becoming-validator.md)
 3. Your node then votes on blocks, and proposes whenever it is the designated proposer (the validator with the most stake)
 
 Your node earns:
