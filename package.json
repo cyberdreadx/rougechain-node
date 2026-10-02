@@ -30,11 +30,11 @@
     "btc:genhd": "tsx scripts/btc-genhd.ts"
   },
   "dependencies": {
-    "viem": "^2.46.3",
-    "@scure/btc-signer": "^1.8.1",
+    "viem": "^2.57.0",
+    "@scure/btc-signer": "^2.4.1",
     "@scure/bip39": "^2.2.0",
-    "@noble/post-quantum": "^0.5.4",
-    "@scure/bip32": "^1.7.0"
+    "@noble/post-quantum": "^0.7.1",
+    "@scure/bip32": "^2.4.0"
   },
   "devDependencies": {
     "tsx": "^4.23.15",
