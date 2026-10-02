@@ -65,9 +65,22 @@ echo "=== $(. /etc/os-release && echo "$PRETTY_NAME") / $(openssl version 2>/dev
 EMPTY="$(state)"
 
 section "placeholder key"
+# The committed installer carries the real release key once keys are provisioned, so the guard is
+# tested on a copy with the placeholder put back.
+REAL_INSTALLER="$INSTALLER"
+INSTALLER=/tmp/install-validator.placeholder.sh
+sed 's|^RELEASE_ED25519_PUBKEY_B64=.*|RELEASE_ED25519_PUBKEY_B64="PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED"|' "$REAL_INSTALLER" > "$INSTALLER"
+check "placeholder copy differs from the committed installer only when a key is embedded" grep -q '^RELEASE_ED25519_PUBKEY_B64="PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED"$' "$INSTALLER"
 run "$(base v1)"
 expect_refused "installer with the placeholder key refuses to run" "placeholder key"
 check "…and changed nothing" test "$(state)" = "$EMPTY"
+INSTALLER="$REAL_INSTALLER"
+if ! grep -q '^RELEASE_ED25519_PUBKEY_B64="PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED"$' "$INSTALLER"; then
+  # A release signed by any other key (here: the test key) must be refused by the production key.
+  run "$(base v1)"
+  if [ "$RC" -ne 0 ]; then ok "installer with the production key refuses a release signed by another key"; else bad "installer with the production key ACCEPTED a release signed by another key"; fi
+  check "…and changed nothing" test "$(state)" = "$EMPTY"
+fi
 run ROUGECHAIN_INSTALLER_TEST=1 "$(base v1)"
 expect_refused "test flag alone (no key file) is rejected" "needs BOTH"
 run ROUGECHAIN_INSTALLER_TEST_PUBKEY_FILE=/ctx/keys/release-ed25519.pub.pem "$(base v1)"

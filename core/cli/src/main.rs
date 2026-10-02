@@ -163,7 +163,7 @@ enum Commands {
         /// Public key (omit to use active key)
         pubkey: Option<String>,
     },
-    /// Send encrypted mail
+    /// (Not supported yet — mail must be end-to-end encrypted; use rougechain.io or Qwalla)
     SendMail {
         /// Recipient name (e.g., "bob") or public key
         to: String,
@@ -178,7 +178,7 @@ enum Commands {
     Inbox,
     /// Get sent mail
     SentMail,
-    /// Register messenger wallet on the node
+    /// (Not supported yet — needs an encryption key; use rougechain.io or Qwalla)
     RegisterMessenger {
         /// Display name
         #[arg(long)]
@@ -858,21 +858,13 @@ fn main() {
 
         // ── Mail ──
 
-        Commands::SendMail { to, subject, body } => {
-            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
-            let mut payload = serde_json::Map::new();
-            payload.insert("to".to_string(), Value::String(to.clone()));
-            payload.insert("subject".to_string(), Value::String(subject));
-            payload.insert("body".to_string(), Value::String(body));
-            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/send", req)) {
-                Ok(v) => {
-                    println!("Mail sent to {}", to);
-                    if let Some(id) = v.get("id") {
-                        println!("   ID: {}", id);
-                    }
-                }
-                Err(e) => eprintln!("Error: {}", e),
-            }
+        Commands::SendMail { .. } => {
+            // RougeChain mail is end-to-end encrypted (ML-KEM-768 + AES-256-GCM) and the node only
+            // accepts encrypted mail. This CLI has no mail encryption yet, so it refuses rather than
+            // send the subject and body unencrypted to a node that would reject them anyway.
+            eprintln!("send-mail is not supported in the CLI yet: mail must be end-to-end encrypted, and the CLI cannot encrypt it.");
+            eprintln!("Send mail from https://rougechain.io or the Qwalla app.");
+            std::process::exit(1);
         }
 
         Commands::Inbox => {
@@ -913,17 +905,13 @@ fn main() {
 
         // ── Messenger ──
 
-        Commands::RegisterMessenger { display_name } => {
-            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
-            let mut payload = serde_json::Map::new();
-            payload.insert("id".to_string(), Value::String(key.public_key_hex.clone()));
-            payload.insert("displayName".to_string(), Value::String(display_name.clone()));
-            payload.insert("signingPublicKey".to_string(), Value::String(key.public_key_hex.clone()));
-            payload.insert("encryptionPublicKey".to_string(), Value::String(String::new()));
-            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/messenger/wallets/register", req)) {
-                Ok(_) => println!("Messenger wallet registered as '{}'", display_name),
-                Err(e) => eprintln!("Error: {}", e),
-            }
+        Commands::RegisterMessenger { .. } => {
+            // Registering needs the wallet's ML-KEM-768 encryption public key. This CLI has none, and
+            // registering with an empty key would leave the wallet unable to receive encrypted
+            // messages, so it refuses.
+            eprintln!("register-messenger is not supported in the CLI yet: it would register this wallet without an encryption key,");
+            eprintln!("and the wallet could not receive encrypted messages. Open the messenger on https://rougechain.io or in Qwalla — they register the wallet with its encryption key.");
+            std::process::exit(1);
         }
 
         Commands::Conversations => {
