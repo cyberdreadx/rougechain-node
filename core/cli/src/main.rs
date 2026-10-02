@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod net;
+mod release;
 mod v2;
 
 /// RougeChain CLI Wallet — Post-Quantum Secure
@@ -246,6 +247,28 @@ enum Commands {
         /// Max posts
         #[arg(long, default_value = "20")]
         limit: usize,
+    },
+    /// Signed node releases: verify a release manifest offline
+    Release {
+        #[command(subcommand)]
+        action: ReleaseCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReleaseCommand {
+    /// Verify the ML-DSA-65 signature of a release manifest (offline; exit 0 = verified,
+    /// 1 = the signature does not verify, 2 = a file is missing or malformed)
+    Verify {
+        /// The manifest file exactly as published (manifest-<network>.json)
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Its detached signature (manifest-<network>.json.mldsa65.sig: base64 of 3309 bytes)
+        #[arg(long)]
+        sig: PathBuf,
+        /// The release public key (releases/keys/release-mldsa65.pub: hex of 1952 bytes)
+        #[arg(long)]
+        pubkey: PathBuf,
     },
 }
 
@@ -501,6 +524,10 @@ fn submit_signed(rpc: &str, path: &str, req: Value) -> Result<Value, String> {
 
 fn main() {
     let cli = Cli::parse();
+    // Offline commands: no wallet, no node, no --rpc / --network resolution.
+    if let Commands::Release { action: ReleaseCommand::Verify { manifest, sig, pubkey } } = &cli.command {
+        std::process::exit(release::run_verify(manifest, sig, pubkey));
+    }
     let dir = wallet_dir(cli.wallet_dir.clone());
     let node_keys = cli.node_keys.clone();
     let rpc_base = match net::resolve_base(cli.rpc.as_deref(), Some(cli.network.as_str())) {
@@ -1110,5 +1137,8 @@ fn main() {
                 Err(e) => eprintln!("Error: {}", e),
             }
         }
+
+        // Handled before any network setup, at the top of main().
+        Commands::Release { .. } => unreachable!("release commands are dispatched before the RPC setup"),
     }
 }

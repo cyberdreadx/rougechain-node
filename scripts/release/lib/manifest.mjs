@@ -14,7 +14,7 @@ export const NETWORKS = {
   testnet: { chain_id: 'rougechain-devnet-1' },
 };
 
-/** Fixed key order of a schema-1 manifest (also the complete list of allowed top-level keys). */
+/** The REQUIRED top-level keys of a schema-1 manifest. */
 export const TOP_LEVEL_KEYS = [
   'schema',
   'network',
@@ -32,6 +32,16 @@ export const TOP_LEVEL_KEYS = [
   'notes_url',
   'min_installer_version',
 ];
+/**
+ * OPTIONAL top-level keys: either absent, or a value of the stated shape (never null).
+ *   installer  the node installer/updater script (scripts/install-validator.sh) of this release,
+ *              same shape as `binary`. Nodes replace their installed updater only with this file.
+ * Manifests signed before a key existed (node 1.6.0) do not have it and stay valid.
+ */
+export const OPTIONAL_KEYS = ['installer'];
+/** Serialisation order: the required keys, with `installer` after `genesis`. */
+const KEY_ORDER = TOP_LEVEL_KEYS.flatMap((k) => (k === 'genesis' ? [k, 'installer'] : [k]));
+const FILE_ENTRY_KEYS = ['binary', 'cli', 'genesis', 'installer'];
 const FILE_KEYS = ['name', 'url', 'mirrors', 'sha256', 'size'];
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -92,7 +102,7 @@ function checkFile(errors, where, f, opts) {
 export function validateManifest(m, { allowHttp = false } = {}) {
   const errors = [];
   if (!isObj(m)) return ['manifest: must be a JSON object'];
-  for (const k of Object.keys(m)) if (!TOP_LEVEL_KEYS.includes(k)) errors.push(`${k}: unknown field`);
+  for (const k of Object.keys(m)) if (!TOP_LEVEL_KEYS.includes(k) && !OPTIONAL_KEYS.includes(k)) errors.push(`${k}: unknown field`);
   for (const k of TOP_LEVEL_KEYS) if (!(k in m)) errors.push(`${k}: missing`);
   if (errors.length) return errors;
 
@@ -115,6 +125,15 @@ export function validateManifest(m, { allowHttp = false } = {}) {
   if (m.cli !== null) checkFile(errors, 'cli', m.cli, { allowHttp });
   if (isObj(m.cli) && isObj(m.binary) && m.cli.name === m.binary.name) errors.push('cli.name: must differ from binary.name');
   if (m.genesis !== null) checkFile(errors, 'genesis', m.genesis, { allowHttp });
+  if ('installer' in m) {
+    // Optional, but when present it must be a complete file entry (null is not a valid value).
+    checkFile(errors, 'installer', m.installer, { allowHttp });
+    for (const other of ['binary', 'cli']) {
+      if (isObj(m.installer) && isObj(m[other]) && m.installer.name === m[other].name) {
+        errors.push(`installer.name: must differ from ${other}.name`);
+      }
+    }
+  }
   if (typeof m.mandatory !== 'boolean') errors.push('mandatory: must be true or false');
   if (m.upgrade_before_height !== null && !isHeight(m.upgrade_before_height)) {
     errors.push('upgrade_before_height: must be a non-negative integer or null');
@@ -139,12 +158,21 @@ export function validateManifest(m, { allowHttp = false } = {}) {
   return errors;
 }
 
+/** Compare two MAJOR.MINOR.PATCH versions: negative, zero or positive. */
+export function compareVersions(a, b) {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  return 0;
+}
+
 /** Serialise a manifest object in the fixed key order, 2-space indent, trailing newline. */
 export function serializeManifest(m) {
   const file = (f) => (f === null ? null : Object.fromEntries(FILE_KEYS.map((k) => [k, f[k]])));
   const ordered = {};
-  for (const k of TOP_LEVEL_KEYS) {
-    if (k === 'binary' || k === 'cli' || k === 'genesis') ordered[k] = file(m[k]);
+  for (const k of KEY_ORDER) {
+    if (OPTIONAL_KEYS.includes(k) && !(k in m)) continue;
+    if (FILE_ENTRY_KEYS.includes(k)) ordered[k] = file(m[k]);
     else if (k === 'activations') ordered[k] = m[k].map((a) => ({ name: a.name, height: a.height }));
     else ordered[k] = m[k];
   }
@@ -219,6 +247,15 @@ export function summarize(m) {
           ...m.genesis.mirrors.map((u) => `    mirror               ${u}`),
         ]
       : ['  genesis                none (network default parameters)']),
+    ...(m.installer
+      ? [
+          `  installer / updater    ${m.installer.name}`,
+          `    sha256               ${m.installer.sha256}`,
+          `    size                 ${m.installer.size} bytes`,
+          `    url                  ${m.installer.url}`,
+          ...m.installer.mirrors.map((u) => `    mirror               ${u}`),
+        ]
+      : ['  installer / updater    not in this manifest (nodes keep the updater they have)']),
     `  mandatory              ${m.mandatory ? 'YES' : 'no'}`,
     `  upgrade before height  ${m.upgrade_before_height ?? 'n/a'}`,
     '  activations',

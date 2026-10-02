@@ -2,8 +2,8 @@
   "schema": 1,
   "network": "mainnet",
   "chain_id": "rougechain-mainnet-1",
-  "version": "1.6.0",
-  "released": "2026-10-01",
+  "version": "1.6.1",
+  "released": "2026-10-02",
   "source_commit": "03613ef",
   "public_commit": "e048bf1",
   "binary": {
@@ -16,13 +16,13 @@
     "size": 28463856
   },
   "cli": {
-    "name": "rougechain-1725150",
-    "url": "https://api.rougechain.io/releases/rougechain-1725150",
+    "name": "rougechain-638637f",
+    "url": "https://api.rougechain.io/releases/rougechain-638637f",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/rougechain-1725150"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.1/rougechain-638637f"
     ],
-    "sha256": "ac7ca208881408651461fd9a118fc1b194a4dc78338c1fab2c13135b7ba349fd",
-    "size": 5234312
+    "sha256": "35ce999d8fbe4ed972d2169dddf47c2a0a2d66b6aa27f8c7888347f13afa1d59",
+    "size": 5292512
   },
   "genesis": {
     "name": "genesis-mainnet.json",
@@ -33,6 +33,15 @@
     ],
     "sha256": "28459ca0f9dce287f7eeac7148df252485a30ae7f42b4d63a192fc8f2eec101c",
     "size": 4460
+  },
+  "installer": {
+    "name": "install-validator-2.1.0-280e02a9.sh",
+    "url": "https://api.rougechain.io/releases/install-validator-2.1.0-280e02a9.sh",
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.1/install-validator-2.1.0-280e02a9.sh"
+    ],
+    "sha256": "280e02a935554e843666dfc768fb79ee2b207af716a48735b0e174ac1765a2d0",
+    "size": 106826
   },
   "mandatory": true,
   "upgrade_before_height": 235,

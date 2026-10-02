@@ -17,9 +17,11 @@
 // --binary <file>         check sha256 + size of the binary against the manifest
 // --cli <file>            check sha256 + size of the rougechain CLI against the manifest
 // --genesis <file>        check sha256 + size of the genesis file against the manifest
+// --installer <file>      check sha256 + size of the installer/updater script against the manifest
 // --network <name>        require the manifest to be for this network
-// --check-installer <sh>  require the Ed25519 key embedded in install-validator.sh to equal the
-//                         committed one (or to be the placeholder while keys are not provisioned)
+// --check-installer <sh>  require BOTH release keys embedded in install-validator.sh (Ed25519 and
+//                         ML-DSA-65) to equal the committed ones (or to be the placeholder while
+//                         keys are not provisioned)
 // --allow-http            accept http:// URLs in the manifest (tests only)
 // --quiet                 print only the verdict line
 
@@ -41,11 +43,13 @@ import {
   verifyEd25519,
   verifyMldsa65,
 } from './lib/keys.mjs';
-import { checkFileAgainst, parseManifestBytes, summarize, validateManifest } from './lib/manifest.mjs';
+import { checkFileAgainst, compareVersions, parseManifestBytes, summarize, validateManifest } from './lib/manifest.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const INSTALLER_PLACEHOLDER = 'PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED';
 export const INSTALLER_KEY_RE = /^RELEASE_ED25519_PUBKEY_B64="([^"]*)"$/m;
+export const INSTALLER_MLDSA_KEY_RE = /^RELEASE_MLDSA65_PUBKEY_HEX="([^"]*)"$/m;
+export const INSTALLER_VERSION_RE = /^INSTALLER_VERSION="((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))"$/m;
 
 /**
  * Verify. Returns { status: 'verified' | 'unsigned' | 'invalid', problems: string[], manifest, info: string[] }.
@@ -105,7 +109,8 @@ export async function verifyManifest(manifestPath, opts = {}) {
 
   // ── installer key consistency ──
   if (opts.checkInstaller) {
-    const m = existsSync(opts.checkInstaller) ? INSTALLER_KEY_RE.exec(readFileSync(opts.checkInstaller, 'utf8')) : null;
+    const text = existsSync(opts.checkInstaller) ? readFileSync(opts.checkInstaller, 'utf8') : '';
+    const m = INSTALLER_KEY_RE.exec(text);
     if (!m) problems.push(`${opts.checkInstaller}: RELEASE_ED25519_PUBKEY_B64="…" line not found`);
     else if (edPubPem) {
       if (m[1] !== ed25519RawFromPem(edPubPem).toString('base64')) {
@@ -113,6 +118,15 @@ export async function verifyManifest(manifestPath, opts = {}) {
       }
     } else if (m[1] !== INSTALLER_PLACEHOLDER) {
       problems.push(`${opts.checkInstaller}: embeds a release key but ${edPubPath} is not committed`);
+    }
+    const q = INSTALLER_MLDSA_KEY_RE.exec(text);
+    if (!q) problems.push(`${opts.checkInstaller}: RELEASE_MLDSA65_PUBKEY_HEX="…" line not found`);
+    else if (mlPub) {
+      if (q[1] !== mlPub.toString('hex')) {
+        problems.push(`${opts.checkInstaller}: embedded ML-DSA-65 key does not match ${mlPubPath} (run embed-installer-key.mjs)`);
+      }
+    } else if (q[1] !== INSTALLER_PLACEHOLDER) {
+      problems.push(`${opts.checkInstaller}: embeds an ML-DSA-65 release key but ${mlPubPath} is not committed`);
     }
   }
 
@@ -125,6 +139,18 @@ export async function verifyManifest(manifestPath, opts = {}) {
   if (opts.genesis) {
     if (manifest.genesis === null) problems.push('genesis: a file was given but the manifest has no genesis');
     else problems.push(...(await checkFileAgainst(manifest.genesis, opts.genesis, 'genesis')));
+  }
+  if (opts.installer) {
+    if (!manifest.installer) problems.push('installer: a file was given but the manifest has no installer entry');
+    else {
+      problems.push(...(await checkFileAgainst(manifest.installer, opts.installer, 'installer')));
+      // The script that nodes will run as their updater must itself be able to install this release.
+      const v = existsSync(opts.installer) ? INSTALLER_VERSION_RE.exec(readFileSync(opts.installer, 'utf8')) : null;
+      if (!v) problems.push(`installer: ${opts.installer} has no INSTALLER_VERSION="x.y.z" line`);
+      else if (compareVersions(v[1], manifest.min_installer_version) < 0) {
+        problems.push(`installer: ${opts.installer} is v${v[1]}, older than min_installer_version ${manifest.min_installer_version}`);
+      } else info.push(`installer            v${v[1]}`);
+    }
   }
 
   // ── signatures ──
@@ -177,6 +203,7 @@ async function main() {
       binary: 'string',
       cli: 'string',
       genesis: 'string',
+      installer: 'string',
       network: 'string',
       'check-installer': 'string',
       'allow-unsigned': 'boolean',
@@ -189,7 +216,7 @@ async function main() {
     process.exit(1);
   }
   if (args.help || args._.length !== 1) {
-    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 24).join('\n') + '\n');
+    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 26).join('\n') + '\n');
     process.exit(args.help ? 0 : 1);
   }
   const manifestPath = resolve(args._[0]);
@@ -198,6 +225,7 @@ async function main() {
     binary: args.binary,
     cli: args.cli,
     genesis: args.genesis,
+    installer: args.installer,
     network: args.network,
     checkInstaller: args['check-installer'],
     allowHttp: args['allow-http'] === true,

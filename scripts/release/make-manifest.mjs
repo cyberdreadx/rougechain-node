@@ -11,7 +11,10 @@
 //     --notes-url https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-10.html
 //
 // --cli <file> adds the `rougechain` CLI built from the same commit (or pass --no-cli).
-// --binary-mirror / --cli-mirror / --genesis-mirror <url> (repeatable) add download mirrors, e.g.
+// --installer <file> adds scripts/install-validator.sh as the release's installer/updater: nodes
+// with auto-update replace their installed updater ONLY with the file named in a signed manifest.
+// Published name: install-validator-<its version>-<sha256[0:8]>.sh (or --installer-name).
+// --binary-mirror / --cli-mirror / --genesis-mirror / --installer-mirror <url> (repeatable) add download mirrors, e.g.
 // GitHub release assets: https://github.com/cyberdreadx/rougechain-node/releases/download/v<version>/<name>
 //
 // Writes releases/manifest-<network>.json (or --out). Refuses to overwrite an existing manifest
@@ -26,7 +29,8 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { die, parseArgs } from './lib/cli.mjs';
 import { ED25519_SIG_SUFFIX, MLDSA65_SIG_SUFFIX } from './lib/keys.mjs';
-import { NETWORKS, SCHEMA, serializeManifest, sha256File, summarize, validateManifest } from './lib/manifest.mjs';
+import { NETWORKS, SCHEMA, compareVersions, serializeManifest, sha256File, summarize, validateManifest } from './lib/manifest.mjs';
+import { INSTALLER_KEY_RE, INSTALLER_MLDSA_KEY_RE, INSTALLER_PLACEHOLDER, INSTALLER_VERSION_RE } from './verify-manifest.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const PRIMARY_BASE = 'https://api.rougechain.io/releases';
@@ -53,6 +57,10 @@ const SPEC = {
   'genesis-url': 'string',
   'genesis-mirror': 'list',
   'no-genesis': 'boolean',
+  installer: 'string',
+  'installer-name': 'string',
+  'installer-url': 'string',
+  'installer-mirror': 'list',
   mandatory: 'boolean',
   'upgrade-before-height': 'string',
   activation: 'list',
@@ -96,7 +104,7 @@ async function main() {
     die(e.message);
   }
   if (args.help) {
-    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 25).join('\n') + '\n');
+    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 28).join('\n') + '\n');
     return;
   }
   for (const req of ['network', 'version', 'binary', 'source-commit']) if (!args[req]) die(`--${req} is required`);
@@ -141,6 +149,29 @@ async function main() {
     }
   }
 
+  // Optional: the installer/updater script. Without it the manifest simply has no `installer` key.
+  let installer = null;
+  const minInstaller = args['min-installer-version'] ?? DEFAULT_MIN_INSTALLER;
+  if (args.installer) {
+    if (!existsSync(args.installer) || !statSync(args.installer).isFile()) die(`${args.installer}: not a file`);
+    const text = readFileSync(args.installer, 'utf8');
+    const v = INSTALLER_VERSION_RE.exec(text);
+    if (!v) die(`${args.installer}: no INSTALLER_VERSION="x.y.z" line — is this scripts/install-validator.sh?`);
+    if (/^\d+\.\d+\.\d+$/.test(minInstaller) && compareVersions(v[1], minInstaller) < 0) {
+      die(`${args.installer} is v${v[1]}, older than --min-installer-version ${minInstaller}`);
+    }
+    for (const [re, what] of [[INSTALLER_KEY_RE, 'Ed25519'], [INSTALLER_MLDSA_KEY_RE, 'ML-DSA-65']]) {
+      const k = re.exec(text);
+      if (!k) die(`${args.installer}: no embedded ${what} release key line`);
+      if (k[1] === INSTALLER_PLACEHOLDER) die(`${args.installer}: the ${what} release key is still the placeholder (run embed-installer-key.mjs)`);
+    }
+    const sha = await sha256File(args.installer);
+    const iName = args['installer-name'] ?? `install-validator-${v[1]}-${sha.slice(0, 8)}.sh`;
+    installer = await fileEntry(args.installer, iName, args['installer-url'] ?? `${PRIMARY_BASE}/${iName}`, args['installer-mirror']);
+  } else if (args['installer-name'] || args['installer-url'] || args['installer-mirror'].length) {
+    die('--installer-name / --installer-url / --installer-mirror need --installer <file>');
+  }
+
   const activations = args.activation.map((a) => {
     const m = /^([^=]+)=(.+)$/.exec(a);
     if (!m) die(`--activation "${a}": expected name=height`);
@@ -158,17 +189,21 @@ async function main() {
     binary,
     cli,
     genesis,
+    ...(installer ? { installer } : {}),
     mandatory: args.mandatory === true,
     upgrade_before_height: args['upgrade-before-height'] === undefined ? null : toInt(args['upgrade-before-height'], '--upgrade-before-height'),
     activations,
     notes_url: args['notes-url'] ?? null,
-    min_installer_version: args['min-installer-version'] ?? DEFAULT_MIN_INSTALLER,
+    min_installer_version: minInstaller,
   };
 
   const errors = validateManifest(manifest, { allowHttp: args['allow-http'] === true });
   if (errors.length) die(`manifest is invalid:\n  ${errors.join('\n  ')}`);
   if (manifest.mandatory && manifest.upgrade_before_height === null) {
     process.stderr.write('warning: --mandatory without --upgrade-before-height\n');
+  }
+  if (!installer) {
+    process.stderr.write('note: no --installer — nodes with auto-update keep the updater they have, and a node installed by piping the installer cannot enable auto-update from this release\n');
   }
 
   const out = resolve(args.out ?? join(REPO_ROOT, 'releases', `manifest-${args.network}.json`));
