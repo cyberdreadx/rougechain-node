@@ -12,15 +12,12 @@ a `systemd` service under a dedicated user, and starts syncing:
 curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh | sudo bash
 ```
 
-> **Status (2026-10-01):** the release signing key is still being provisioned. Until it is embedded
-> in the installer, the script stops with a "no release signing key yet" message and changes
-> nothing; use the manual walkthrough below in the meantime. See [Signed releases](../running-a-node/releases.md).
-
-**What it verifies.** The installer fetches the release manifest and its Ed25519 signature
-(`api.rougechain.io`, falling back to the GitHub mirror), checks the signature with `openssl`
-against the release public key that is **embedded in the script**, and only then downloads the
+**What it verifies.** The installer fetches the release manifest and its signatures from
+`api.rougechain.io` and from the GitHub mirror, checks the Ed25519 signature with `openssl`
+against the release public key that is **embedded in the script** (and the ML-DSA-65 signature
+with the `rougechain` CLI of the release), and only then downloads the
 binary and checks its size and sha256 against the signed manifest. If anything does not match, it
-stops and installs nothing. To check a release yourself, or to see what the script would do
+stops and installs nothing. See [Signed releases](../running-a-node/releases.md). To check a release yourself, or to see what the script would do
 without changing anything:
 
 ```bash
@@ -33,7 +30,8 @@ release by hand with `openssl` is described in [Signed releases](../running-a-no
 **What it sets up.** Node `/usr/local/bin/quantum-vault-daemon` and the CLI
 `/usr/local/bin/rougechain`, both from the signed release; service `rougechain-validator`
 running as the system user `rougechain`; data and `node-keys.json` in `/var/lib/rougechain/mainnet`
-(key file mode `0600`); API on `127.0.0.1:5100`. It generates a node key only if there is none and
+(key file mode `0600`); API on `127.0.0.1:5100`; and [automatic updates](../running-a-node/auto-update.md)
+from signed releases (timer `rougechain-update.timer`; `AUTO_UPDATE=0` to opt out). It generates a node key only if there is none and
 never overwrites an existing key or chain data. Settings are environment variables placed after
 `sudo`, for example `NODE_NAME=my-validator`, `NETWORK=testnet`, `NO_START=1` — the full list is in
 [Signed releases](../running-a-node/releases.md#what-the-installer-does).
@@ -65,9 +63,13 @@ ask for it, because a node should not claim to produce blocks with a key that is
    ```
 
 The node then votes on blocks automatically and proposes whenever it is the
-[designated proposer](#proposer-selection). **To upgrade, re-run the installer**: it verifies the
-new signed release, keeps the previous binary as `quantum-vault-daemon.prev`, and restarts the
-service (add `NO_START=1` to restart later yourself). The rest of this page is the manual
+[designated proposer](#proposer-selection). **Upgrades are automatic**: the node installs newer
+signed releases by itself, checks its own health afterwards and rolls back if the check fails —
+`rougechain-update status` shows where it stands, and
+[Automatic updates](../running-a-node/auto-update.md) explains the checks and how to switch to
+notify-only or pin a version. You can always upgrade by hand instead: re-run the installer (it
+verifies the new signed release, keeps the previous binary as `quantum-vault-daemon.prev`, and
+restarts the service; add `NO_START=1` to restart later yourself). The rest of this page is the manual
 walkthrough if you would rather do each step yourself.
 
 ## The one thing you must understand
@@ -185,7 +187,7 @@ Since mainnet height 100 (Release 1), each block has exactly one **designated pr
 - **Don't expose the daemon port.** Bind to localhost, front it with nginx + TLS, and firewall the RPC/API port. See [public-node security](../p2p-networking/public-node.md). Do **not** open port 5100 to the public internet.
 - **Stay online.** Automatic missed-block slashing is **frozen** since height 100 (a slash costs **10%** of stake plus a 20-block jail). But if you are the designated proposer and go offline, the chain stops producing blocks, and an offline validator's vote is missing from the ⅔-stake commit certificate. Alert on your node being offline or lagging the chain tip (`/api/health` height vs the network).
 - **Never run `--dev`** on a mainnet node — it enables unsafe key-accepting endpoints.
-- **Avoid unattended auto-restart** (e.g. an auto-deploy cron) on a validator: a restart while you are the designated proposer stalls block production, and auto-pulling unreviewed code is a supply-chain risk. Upgrade deliberately.
+- **Upgrades.** A node set up with the installer [updates itself](../running-a-node/auto-update.md) from **signed releases only**: it verifies the release keys' signatures, waits if your validator is the designated proposer with transactions pending, health-checks the node after the restart and rolls back if the check fails. If you would rather restart your validator yourself, set `MODE=notify` (or `PIN_VERSION`) in `/etc/rougechain/mainnet/update.conf` — then **you** must install mandatory releases before their upgrade height. Never use anything that builds and runs `main` unattended (the retired git-pull "auto-deploy" cron): that is unreviewed code, restarted at arbitrary times.
 
 ## Increasing stake / leaving
 
