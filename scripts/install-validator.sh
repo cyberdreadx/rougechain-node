@@ -44,7 +44,7 @@ INSTALLER_VERSION="2.0.0"
 # Ed25519 release public key: the raw 32-byte key, base64. Every release manifest must carry a
 # valid signature by this key. Written by scripts/release/embed-installer-key.mjs from
 # releases/keys/release-ed25519.pub.pem. While it is the placeholder, the installer refuses to run.
-RELEASE_ED25519_PUBKEY_B64="PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED"
+RELEASE_ED25519_PUBKEY_B64="brz8q1pF/xZFyO94KLQvM52X5ufgx96laFEuJ9B7skg="
 readonly RELEASE_KEY_PLACEHOLDER="PLACEHOLDER_RELEASE_KEY_NOT_PROVISIONED"
 
 readonly UNIT_MARKER="# Managed by RougeChain install-validator.sh"

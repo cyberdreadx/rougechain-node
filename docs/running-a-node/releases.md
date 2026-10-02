@@ -4,12 +4,6 @@ Node releases are published as a prebuilt `quantum-vault-daemon` binary and the 
 (Linux x86_64), described by a **signed release manifest**. The installer and anyone verifying by hand check the same thing:
 the manifest's signature, then each file's sha256 and size against the manifest.
 
-> **Status (2026-10-01): release keys are pending provisioning.** The manifests in
-> [`releases/`](https://github.com/cyberdreadx/rougechain-node/tree/main/releases) are published
-> **unsigned**, and `install-validator.sh` refuses to run until the release key is embedded in it.
-> Until then, install the binary by hand and check its sha256 against the upgrade note
-> ([current release](mandatory-upgrade-2026-10.md)). This page describes the format and the checks
-> so they can be reviewed before the keys exist.
 
 ## Where releases are published
 
@@ -100,8 +94,8 @@ not on the release server.
 
 | Key | Fingerprint (SHA-256 of the raw public key) |
 |---|---|
-| Ed25519 | _pending provisioning_ |
-| ML-DSA-65 | _pending provisioning_ |
+| Ed25519 | `79bf33d554ee6d39e5819d94a04d941da9b0e4aeef42eb1106289c5030d4a040` |
+| ML-DSA-65 | `ac4497980205f2ccbd810048bcd5ffd819d82400730cfbead41157cc56781b3c` |
 
 ## Verify a release by hand
 

@@ -1,14 +1,15 @@
 # RougeChain release signing keys
 
-**Status: keys pending provisioning.** No release key has been generated yet, so:
+**Status: provisioned 2026-10-02.** This directory holds the two public keys every release is
+signed with:
 
-- there are no public key files in this directory,
-- `releases/manifest-*.json` are **unsigned** (no `.sig` files) — `verify-manifest.mjs` reports
-  `UNSIGNED`,
-- `scripts/install-validator.sh` carries a placeholder key and refuses to run.
+- `release-ed25519.pub.pem` — checked by `scripts/install-validator.sh` (the same key is embedded in
+  the installer) with stock OpenSSL,
+- `release-mldsa65.pub` — checked by `scripts/release/verify-manifest.mjs`.
 
-Until this changes, verify a release by its sha256 from the upgrade notes
-(`docs/running-a-node/mandatory-upgrade-*.md`).
+The private keys exist only in a passphrase-encrypted file on the release owner's own machine.
+`releases/manifest-*.json` are signed (`.ed25519.sig` + `.mldsa65.sig`); `verify-manifest.mjs` must
+report `VERIFIED`.
 
 ## What will be here
 
@@ -29,8 +30,8 @@ A fingerprint is the SHA-256 of the **raw** public key bytes, lowercase hex.
 
 | Key | Fingerprint |
 |---|---|
-| Ed25519 | _pending_ |
-| ML-DSA-65 | _pending_ |
+| Ed25519 | `79bf33d554ee6d39e5819d94a04d941da9b0e4aeef42eb1106289c5030d4a040` |
+| ML-DSA-65 | `ac4497980205f2ccbd810048bcd5ffd819d82400730cfbead41157cc56781b3c` |
 
 Compute them yourself:
 
