@@ -16,6 +16,11 @@ TEST_ENV=(ROUGECHAIN_INSTALLER_TEST=1 ROUGECHAIN_INSTALLER_TEST_PUBKEY_FILE=/ctx
 BIN=/usr/local/bin/quantum-vault-daemon
 CLI=/usr/local/bin/rougechain
 UNIT=/etc/systemd/system/rougechain-validator.service
+UPDATER=/usr/local/lib/rougechain/install-validator.sh
+UPD_CMD=/usr/local/bin/rougechain-update
+UPD_UNIT=/etc/systemd/system/rougechain-update.service
+UPD_TIMER=/etc/systemd/system/rougechain-update.timer
+UPD_STATE=/var/lib/rougechain-updater/mainnet/state
 DATA=/var/lib/rougechain/mainnet
 KEYS=$DATA/node-keys.json
 CONF=/etc/rougechain/mainnet
@@ -46,13 +51,14 @@ logged() { grep -qE -- "$1" "$LOG"; }
 
 state() {
   {
-    find /usr/local/bin /etc/rougechain /var/lib/rougechain /etc/systemd/system -type f -exec sha256sum {} + 2>/dev/null | sort -k 2
-    find /usr/local/bin /etc/rougechain /var/lib/rougechain /etc/systemd/system -exec stat -c '%n %a %U %G' {} + 2>/dev/null | sort
+    find /usr/local/bin /usr/local/lib/rougechain /etc/rougechain /var/lib/rougechain /etc/systemd/system -type f -exec sha256sum {} + 2>/dev/null | sort -k 2
+    find /usr/local/bin /usr/local/lib/rougechain /etc/rougechain /var/lib/rougechain /etc/systemd/system -exec stat -c '%n %a %U %G' {} + 2>/dev/null | sort
     getent passwd rougechain || true
   } | sha256sum | cut -d ' ' -f 1
 }
 reset_state() {
   rm -rf /usr/local/bin/quantum-vault-daemon* /usr/local/bin/rougechain* /etc/rougechain /var/lib/rougechain /etc/systemd/system/rougechain-validator*
+  rm -rf /usr/local/lib/rougechain /var/lib/rougechain-updater /etc/systemd/system/rougechain-update*
   userdel rougechain > /dev/null 2>&1 || true
   groupdel rougechain > /dev/null 2>&1 || true
 }
@@ -161,6 +167,27 @@ done
 check "service not started (NO_START=1, no systemd)" logged "not started"
 check "next steps: back up the key, stake, VALIDATOR=1" bash -c "grep -q 'BACK UP THE NODE KEY' $LOG && grep -q 'stake 10000' $LOG && grep -q 'VALIDATOR=1' $LOG"
 check "no temp dir left behind" bash -c '! ls -d /tmp/tmp.* 2>/dev/null | grep -q .'
+check "both signatures recorded with the manifest" test -s "$CONF/manifest.json.mldsa65.sig"
+check "ML-DSA-65: signature present, reported as not verified (no CLI with 'release verify' installed)" logged "ML-DSA-65 signature present; not verified yet"
+
+section "auto-update is set up by the installer"
+check "updater installed: the installer file itself, 0755 root" bash -c "cmp -s $UPDATER /src/install-validator.sh && test \"\$(stat -c '%a %U:%G' $UPDATER)\" = '755 root:root'"
+check "…and the log says where it came from (a file, not a release signature)" logged "installed the updater: $UPDATER .*installer file run by the operator .*not covered by a release signature"
+check "rougechain-update command installed, 0755 root, runs the installed updater" bash -c "test \"\$(stat -c '%a %U:%G' $UPD_CMD)\" = '755 root:root' && test \"\$($UPD_CMD --version)\" = \"\$(bash /src/install-validator.sh --version)\""
+check "update.conf written: MODE=auto, 0644 root, documented defaults" bash -c "grep -qx 'MODE=auto' $CONF/update.conf && grep -qx 'PIN_VERSION=' $CONF/update.conf && grep -qx 'OPTIONAL_DELAY_MAX_SECS=21600' $CONF/update.conf && test \"\$(stat -c '%a %U:%G' $CONF/update.conf)\" = '644 root:root'"
+check "update service unit: oneshot, runs rougechain-update run --network mainnet" bash -c "grep -qx 'Type=oneshot' $UPD_UNIT && grep -qx 'ExecStart=/usr/local/bin/rougechain-update run --network mainnet' $UPD_UNIT && grep -qx 'SyslogIdentifier=rougechain-update' $UPD_UNIT"
+check "update timer unit: hourly, per-host fixed random delay, persistent" bash -c "grep -qx 'OnCalendar=hourly' $UPD_TIMER && grep -qx 'RandomizedDelaySec=30min' $UPD_TIMER && grep -qx 'FixedRandomDelay=yes' $UPD_TIMER && grep -qx 'Persistent=yes' $UPD_TIMER && grep -qx 'Unit=rougechain-update.service' $UPD_TIMER"
+check "units are 0644 root" test "$(mode_owner $UPD_UNIT)" = "644 root:root" -a "$(mode_owner $UPD_TIMER)" = "644 root:root"
+check "no systemd here: timer written, not enabled — and said so" logged "auto-update timer was written but not enabled"
+check "next steps describe automatic upgrades" bash -c "grep -q 'Upgrades: AUTOMATIC' $LOG && grep -q 'rougechain-update status' $LOG"
+check "updater state dir is root-owned, not writable by the service user" test "$(mode_owner /var/lib/rougechain-updater/mainnet)" = "755 root:root"
+"$UPD_CMD" status > "$LOG" 2>&1; RC=$?
+expect_ok "rougechain-update status works"
+check "…shows mode, installed release, updater origin" bash -c "grep -qE 'mode +auto' $LOG && grep -qE 'installed release +9\.0\.0' $LOG && grep -qE 'updater +v[0-9.]+ .*installer file run by the operator' $LOG && grep -qE 'failed releases +none' $LOG"
+runuser -u nobody -- "$UPD_CMD" status > "$LOG" 2>&1; RC=$?
+expect_ok "status works without root"
+runuser -u nobody -- "$UPD_CMD" run > "$LOG" 2>&1; RC=$?
+expect_refused "run needs root" "run as root"
 
 section "re-run is idempotent and keeps keys"
 KEY_SHA="$(sha $KEYS)"; KEY_INODE="$(stat -c %i $KEYS)"
@@ -177,6 +204,34 @@ check "CLI reported current, no .prev CLI created" bash -c "grep -q 'rougechain 
 chmod 0644 "$KEYS"
 run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 NODE_NAME=ci-node
 check "loose key permissions are tightened back to 0600, content untouched" test "$(mode_owner $KEYS)" = "600 rougechain:rougechain" -a "$(sha $KEYS)" = "$KEY_SHA"
+
+section "auto-update settings: opt-out, and an existing update.conf is kept"
+CONF_NOMODE="$(sed 's/^MODE=.*//' "$CONF/update.conf" | sha256sum)"
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 NODE_NAME=ci-node AUTO_UPDATE=0
+expect_ok "re-run with AUTO_UPDATE=0 succeeds"
+check "…MODE=off, nothing else in update.conf changed" bash -c "grep -qx 'MODE=off' $CONF/update.conf && test \"\$(sed 's/^MODE=.*//' $CONF/update.conf | sha256sum)\" = '$CONF_NOMODE'"
+check "…and says so" bash -c "grep -q 'AUTO_UPDATE=0: set MODE=off' $LOG && grep -q 'auto-update is OFF' $LOG"
+check "…the updater program stays installed (manual runs remain possible)" test -x "$UPD_CMD" -a -s "$UPDATER"
+sed -i 's/^PIN_VERSION=.*/PIN_VERSION=9.0.0/; s/^HEALTH_DEADLINE_SECS=.*/HEALTH_DEADLINE_SECS=77/' "$CONF/update.conf"
+echo "# operator note" >> "$CONF/update.conf"
+CONF_SHA="$(sha $CONF/update.conf)"
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 NODE_NAME=ci-node
+expect_ok "re-run without AUTO_UPDATE"
+check "…update.conf is byte-identical (the opt-out and the operator's settings survive)" test "$(sha $CONF/update.conf)" = "$CONF_SHA"
+check "…and says it kept it" logged "keeping the existing $CONF/update.conf \(MODE=off\)"
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 NODE_NAME=ci-node AUTO_UPDATE=1
+expect_ok "re-run with AUTO_UPDATE=1"
+check "…MODE=auto again; PIN_VERSION, the changed number and the comment are kept" bash -c "grep -qx 'MODE=auto' $CONF/update.conf && grep -qx 'PIN_VERSION=9.0.0' $CONF/update.conf && grep -qx 'HEALTH_DEADLINE_SECS=77' $CONF/update.conf && grep -qx '# operator note' $CONF/update.conf"
+"$UPD_CMD" status > "$LOG" 2>&1
+check "status shows the pin" bash -c "grep -qE 'pinned version +9\.0\.0' $LOG"
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 AUTO_UPDATE=yes
+expect_refused "AUTO_UPDATE must be 0 or 1" "AUTO_UPDATE must be 0 or 1"
+reset_state
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 NODE_NAME=ci-node AUTO_UPDATE=0
+expect_ok "fresh install with AUTO_UPDATE=0"
+check "…update.conf MODE=off from the start; next steps say auto-update is off" bash -c "grep -qx 'MODE=off' $CONF/update.conf && grep -q 'auto-update is OFF' $LOG"
+reset_state
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 NODE_NAME=ci-node
 
 section "forged / missing signatures are refused"
 BEFORE="$(state)"
@@ -370,6 +425,9 @@ expect_ok "testnet install succeeds (manifest without a genesis)"
 TUNIT=/etc/systemd/system/rougechain-validator-testnet.service
 check "testnet CLI installed under its own name; next steps use --network testnet and the command works" bash -c "test -x /usr/local/bin/rougechain-testnet && grep -q 'sudo -u rougechain rougechain-testnet --network testnet --node-keys /var/lib/rougechain/testnet/node-keys.json stake 10000' $LOG && sudo -u rougechain rougechain-testnet --network testnet --node-keys /var/lib/rougechain/testnet/node-keys.json whoami | grep -q 'net=testnet user=rougechain Address: rouge1test'"
 check "separate binary + unit + data dir" test -x /usr/local/bin/quantum-vault-daemon-testnet -a -s "$TUNIT" -a -s /var/lib/rougechain/testnet/node-keys.json
+check "testnet has its own update units, settings and state" bash -c "grep -qx 'ExecStart=/usr/local/bin/rougechain-update run --network testnet' /etc/systemd/system/rougechain-update-testnet.service && grep -qx 'Unit=rougechain-update-testnet.service' /etc/systemd/system/rougechain-update-testnet.timer && grep -qx 'MODE=auto' /etc/rougechain/testnet/update.conf && test -d /var/lib/rougechain-updater/testnet && test ! -e $UPD_UNIT"
+check "rougechain-update status --network testnet" bash -c "$UPD_CMD status --network testnet | grep -q 'RougeChain auto-update — testnet' && $UPD_CMD status --network testnet | grep -qE 'installed release +9\.0\.0'"
+check "rougechain-update refuses an unknown network" bash -c "! $UPD_CMD status --network devnet"
 check "unit: testnet chain id, ports 5101/4101, testnet peer, no --genesis" bash -c "grep -q -- '--chain-id rougechain-devnet-1' $TUNIT && grep -q -- '--api-port 5101 --port 4101' $TUNIT && grep -q -- '--peers https://testnet.rougechain.io/api' $TUNIT && ! grep -q -- '--genesis' $TUNIT"
 check "mainnet paths not created" test ! -e "$BIN" -a ! -e "$CLI" -a ! -e "$UNIT" -a ! -e "$DATA"
 run "${TEST_ENV[@]}" "$(base v1)" NO_START=1
@@ -384,12 +442,47 @@ RC=$?
 expect_ok "installer piped into bash from the web server succeeds"
 check "…installed binary, key and unit" test "$(sha $BIN)" = "$V1_SHA" -a "$(mode_owner $KEYS)" = "600 rougechain:rougechain" -a -s "$UNIT"
 check "…ran to the end (next steps printed)" logged "Upgrades: re-run this installer"
+# Bootstrap rule: a piped installer does not have its own bytes, and release v1 names no updater
+# in its signed manifest → no updater is installed (nothing unsigned is fetched to become one).
+check "piped + release without an updater entry: NO updater, NO timer installed" test ! -e "$UPDATER" -a ! -e "$UPD_CMD" -a ! -e "$UPD_UNIT" -a ! -e "$UPD_TIMER"
+check "…and the operator is told, with what to do" bash -c "grep -q 'AUTO-UPDATE WAS NOT INSTALLED' $LOG && grep -q 're-run this same command after the next release' $LOG && grep -q 'NOT available yet' $LOG"
+check "…update.conf is still written (settings are recorded for later)" grep -qx 'MODE=auto' "$CONF/update.conf"
+curl -fsS "$WEB/installer/install-validator.sh" | env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
+  "${TEST_ENV[@]}" "$(base v1ins)" NO_START=1 NODE_NAME=piped bash > "$LOG" 2>&1
+RC=$?
+expect_ok "piped, release WITH a signed updater entry succeeds"
+INS_SHA="$(curl -fsS "$WEB/rel/v1ins/manifest-mainnet.json" | jq -r .installer.sha256)"
+check "…the updater is the file named in the signed manifest (sha256), 0755 root" test "$(sha $UPDATER)" = "$INS_SHA" -a "$(mode_owner $UPDATER)" = "755 root:root"
+check "…origin recorded as the signed release; command + timer installed" bash -c "grep -q 'installed the updater: .*from: signed release 9.0.0' $LOG && grep -q 'updater verified: sha256' $LOG && grep -qx 'UPDATER_SOURCE=signed release 9.0.0' $UPD_STATE && test -x $UPD_CMD -a -s $UPD_TIMER"
+check "…next steps describe automatic upgrades" logged "Upgrades: AUTOMATIC"
+reset_state
+curl -fsS "$WEB/installer/install-validator.sh" | env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
+  "${TEST_ENV[@]}" "$(base insbad)" NO_START=1 NODE_NAME=piped bash > "$LOG" 2>&1
+RC=$?
+expect_refused "an updater script that does not match the signed manifest is refused" "updater: sha256 .* does not match the signed manifest"
+check "…nothing installed at all" test ! -e "$UPDATER" -a ! -e "$BIN" -a ! -e "$UNIT" -a ! -e "$DATA"
+# A file run keeps a NEWER installed updater, and replaces an older or equal one with the signed one.
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1
+sed 's/^INSTALLER_VERSION=.*/INSTALLER_VERSION="99.0.0"/' /src/install-validator.sh > "$UPDATER"
+NEWER_SHA="$(sha $UPDATER)"
+run "${TEST_ENV[@]}" "$(base v1ins)" NO_START=1
+expect_ok "re-run while a NEWER updater is installed"
+check "…the newer updater is kept (never replaced by an older one)" bash -c "test \"\$(sha256sum $UPDATER | cut -d ' ' -f 1)\" = $NEWER_SHA && grep -q 'is newer than the one in release' $LOG"
+cp /src/install-validator.sh "$UPDATER"; echo "# local change" >> "$UPDATER"
+run "${TEST_ENV[@]}" "$(base v1ins)" NO_START=1
+expect_ok "re-run while an equal-version, different updater is installed"
+check "…it is replaced by the signed one, the old one kept as .prev" bash -c "test \"\$(sha256sum $UPDATER | cut -d ' ' -f 1)\" = $INS_SHA && grep -q '# local change' $UPDATER.prev"
+reset_state
+curl -fsS "$WEB/installer/install-validator.sh" | env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
+  "${TEST_ENV[@]}" "$(base v1)" NO_START=1 NODE_NAME=piped bash > "$LOG" 2>&1
 curl -fsS "$WEB/installer/install-validator.sh" | env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
   "${TEST_ENV[@]}" "$(base v1)" bash -s -- --dry-run > "$LOG" 2>&1
 RC=$?
 expect_ok "piped with arguments (bash -s -- --dry-run) succeeds"
 
-section "unit file is valid for systemd"
+section "unit files are valid for systemd"
+reset_state
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1
 if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd > /tmp/apt-systemd.log 2>&1; then
   systemd-analyze verify "$UNIT" > "$LOG" 2>&1
   SA_RC=$?
@@ -399,6 +492,14 @@ if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends
   else
     : > "$LOG"; ok "systemd-analyze verify: no unknown or invalid directives ($(systemd --version | head -n 1))"
   fi
+  systemd-analyze verify "$UPD_UNIT" "$UPD_TIMER" > "$LOG" 2>&1
+  SA_RC=$?
+  if grep -E "rougechain-update\.(service|timer)" "$LOG" | grep -qiE "unknown|invalid|failed to parse|not executable|ignoring|bad"; then
+    bad "systemd-analyze verify: problems reported for the auto-update service/timer (exit $SA_RC)"
+  else
+    : > "$LOG"; ok "systemd-analyze verify: auto-update service + timer have no unknown or invalid directives"
+  fi
+  if systemd-analyze calendar hourly > "$LOG" 2>&1; then : > "$LOG"; ok "systemd-analyze calendar: 'hourly' is a valid OnCalendar value"; else bad "systemd-analyze calendar hourly"; fi
 else
   cp /tmp/apt-systemd.log "$LOG"; bad "could not install systemd to verify the unit"
 fi
