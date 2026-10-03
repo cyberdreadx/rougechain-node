@@ -10,7 +10,7 @@ import { useQr } from "../wallet/ReceiveDialog";
 import { toast } from "../wallet/toast";
 import i18n from "../i18n";
 import { BaseConnect, shortAddr } from "./BaseConnect";
-import { claimBtcDeposit, claimExistingDeposit, depositFromBase, errorMessage, L1_SYMBOL, type FlowCtx, type FlowOutcome } from "./flows";
+import { claimBtcDeposit, claimExistingDeposit, depositFromBase, errorMessage, evmDepositsEnabled, L1_SYMBOL, type FlowCtx, type FlowOutcome } from "./flows";
 import { WrongChainError } from "./evm";
 import type { BaseConnection, EvmBalances } from "./useBaseConnection";
 import { assetDef, formatUnits, isBaseTxHash, normalizeBtcTxid, parseDepositAmount, type DepositAmount } from "./validate";
@@ -81,8 +81,11 @@ export function EvmDepositForm({
   const insufficient = parsed?.ok && balance !== null && parsed.value.baseUnits > balance;
   const configured = asset === "XRGE" ? xrge.enabled && !!xrge.vaultAddress && !!xrge.tokenAddress : config.enabled && !!config.custodyAddress;
 
+  const paused = asset !== "XRGE" && !evmDepositsEnabled();
+
   const review = () => {
     setError("");
+    if (paused) return setError(t("errors.evmDepositsPaused"));
     if (!conn.address || !conn.provider) return setError(t("errors.connectBaseFirst"));
     if (conn.wrongChain) return setError(t("errors.wrongChain", { actual: conn.walletChainId ?? t("unknownChain"), chain: chain.chainLabel, expected: chain.chainId }));
     const p = parseDepositAmount(asset, amount);
@@ -238,7 +241,12 @@ export function EvmDepositForm({
           {error}
         </p>
       )}
-      <Button type="submit" disabled={!conn.address || conn.wrongChain || !parsed?.ok || !!insufficient}>
+      {paused && (
+        <p className="form-error" role="alert">
+          {t("errors.evmDepositsPaused")}
+        </p>
+      )}
+      <Button type="submit" disabled={paused || !conn.address || conn.wrongChain || !parsed?.ok || !!insufficient}>
         {t("form.review")}
       </Button>
       <p className="form-hint">{asset === "XRGE" ? t("info.depositXrge") : t("info.depositEvm", { asset: def.label, l1: def.l1Label })}</p>
@@ -483,7 +491,12 @@ export function ClaimExistingCard({ conn, chain, recipientPubkey, onDone }: { co
             {error}
           </p>
         )}
-        <Button type="submit" disabled={busy || !txHash.trim() || !conn.address || !recipientPubkey}>
+        {!evmDepositsEnabled() && (
+          <p className="form-error" role="alert">
+            {t("errors.evmDepositsPaused")}
+          </p>
+        )}
+        <Button type="submit" disabled={!evmDepositsEnabled() || busy || !txHash.trim() || !conn.address || !recipientPubkey}>
           {busy ? t("claim.claiming") : t("claim.button")}
         </Button>
       </form>

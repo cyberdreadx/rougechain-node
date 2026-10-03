@@ -107,9 +107,19 @@ export interface EvmDepositParams {
   xrge?: { vaultAddress?: string; tokenAddress?: string };
 }
 
+/**
+ * ETH / USDC deposits (and the manual claim of one) are paused unless the build sets
+ * VITE_EVM_DEPOSIT_ENABLED=true. The guard runs before any wallet request, so a paused build can
+ * never start a deposit transaction. XRGE deposits are not affected.
+ */
+export function evmDepositsEnabled(): boolean {
+  return import.meta.env.VITE_EVM_DEPOSIT_ENABLED === "true";
+}
+
 /** Base → RougeChain deposit for ETH / USDC / XRGE (apps/web handleDeposit). */
 export async function depositFromBase(p: EvmDepositParams, ctx: FlowCtx = {}): Promise<FlowOutcome> {
   const sleep = ctx.sleep ?? realSleep;
+  if (p.asset !== "XRGE" && !evmDepositsEnabled()) throw new Error(i18n.t("bridge:errors.evmDepositsPaused"));
   const { provider, evmAddress } = p;
   ctx.onStep?.(i18n.t("bridge:steps.checkingChain"));
   await assertChain(provider, p.chainId);
@@ -200,6 +210,7 @@ export async function claimExistingDeposit(
   p: { provider: Eip1193Provider; evmAddress: string; txHash: string; recipientPubkey: string; token: "ETH" | "USDC"; chainId: number },
   ctx: FlowCtx = {},
 ): Promise<FlowOutcome> {
+  if (!evmDepositsEnabled()) throw new Error(i18n.t("bridge:errors.evmDepositsPaused"));
   await assertChain(p.provider, p.chainId);
   let sig: string;
   try {
