@@ -3,7 +3,7 @@
 //!
 //! Every upgrade check in the node (`tx_uniqueness_rule_active`, `proposer_selection_active`,
 //! `finality_v2_active`, `game_ready_active`, `game_ready_2_active`, `game_ready_3_active`,
-//! `payable_calls_active`, `token_minting_active`, `contract_nft_royalty_active`) reads its height from the schedule selected here at startup by chain id.
+//! `payable_calls_active`, `token_minting_active`, `contract_nft_royalty_active`, `monetary_integrity_active`) reads its height from the schedule selected here at startup by chain id.
 //!
 //! * **Mainnet** (`rougechain-mainnet-1`) keeps the heights it activated at. They are history now:
 //!   changing any of them would make a node reject mainnet's own blocks. `mainnet_schedule_is_pinned`
@@ -38,6 +38,13 @@ pub struct UpgradeSchedule {
     /// scheduled on any network yet — see `node::CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT`; planned to
     /// activate at the same height as TOKEN_MINTING (runbook in `docs/running-a-node/upgrade-schedule.md`).
     pub contract_nft_royalty: Option<u64>,
+    /// MONETARY_INTEGRITY (fee range, no `slash` transactions, faucet flag only where
+    /// `faucet_mint` allows it). Not scheduled on any network yet — see
+    /// `node::MONETARY_INTEGRITY_ACTIVATION_HEIGHT`.
+    pub monetary_integrity: Option<u64>,
+    /// Whether this network has a faucet (a mint signed by a genesis validator key). Judged in
+    /// consensus from MONETARY_INTEGRITY; mainnet has none.
+    pub faucet_mint: bool,
     /// One-time testnet cleanup: at `height`, these validators' stake is returned to their balances
     /// and their stake set to zero (keys nobody holds, whose stake would block finality). Applied
     /// identically by the node and by the finality validator replay. Never set on mainnet.
@@ -67,6 +74,8 @@ pub const MAINNET: UpgradeSchedule = UpgradeSchedule {
     payable_calls: crate::node::PAYABLE_CALLS_ACTIVATION_HEIGHT,
     token_minting: crate::node::TOKEN_MINTING_ACTIVATION_HEIGHT,
     contract_nft_royalty: crate::node::CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT,
+    monetary_integrity: crate::node::MONETARY_INTEGRITY_ACTIVATION_HEIGHT,
+    faucet_mint: false,
     validator_retirement: None,
 };
 
@@ -84,6 +93,8 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     payable_calls: Some(1200),
     token_minting: Some(1360),
     contract_nft_royalty: Some(1360),
+    monetary_integrity: None,
+    faucet_mint: true,
     validator_retirement: Some(ValidatorRetirement { height: 1240, validators: &[TESTNET_RETIRED_VALIDATOR] }),
 };
 
@@ -136,6 +147,8 @@ mod tests {
             payable_calls: Some(190),
             token_minting: Some(235),
             contract_nft_royalty: Some(235),
+            monetary_integrity: None,
+            faucet_mint: false,
             validator_retirement: None,
         });
         assert_eq!(schedule_for(MAINNET_CHAIN_ID), &MAINNET);

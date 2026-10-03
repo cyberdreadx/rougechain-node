@@ -172,6 +172,63 @@ pub fn require_confirmations(deposit_block: u64, latest: Option<u64>, min_conf: 
     }
 }
 
+/// A plain ETH transfer to the custody address, proven from BOTH the transaction and its receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectEthDeposit { pub sender: String, pub l1_units: u64, pub amount_wei: u128, pub block: u64 }
+
+fn strict_hex_u128(v: Option<&serde_json::Value>, what: &str) -> Result<u128, String> {
+    let h = v.and_then(|x| x.as_str()).ok_or_else(|| format!("{} missing", what))?;
+    let d = h.strip_prefix("0x").ok_or_else(|| format!("{} malformed", what))?;
+    if d.is_empty() || d.len() > 32 { return Err(format!("{} malformed or out of range", what)); }
+    u128::from_str_radix(d, 16).map_err(|_| format!("{} malformed", what))
+}
+
+/// Verify a manual ETH deposit claim. `tx` = `eth_getTransactionByHash.result`, `receipt` =
+/// `eth_getTransactionReceipt.result` for the SAME hash. Credit is allowed only when the receipt
+/// proves the transaction SUCCEEDED and the transaction is a plain value transfer (empty calldata)
+/// to the configured custody address. That a transaction exists is never enough. A call into the
+/// custody contract (non-empty calldata) is not accepted here: deposits made through the
+/// contract's deposit function are credited from its event by `verify_rouge_bridge_deposit`.
+/// Every missing or malformed field is an error — nothing defaults.
+pub fn verify_direct_eth_deposit(tx: &serde_json::Value, receipt: &serde_json::Value, custody: &str) -> Result<DirectEthDeposit, String> {
+    let custody = custody.trim().to_lowercase();
+    if custody.len() != 42 || !custody.starts_with("0x") { return Err("custody address not configured".into()); }
+    if tx.is_null() { return Err("transaction not found or not yet mined".into()); }
+    if receipt.is_null() { return Err("transaction receipt not found — not yet mined".into()); }
+    match receipt.get("status").and_then(|v| v.as_str()) {
+        Some("0x1") => {}
+        Some(_) => return Err("deposit transaction reverted — nothing was deposited".into()),
+        None => return Err("receipt has no status — refusing to credit".into()),
+    }
+    let (tx_hash, rc_hash) = (lc(tx.get("hash")), lc(receipt.get("transactionHash")));
+    if tx_hash.len() != 66 || tx_hash != rc_hash { return Err("receipt does not belong to this transaction".into()); }
+    let block = strict_hex_u128(tx.get("blockNumber"), "transaction block number")?;
+    if block != strict_hex_u128(receipt.get("blockNumber"), "receipt block number")? { return Err("transaction and receipt disagree on the block".into()); }
+    let block = u64::try_from(block).map_err(|_| "block number out of range".to_string())?;
+    if lc(tx.get("to")) != custody || lc(receipt.get("to")) != custody { return Err(format!("ETH must be sent directly to the custody address {}", custody)); }
+    match tx.get("input").and_then(|v| v.as_str()) {
+        Some("0x") => {}
+        Some(_) => return Err("not a plain ETH transfer (the transaction carries calldata) — deposits made through the bridge contract are credited automatically from its event".into()),
+        None => return Err("transaction has no input field — refusing to credit".into()),
+    }
+    let sender = lc(tx.get("from"));
+    if sender.len() != 42 || sender != lc(receipt.get("from")) { return Err("transaction sender missing or inconsistent".into()); }
+    let amount_wei = strict_hex_u128(tx.get("value"), "transaction value")?;
+    if amount_wei == 0 { return Err("transaction has zero value".into()); }
+    if amount_wei % WEI_PER_QETH_UNIT != 0 { return Err(format!("ETH deposit {} wei is not a whole number of qETH units (10^12 wei) — sub-unit dust rejected", amount_wei)); }
+    let l1_units = u64::try_from(amount_wei / WEI_PER_QETH_UNIT).map_err(|_| "qETH amount exceeds u64".to_string())?;
+    Ok(DirectEthDeposit { sender, l1_units, amount_wei, block })
+}
+
+/// The single claim-store key for an XRGE bridge deposit identified by its Base tx hash.
+/// BOTH XRGE credit routes — the user-facing `/api/bridge/xrge/claim` and the relayer/admin
+/// `process_bridge_reclaim` — key through here, so one deposit is credited at most once no
+/// matter which path runs first. Case- and `0x`-insensitive, matching how the chain reports
+/// the hash (`xrge:0x<64 lowercase hex>`).
+pub fn xrge_claim_key(evm_tx_hash: &str) -> String {
+    format!("xrge:0x{}", evm_tx_hash.trim_start_matches("0x").to_lowercase())
+}
+
 /// Atomically reserve the Base tx BEFORE minting; release the reservation only if the mint fails.
 pub async fn reserve_then_mint<F, T>(store: &quantum_vault_storage::bridge_claim_store::BridgeClaimStore, claim_key: &str, mint: F) -> Result<T, String>
 where F: FnOnce() -> Result<T, String> {
@@ -368,5 +425,88 @@ mod tests {
         assert!(!store.contains("0xdef").await);
         assert_eq!(reserve_then_mint(&store, "0xdef", mint).await.unwrap(), 2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn the_two_xrge_credit_paths_share_one_claim_key_so_a_deposit_credits_once() {
+        // The key is case- and 0x-insensitive, and identical for however the hash is written —
+        // so /api/bridge/xrge/claim and process_bridge_reclaim cannot each credit the same deposit.
+        let variants = ["0xABCdef01", "abcdef01", "0xabcdef01", "ABCDEF01"];
+        for v in variants {
+            assert_eq!(xrge_claim_key(v), "xrge:0xabcdef01", "{v}");
+        }
+        // XRGE is namespaced away from the bare-hash key an ETH/USDC claim uses for the same hash.
+        assert_ne!(xrge_claim_key("0xdeadbeef"), "0xdeadbeef");
+
+        let dir = std::env::temp_dir().join(format!("rbd-xrge-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = quantum_vault_storage::bridge_claim_store::BridgeClaimStore::new(&dir).unwrap();
+        let mints = std::sync::atomic::AtomicU32::new(0);
+        let mint = || -> Result<u32, String> { Ok(mints.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1) };
+        // path A (user claim) reserves + mints for a hash written one way …
+        let key_a = xrge_claim_key("0xFEEDc0de");
+        assert_eq!(reserve_then_mint(&store, &key_a, mint).await.unwrap(), 1);
+        // … path B (relayer reclaim) sees the SAME deposit, written differently, as already claimed.
+        let key_b = xrge_claim_key("feedc0de");
+        assert_eq!(key_a, key_b);
+        assert!(store.contains(&key_b).await, "the reclaim path sees the user claim");
+        assert!(reserve_then_mint(&store, &key_b, mint).await.unwrap_err().contains("already claimed"));
+        assert_eq!(mints.load(std::sync::atomic::Ordering::SeqCst), 1, "one deposit, one mint across both paths");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── manual ETH claim: success must be proven from the receipt ──
+    const TXH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    fn eth_tx(to: &str, value: &str, input: &str) -> serde_json::Value {
+        serde_json::json!({ "hash": TXH, "from": SENDER, "to": to, "value": value, "input": input, "blockNumber": "0x64" })
+    }
+    fn eth_rc(status: &str, to: &str) -> serde_json::Value {
+        serde_json::json!({ "transactionHash": TXH, "from": SENDER, "to": to, "status": status, "blockNumber": "0x64", "logs": [] })
+    }
+    const ONE_ETH: &str = "0xde0b6b3a7640000";
+
+    #[test]
+    fn direct_eth_deposit_accepts_only_a_successful_plain_transfer_to_custody() {
+        let d = verify_direct_eth_deposit(&eth_tx(BRIDGE, ONE_ETH, "0x"), &eth_rc("0x1", BRIDGE), BRIDGE).unwrap();
+        assert_eq!(d, DirectEthDeposit { sender: SENDER.into(), l1_units: 1_000_000, amount_wei: 1_000_000_000_000_000_000, block: 100 });
+        // mixed-case custody config and addresses still match
+        assert!(verify_direct_eth_deposit(&eth_tx(&BRIDGE.to_uppercase().replace("0X", "0x"), ONE_ETH, "0x"), &eth_rc("0x1", BRIDGE), &BRIDGE.to_uppercase().replace("0X", "0x")).is_ok());
+    }
+
+    #[test]
+    fn direct_eth_deposit_refuses_a_transaction_that_did_not_succeed() {
+        let tx = eth_tx(BRIDGE, ONE_ETH, "0x");
+        assert!(verify_direct_eth_deposit(&tx, &eth_rc("0x0", BRIDGE), BRIDGE).unwrap_err().contains("reverted"));
+        let mut no_status = eth_rc("0x1", BRIDGE); no_status.as_object_mut().unwrap().remove("status");
+        assert!(verify_direct_eth_deposit(&tx, &no_status, BRIDGE).unwrap_err().contains("no status"));
+        assert!(verify_direct_eth_deposit(&tx, &serde_json::Value::Null, BRIDGE).unwrap_err().contains("receipt not found"));
+        assert!(verify_direct_eth_deposit(&serde_json::Value::Null, &eth_rc("0x1", BRIDGE), BRIDGE).is_err());
+    }
+
+    #[test]
+    fn direct_eth_deposit_refuses_anything_that_is_not_exactly_the_deposit() {
+        let ok_rc = eth_rc("0x1", BRIDGE);
+        // a call into the custody contract is not a plain transfer
+        assert!(verify_direct_eth_deposit(&eth_tx(BRIDGE, ONE_ETH, "0xdeadbeef"), &ok_rc, BRIDGE).unwrap_err().contains("calldata"));
+        let mut no_input = eth_tx(BRIDGE, ONE_ETH, "0x"); no_input.as_object_mut().unwrap().remove("input");
+        assert!(verify_direct_eth_deposit(&no_input, &ok_rc, BRIDGE).is_err());
+        // wrong destination (transaction or receipt)
+        assert!(verify_direct_eth_deposit(&eth_tx(USDC, ONE_ETH, "0x"), &eth_rc("0x1", USDC), BRIDGE).unwrap_err().contains("custody"));
+        assert!(verify_direct_eth_deposit(&eth_tx(BRIDGE, ONE_ETH, "0x"), &eth_rc("0x1", USDC), BRIDGE).is_err());
+        // receipt for a different transaction or block
+        let mut other = eth_rc("0x1", BRIDGE); other["transactionHash"] = serde_json::json!(format!("0x{}", "22".repeat(32)));
+        assert!(verify_direct_eth_deposit(&eth_tx(BRIDGE, ONE_ETH, "0x"), &other, BRIDGE).unwrap_err().contains("does not belong"));
+        let mut other_block = eth_rc("0x1", BRIDGE); other_block["blockNumber"] = serde_json::json!("0x65");
+        assert!(verify_direct_eth_deposit(&eth_tx(BRIDGE, ONE_ETH, "0x"), &other_block, BRIDGE).is_err());
+        // zero, malformed, missing, oversized or dust value
+        for v in ["0x0", "0x", "12", "0xzz", "0x1", &format!("0x{}", "f".repeat(33))] {
+            assert!(verify_direct_eth_deposit(&eth_tx(BRIDGE, v, "0x"), &ok_rc, BRIDGE).is_err(), "value {v}");
+        }
+        let mut no_value = eth_tx(BRIDGE, ONE_ETH, "0x"); no_value.as_object_mut().unwrap().remove("value");
+        assert!(verify_direct_eth_deposit(&no_value, &ok_rc, BRIDGE).is_err());
+        // sender mismatch between transaction and receipt; unconfigured custody
+        let mut rc2 = eth_rc("0x1", BRIDGE); rc2["from"] = serde_json::json!(USDC);
+        assert!(verify_direct_eth_deposit(&eth_tx(BRIDGE, ONE_ETH, "0x"), &rc2, BRIDGE).is_err());
+        assert!(verify_direct_eth_deposit(&eth_tx(BRIDGE, ONE_ETH, "0x"), &ok_rc, "").is_err());
     }
 }

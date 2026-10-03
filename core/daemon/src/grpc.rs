@@ -20,11 +20,14 @@ use proto::*;
 #[derive(Clone)]
 pub struct GrpcNode {
     node: Arc<L1Node>,
+    /// Same switch as the HTTP faucet routes (`--faucet-enabled`, dev/testnet only). The gRPC
+    /// faucet refuses unless it is set: a firewall is defence in depth, not the authorization.
+    faucet_enabled: bool,
 }
 
 impl GrpcNode {
-    pub fn new(node: Arc<L1Node>) -> Self {
-        Self { node }
+    pub fn new(node: Arc<L1Node>, faucet_enabled: bool) -> Self {
+        Self { node, faucet_enabled }
     }
 
     pub fn chain_service(self) -> ChainServiceServer<Self> {
@@ -98,6 +101,9 @@ impl ChainService for GrpcNode {
     }
 
     async fn faucet(&self, request: Request<FaucetRequest>) -> Result<Response<SubmitTxResponse>, Status> {
+        if !self.faucet_enabled {
+            return Err(Status::permission_denied("Faucet is disabled on this network."));
+        }
         let req = request.into_inner();
         let tx = self.node.submit_faucet_tx(&req.recipient_public_key, req.amount)
             .map_err(|e| Status::invalid_argument(e))?;
@@ -417,5 +423,43 @@ fn map_message(message: quantum_vault_storage::messenger_store::MessengerMessage
         destruct_after_seconds: message.destruct_after_seconds.unwrap_or_default(),
         created_at: message.created_at,
         is_read: message.is_read,
+    }
+}
+
+#[cfg(test)]
+mod faucet_gate_tests {
+    use super::*;
+    use quantum_vault_types::ChainConfig;
+
+    fn node(tag: &str) -> (std::path::PathBuf, Arc<L1Node>) {
+        let dir = std::env::temp_dir().join(format!("grpc-faucet-{}-{}-{}", tag, std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let node = L1Node::new(crate::node::NodeOptions {
+            data_dir: dir.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false, bridge_withdraw_store: None, bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
+        }).expect("node");
+        node.init().expect("init");
+        (dir, Arc::new(node))
+    }
+    fn req() -> Request<FaucetRequest> { Request::new(FaucetRequest { recipient_public_key: "ab".repeat(32), amount: 1_000 }) }
+
+    #[tokio::test]
+    async fn grpc_faucet_is_refused_unless_the_faucet_is_enabled() {
+        let (dir, n) = node("off");
+        let err = ChainService::faucet(&GrpcNode::new(n.clone(), false), req()).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        assert!(n.get_mempool_snapshot().is_empty(), "nothing was queued");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn grpc_faucet_still_works_where_the_faucet_is_enabled() {
+        let (dir, n) = node("on");
+        assert!(ChainService::faucet(&GrpcNode::new(n.clone(), true), req()).await.is_ok());
+        assert_eq!(n.get_mempool_snapshot().len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
