@@ -204,6 +204,7 @@
     "insufficientOnBase": "Insufficient {{symbol}} balance on Base",
     "insufficientBalance": "Insufficient {{symbol}} balance",
     "insufficientFee": "You need 0.1 XRGE on RougeChain for the bridge fee",
+    "evmDepositsPaused": "ETH and USDC deposits are temporarily paused for maintenance. XRGE deposits and all withdrawals are unaffected.",
     "xrgeNotConfigured": "XRGE bridge not fully configured",
     "notConfigured": "Bridge not configured",
     "approvalFailed": "The XRGE approval failed or timed out on Base",

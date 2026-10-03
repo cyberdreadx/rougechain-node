@@ -203,6 +203,7 @@
     "insufficientOnBase": "Base 上的 {{symbol}} 余额不足",
     "insufficientBalance": "{{symbol}} 余额不足",
     "insufficientFee": "您需要在 RougeChain 上持有 0.1 XRGE 用于支付跨链手续费",
+    "evmDepositsPaused": "ETH 和 USDC 存款因维护暂时暂停。XRGE 存款和所有提款不受影响。",
     "xrgeNotConfigured": "XRGE 跨链桥尚未完成配置",
     "notConfigured": "跨链桥未配置",
     "approvalFailed": "XRGE 授权在 Base 上失败或超时",

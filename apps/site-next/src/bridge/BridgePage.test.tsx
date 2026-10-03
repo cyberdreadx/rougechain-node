@@ -82,6 +82,7 @@ beforeEach(() => {
   resetBrowserState();
   Reflect.deleteProperty(window, "ethereum");
   flowTiming.sleep = instant;
+  vi.stubEnv("VITE_EVM_DEPOSIT_ENABLED", "true");
 });
 afterEach(() => {
   flowTiming.sleep = undefined;
