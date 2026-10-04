@@ -27,10 +27,14 @@ From block 245 a block is invalid if it carries a transaction that:
   `token_unlock`, `create_staking_pool`, `token_stake`, `token_unstake`, `create_proposal`,
   `cast_vote`, `execute_proposal`, `delegate`, `undelegate`, `token_approve`, `token_transfer_from`.
 
+Token allowances are not affected: `/api/v2/token/approve` and `/api/v2/token/transfer-from` use the
+`approve` and `transfer_from` transaction types, which stay enabled; `token_approve` and
+`token_transfer_from` are older types that no client sends.
+
 The suspended features are switched off until a later release restores them. On mainnet the shielded
 pool is empty and none of the other types has ever been used, so no funds are affected. Transfers,
-validator staking, swaps and liquidity, tokens and minting, NFTs, contracts, the bridge, messaging
-and mail are unchanged. Nothing changes below the activation height; mainnet history replays
+validator staking, swaps and liquidity, tokens, minting and allowances, NFTs, contracts, the bridge,
+messaging and mail are unchanged. Nothing changes below the activation height; mainnet history replays
 identically.
 
 **Also in this build (no activation height):** stricter verification on the manual bridge-deposit
