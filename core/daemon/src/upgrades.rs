@@ -39,8 +39,8 @@ pub struct UpgradeSchedule {
     /// activate at the same height as TOKEN_MINTING (runbook in `docs/running-a-node/upgrade-schedule.md`).
     pub contract_nft_royalty: Option<u64>,
     /// MONETARY_INTEGRITY (fee range, no `slash` transactions, faucet flag only where
-    /// `faucet_mint` allows it, no suspended transaction types). Not scheduled on any network yet — see
-    /// `node::MONETARY_INTEGRITY_ACTIVATION_HEIGHT`.
+    /// `faucet_mint` allows it, no suspended transaction types). Mainnet 245
+    /// (`node::MONETARY_INTEGRITY_ACTIVATION_HEIGHT`), testnet 1390.
     pub monetary_integrity: Option<u64>,
     /// Whether this network has a faucet (a mint signed by a genesis validator key). Judged in
     /// consensus from MONETARY_INTEGRITY; mainnet has none.
@@ -93,7 +93,7 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     payable_calls: Some(1200),
     token_minting: Some(1360),
     contract_nft_royalty: Some(1360),
-    monetary_integrity: None,
+    monetary_integrity: Some(1390),
     faucet_mint: true,
     validator_retirement: Some(ValidatorRetirement { height: 1240, validators: &[TESTNET_RETIRED_VALIDATOR] }),
 };
@@ -147,7 +147,7 @@ mod tests {
             payable_calls: Some(190),
             token_minting: Some(235),
             contract_nft_royalty: Some(235),
-            monetary_integrity: None,
+            monetary_integrity: Some(245),
             faucet_mint: false,
             validator_retirement: None,
         });

@@ -24,6 +24,7 @@
 - [Signed releases](running-a-node/releases.md)
 - [Automatic updates](running-a-node/auto-update.md)
 - [Network upgrade schedule (mainnet / testnet)](running-a-node/upgrade-schedule.md)
+- [Mandatory upgrade (2026-10): release 1.6.2, monetary-integrity rule, block 245](running-a-node/mandatory-upgrade-2026-10-245.md)
 - [Mandatory upgrade (2026-10): mintable tokens + royalty-aware contracts, block 235](running-a-node/mandatory-upgrade-2026-10.md)
 - [Mandatory upgrade (2026-09-28): finality + game-ready contracts](running-a-node/mandatory-upgrade-2026-09-28.md)
 - [Mandatory upgrade (2026-09)](running-a-node/mandatory-upgrade-2026-09.md)
