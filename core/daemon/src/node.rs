@@ -387,6 +387,84 @@ pub fn contract_nft_royalty_active(height: u64) -> bool {
     matches!(crate::upgrades::current().contract_nft_royalty, Some(a) if height >= a)
 }
 
+/// MONETARY_INTEGRITY — from this height a block is invalid if it carries a transaction that
+/// (a) has a fee that is not a finite number ≥ 0, (b) is of type `slash`, (c) sets the faucet
+/// flag on a network whose schedule does not allow faucet mints (`upgrades::…faucet_mint`; mainnet
+/// does not), or (d) is of a suspended type (`SUSPENDED_TX_TYPES`).
+/// Execution is unchanged, so history below the height replays byte-identically.
+/// `None` = not scheduled (mainnet height; the node reads `crate::upgrades::current()`).
+pub const MONETARY_INTEGRITY_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_MONETARY_INTEGRITY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_monetary_integrity(h: Option<u64>) {
+    TEST_MONETARY_INTEGRITY_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn monetary_integrity_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_MONETARY_INTEGRITY_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(crate::upgrades::current().monetary_integrity, Some(a) if height >= a)
+}
+
+pub const FEE_RANGE_ERROR: &str = "transaction fee must be a finite number that is not negative";
+pub const SLASH_TX_ERROR: &str = "slash transactions are not accepted";
+pub const FAUCET_FLAG_ERROR: &str = "faucet mints are not allowed on this network";
+pub const SUSPENDED_TX_TYPE_ERROR: &str = "this transaction type is suspended";
+
+/// Transaction types suspended from MONETARY_INTEGRITY activation: their ledger effects are
+/// applied without the state checks they depend on (`apply_shielded_state_effects` and
+/// `apply_web3_state_effects` have had no call site since F=49), so a block may not carry them
+/// until those features are restored by a later upgrade. Consensus from activation only (not
+/// part of the always-on node-local check), so funds already in these features can leave first.
+pub const SUSPENDED_TX_TYPES: &[&str] = &[
+    "shield", "shielded_transfer", "unshield",
+    "token_lock", "token_unlock",
+    "create_staking_pool", "token_stake", "token_unstake",
+    "create_proposal", "cast_vote", "execute_proposal",
+    "delegate", "undelegate",
+    "token_approve", "token_transfer_from",
+];
+
+/// The fee and transaction-type part of MONETARY_INTEGRITY. Node-local and ALWAYS ON at mempool
+/// admission and block production (no honest client produces either), consensus from activation.
+pub fn fee_and_type_sanity(tx: &TxV1) -> Result<(), String> {
+    if !tx.fee.is_finite() || tx.fee < 0.0 || tx.fee.is_sign_negative() {
+        return Err(FEE_RANGE_ERROR.to_string());
+    }
+    if tx.tx_type == "slash" {
+        return Err(SLASH_TX_ERROR.to_string());
+    }
+    Ok(())
+}
+
+/// The whole MONETARY_INTEGRITY rule, given whether this network allows faucet mints.
+pub fn monetary_integrity_check(tx: &TxV1, faucet_mint_allowed: bool) -> Result<(), String> {
+    fee_and_type_sanity(tx)?;
+    if tx.payload.faucet == Some(true) && !faucet_mint_allowed {
+        return Err(FAUCET_FLAG_ERROR.to_string());
+    }
+    if SUSPENDED_TX_TYPES.contains(&tx.tx_type.as_str()) {
+        return Err(SUSPENDED_TX_TYPE_ERROR.to_string());
+    }
+    Ok(())
+}
+
+/// MONETARY_INTEGRITY for a block at `height` (consensus at import; also applied by the mempool
+/// and the producer). Before activation: no check.
+pub fn monetary_integrity_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
+    if !monetary_integrity_active(height) {
+        return Ok(());
+    }
+    monetary_integrity_check(tx, crate::upgrades::current().faucet_mint)
+}
+
 /// Largest integer a JSON client can send exactly (2^53 - 1). Mint amounts, mintable initial
 /// supplies and caps are bounded by it, so every amount survives JSON relay and the ledger's
 /// `as f64` credit path exactly.
@@ -1488,6 +1566,8 @@ impl L1Node {
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
             nft_royalty_cap_tx_rule(tx, block.header.height)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
+            monetary_integrity_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
         }
         // Proposer selection (consensus rule from PROPOSER_SELECTION_ACTIVATION_HEIGHT): judged
         // against the validator state after H-1 = the store as it is right now, before any
@@ -2435,6 +2515,8 @@ impl L1Node {
         game_ready_tx_rule(&tx, next_height)?;
         token_minting_tx_rule(&tx, next_height)?;
         nft_royalty_cap_tx_rule(&tx, next_height)?;
+        fee_and_type_sanity(&tx)?; // node-local, always on
+        monetary_integrity_tx_rule(&tx, next_height)?;
         if tx.tx_type == "mint_tokens" && token_minting_active(next_height) {
             self.check_token_mint_now(&tx)?;
         }
@@ -3624,6 +3706,7 @@ impl L1Node {
             // produced (a tx admitted just before activation must still bind after it).
             .filter(|(_, tx)| token_minting_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| nft_royalty_cap_tx_rule(tx, producing_height).is_ok())
+            .filter(|(_, tx)| fee_and_type_sanity(tx).is_ok() && monetary_integrity_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| crate::v2_binding::verify_v2_binding_at(tx, producing_height).is_ok())
             .collect();
         if verified_entries.is_empty() {
@@ -13452,5 +13535,682 @@ mod nft_royalty_cap_tests {
         n.mine(vec![n.create("OK", json!(10_000))]);
         assert_eq!(n.bps(&n.b, "OK"), 10_000);
         set_test_contract_nft_royalty(None);
+    }
+}
+
+#[cfg(test)]
+mod monetary_integrity_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, signed, TmpDir};
+    use quantum_vault_crypto::pqc_keygen;
+
+    fn raw(ty: &str, from: &str, nonce: u64, fee: f64, faucet: Option<bool>) -> TxV1 {
+        TxV1 { version: 1, tx_type: ty.into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { to_pub_key_hex: Some("aa".repeat(32)), amount: Some(1), faucet,
+                target_pub_key: if ty == "slash" { Some("bb".repeat(32)) } else { None }, ..Default::default() },
+            fee, sig: String::new(), signed_payload: None }
+    }
+
+    /// Two independently constructed nodes with the same funded accounts. `x` and `y` import the
+    /// same relayed blocks; the rule's height is switched per call (`at`) so one test can hold a
+    /// node that has the rule scheduled and one that does not.
+    struct Net { _d: Vec<TmpDir>, x: L1Node, y: L1Node, user: PQKeypair, proposer: PQKeypair, nonce: std::cell::Cell<u64> }
+
+    fn net() -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0))); // header state root committed + verified
+        let (dx, x, _) = node_with_store();
+        let (dy, y, _) = node_with_store();
+        let (user, proposer) = (pqc_keygen(), pqc_keygen());
+        for n in [&x, &y] { fund_xrge(n, &user.public_key_hex, 1_000.0); }
+        Net { _d: vec![dx, dy], x, y, user, proposer, nonce: std::cell::Cell::new(0) }
+    }
+
+    fn at<T>(activation: Option<u64>, f: impl FnOnce() -> T) -> T {
+        set_test_monetary_integrity(activation);
+        let out = f();
+        set_test_monetary_integrity(None);
+        out
+    }
+
+    impl Net {
+        fn signed(&self, ty: &str, fee: f64, faucet: Option<bool>) -> TxV1 {
+            self.nonce.set(self.nonce.get() + 1);
+            signed(raw(ty, &self.user.public_key_hex, self.nonce.get(), fee, faucet), &self.user.secret_key_hex)
+        }
+        fn ordinary(&self) -> TxV1 { self.signed("transfer", 0.1, None) }
+        /// The shapes the rule refuses, as validly signed transactions.
+        fn refused_shapes(&self) -> Vec<(TxV1, &'static str)> {
+            let mut v = vec![(self.signed("transfer", -1.0, None), FEE_RANGE_ERROR), (self.signed("transfer", -0.0, None), FEE_RANGE_ERROR),
+                 (self.signed("slash", 0.0, None), SLASH_TX_ERROR), (self.signed("transfer", 0.1, Some(true)), FAUCET_FLAG_ERROR)];
+            for ty in ["shield", "unshield", "shielded_transfer", "token_lock", "token_unlock", "token_unstake", "token_transfer_from"] {
+                v.push((self.signed(ty, 0.1, None), SUSPENDED_TX_TYPE_ERROR));
+            }
+            v
+        }
+        /// A fully valid block on `n`'s tip carrying `txs` (correct root found by probe + rollback).
+        fn block(&self, n: &L1Node, txs: Vec<TxV1>) -> BlockV1 {
+            let t = n.tip_height().unwrap() + 1;
+            let probe = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs.clone(), None, t);
+            let snap = n.capture_pre_apply_snapshot(&probe).unwrap();
+            let _ = n.apply_balance_block(&probe).unwrap();
+            let root = n.compute_state_root_for_height(probe.header.height).unwrap();
+            n.restore_pre_apply_snapshot(snap).unwrap();
+            let b = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs, Some(root), t);
+            serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap() // the relayed (P2P) shape
+        }
+        fn fingerprint(n: &L1Node) -> (u64, String, String) {
+            let h = n.tip_height().unwrap();
+            (h, n.get_block(h).unwrap().unwrap().hash, n.get_state_root().unwrap())
+        }
+    }
+
+    #[test]
+    fn mainnet_and_testnet_leave_the_rule_unscheduled() {
+        assert_eq!(MONETARY_INTEGRITY_ACTIVATION_HEIGHT, None);
+        assert_eq!((crate::upgrades::MAINNET.monetary_integrity, crate::upgrades::MAINNET.faucet_mint), (None, false));
+        assert_eq!((crate::upgrades::TESTNET.monetary_integrity, crate::upgrades::TESTNET.faucet_mint), (None, true));
+        // with nothing scheduled the consensus rule accepts every shape at every height
+        for h in [0, 1, 235, 1_000_000, u64::MAX] {
+            assert!(!monetary_integrity_active(h));
+            for tx in [raw("transfer", "k", 1, -1.0, None), raw("slash", "k", 1, 0.0, None), raw("transfer", "k", 1, 0.0, Some(true))] {
+                assert!(monetary_integrity_tx_rule(&tx, h).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn rule_refuses_each_case_accepts_ordinary_transactions_and_is_silent_below_activation() {
+        set_test_monetary_integrity(Some(10));
+        assert!(!monetary_integrity_active(9) && monetary_integrity_active(10) && monetary_integrity_active(u64::MAX));
+        let fee = |f: f64| raw("transfer", "k", 1, f, None);
+        // fee range
+        for f in [-1.0, -1e-9, -0.0, f64::MIN, -f64::MIN_POSITIVE, f64::NAN, -f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(fee_and_type_sanity(&fee(f)).unwrap_err(), FEE_RANGE_ERROR, "{f}");
+            assert_eq!(monetary_integrity_tx_rule(&fee(f), 10).unwrap_err(), FEE_RANGE_ERROR, "{f}");
+            assert!(monetary_integrity_tx_rule(&fee(f), 9).is_ok(), "{f}: no check below activation");
+        }
+        for f in [0.0, f64::MIN_POSITIVE, 1e-9, 0.1, 1.0, 100.0, 1e15, f64::MAX] {
+            assert!(fee_and_type_sanity(&fee(f)).is_ok(), "{f}");
+            assert!(monetary_integrity_tx_rule(&fee(f), 10).is_ok(), "{f}");
+        }
+        // transaction type: only the exact type string is refused
+        let slash = raw("slash", "k", 1, 0.0, None);
+        assert_eq!(fee_and_type_sanity(&slash).unwrap_err(), SLASH_TX_ERROR);
+        assert_eq!(monetary_integrity_tx_rule(&slash, 10).unwrap_err(), SLASH_TX_ERROR);
+        assert!(monetary_integrity_tx_rule(&slash, 9).is_ok());
+        for ty in ["transfer", "stake", "unstake", "bridge_mint", "bridge_withdraw", "create_token", "mint_tokens", "swap",
+                   "create_pool", "add_liquidity", "remove_liquidity", "contract_call", "nft_create_collection", "nft_lock",
+                   "token_airdrop", "Slash", "slash ", "Shield", "unshield ", "token_unlocks"] {
+            assert!(monetary_integrity_tx_rule(&raw(ty, "k", 1, 0.5, None), 10).is_ok(), "{ty}");
+        }
+        // suspended types: refused in consensus from activation, untouched below it, and NOT part
+        // of the always-on node-local check (funds already inside can leave before activation)
+        assert_eq!(SUSPENDED_TX_TYPES.len(), 15);
+        for ty in SUSPENDED_TX_TYPES {
+            let t = raw(ty, "k", 1, 0.5, None);
+            assert_eq!(monetary_integrity_tx_rule(&t, 10).unwrap_err(), SUSPENDED_TX_TYPE_ERROR, "{ty}");
+            assert_eq!(monetary_integrity_tx_rule(&t, u64::MAX).unwrap_err(), SUSPENDED_TX_TYPE_ERROR, "{ty}");
+            assert!(monetary_integrity_tx_rule(&t, 9).is_ok(), "{ty}: no check below activation");
+            assert!(fee_and_type_sanity(&t).is_ok(), "{ty}: not in the always-on check");
+            assert_eq!(monetary_integrity_check(&t, true).unwrap_err(), SUSPENDED_TX_TYPE_ERROR, "{ty}: on every network");
+        }
+        // faucet flag: judged against the network's schedule, on any transaction type
+        for ty in ["transfer", "stake", "bridge_mint"] {
+            let f = raw(ty, "k", 1, 0.0, Some(true));
+            assert!(fee_and_type_sanity(&f).is_ok(), "the flag is not part of the always-on check");
+            assert_eq!(monetary_integrity_check(&f, false).unwrap_err(), FAUCET_FLAG_ERROR);
+            assert!(monetary_integrity_check(&f, true).is_ok(), "a network with a faucet keeps it");
+            assert_eq!(monetary_integrity_tx_rule(&f, 10).unwrap_err(), FAUCET_FLAG_ERROR, "tests run on the mainnet schedule");
+            assert!(monetary_integrity_tx_rule(&f, 9).is_ok());
+        }
+        for flag in [None, Some(false)] {
+            assert!(monetary_integrity_check(&raw("transfer", "k", 1, 0.0, flag), false).is_ok());
+        }
+        // the fee and type part still applies where a faucet exists; the fee is judged first
+        assert_eq!(monetary_integrity_check(&raw("transfer", "k", 1, -1.0, Some(true)), true).unwrap_err(), FEE_RANGE_ERROR);
+        assert_eq!(monetary_integrity_check(&raw("slash", "k", 1, 0.0, Some(true)), true).unwrap_err(), SLASH_TX_ERROR);
+        assert_eq!(monetary_integrity_check(&raw("slash", "k", 1, -1.0, Some(true)), false).unwrap_err(), FEE_RANGE_ERROR);
+        // the verdict is a pure function of the transaction and the height
+        let t = raw("slash", "k", 1, 0.0, None);
+        assert_eq!(monetary_integrity_tx_rule(&t, 10), monetary_integrity_tx_rule(&t.clone(), 10));
+        set_test_monetary_integrity(None);
+    }
+
+    /// The same block shape is accepted at activation − 1 and refused from activation, on the
+    /// real import path, with the same error on two independently constructed nodes.
+    #[test]
+    fn activation_boundary_on_the_import_path() {
+        const H: u64 = 3;
+        let n = net();
+        // heights 1 and 2 (= H − 1): every shape is still accepted, and both nodes agree
+        for _ in 1..H {
+            let txs: Vec<TxV1> = n.refused_shapes().into_iter().map(|(t, _)| t).chain([n.ordinary()]).collect();
+            let b = at(Some(H), || n.block(&n.x, txs));
+            at(Some(H), || n.x.import_block(b.clone())).expect("accepted below activation");
+            at(Some(H), || n.y.import_block(b.clone())).expect("accepted below activation");
+            assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        }
+        assert_eq!(n.x.tip_height().unwrap(), H - 1);
+        // height H: each shape alone, and mixed in after an ordinary transaction, is refused
+        let before = Net::fingerprint(&n.x);
+        for (bad, why) in n.refused_shapes() {
+            for (txs, idx) in [(vec![bad.clone()], 0), (vec![n.ordinary(), bad.clone()], 1)] {
+                let b = n.block(&n.x, txs); // built with the rule off: a block an old node would produce
+                let ex = at(Some(H), || n.x.import_block(b.clone())).unwrap_err();
+                let ey = at(Some(H), || n.y.import_block(b.clone())).unwrap_err();
+                assert_eq!(ex, format!("block {H} rejected: tx #{idx}: {why}"));
+                assert_eq!(ex, ey, "the same verdict and error on both nodes");
+                assert_eq!(Net::fingerprint(&n.x), before, "a refused block changes nothing");
+                assert_eq!(Net::fingerprint(&n.y), before);
+            }
+        }
+        // …and far above it
+        let late = n.block(&n.x, vec![n.signed("slash", 0.0, None)]);
+        assert!(at(Some(1), || n.x.import_block(late)).unwrap_err().contains(SLASH_TX_ERROR));
+        // an ordinary block at H is accepted by both, with equal roots
+        let ok = at(Some(H), || n.block(&n.x, vec![n.ordinary(), n.signed("transfer", 0.0, None), n.signed("transfer", 0.1, Some(false))]));
+        at(Some(H), || n.x.import_block(ok.clone())).expect("ordinary block at activation");
+        at(Some(H), || n.y.import_block(ok.clone())).expect("ordinary block at activation");
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        assert_eq!(n.x.tip_height().unwrap(), H);
+    }
+
+    /// A node with the rule scheduled and a node without it accept the same blocks and reach the
+    /// same state below the height; from the height the scheduled node refuses, deterministically.
+    #[test]
+    fn scheduled_and_unscheduled_nodes_agree_below_activation_and_part_at_it() {
+        const H: u64 = 4;
+        let n = net(); // x = scheduled at H, y = not scheduled
+        for _ in 1..H {
+            let txs: Vec<TxV1> = n.refused_shapes().into_iter().map(|(t, _)| t).chain([n.ordinary()]).collect();
+            let b = n.block(&n.y, txs);
+            at(Some(H), || n.x.import_block(b.clone())).expect("scheduled node accepts below activation");
+            at(None, || n.y.import_block(b.clone())).expect("unscheduled node accepts");
+            assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y), "same tip, block hash and state root");
+        }
+        let (before_x, shapes) = (Net::fingerprint(&n.x), n.refused_shapes());
+        // a third node, built separately and synced from the relayed blocks with the rule scheduled
+        let (_dz, z, _) = node_with_store();
+        fund_xrge(&z, &n.user.public_key_hex, 1_000.0);
+        for h in 1..H { at(Some(H), || z.import_block(n.x.get_block(h).unwrap().unwrap())).expect("sync"); }
+        assert_eq!(Net::fingerprint(&z), before_x);
+        for (bad, why) in shapes {
+            let b = n.block(&n.y, vec![bad]);
+            let ex = at(Some(H), || n.x.import_block(b.clone())).unwrap_err();
+            let ez = at(Some(H), || z.import_block(b.clone())).unwrap_err();
+            assert_eq!(ex, format!("block {H} rejected: tx #0: {why}"));
+            assert_eq!(ex, ez);
+            assert_eq!(at(Some(H), || n.x.import_block(b.clone())).unwrap_err(), ex, "and again on a retry");
+            assert_eq!((Net::fingerprint(&n.x), Net::fingerprint(&z)), (before_x.clone(), before_x.clone()));
+        }
+        // the unscheduled node would still take such a block: the rule needs a coordinated height
+        let b = n.block(&n.y, vec![n.signed("transfer", 0.1, Some(true))]);
+        at(None, || n.y.import_block(b.clone())).expect("unscheduled node accepts at H");
+        assert!(at(Some(H), || n.x.import_block(b)).is_err());
+        assert_eq!(Net::fingerprint(&n.x), before_x);
+    }
+
+    /// Mempool admission and the producer agree with import; the fee and type checks are on at
+    /// every height there, the faucet-flag check from activation.
+    #[test]
+    fn mempool_and_producer_agree_with_import() {
+        const H: u64 = 2;
+        let n = net();
+        let stale = |node: &L1Node, tx: TxV1| { // an entry admitted by older software
+            let id = compute_single_tx_hash(&tx);
+            node.verified_tx_ids.lock().unwrap().insert(id.clone());
+            node.mempool.lock().unwrap().insert(id, tx);
+        };
+        // next block = 1 (below H)
+        for (rule, expect_flag_ok) in [(None, true), (Some(H), true), (Some(1), false)] {
+            at(rule, || {
+                assert_eq!(n.x.add_tx_to_mempool(n.signed("transfer", -1.0, None)).unwrap_err(), FEE_RANGE_ERROR);
+                assert_eq!(n.x.add_tx_to_mempool_verified(n.signed("transfer", -0.0, None)).unwrap_err(), FEE_RANGE_ERROR);
+                assert_eq!(n.x.add_tx_to_mempool(n.signed("slash", 0.0, None)).unwrap_err(), SLASH_TX_ERROR);
+                let flagged = n.x.add_tx_to_mempool(n.signed("transfer", 0.1, Some(true)));
+                if expect_flag_ok { flagged.expect("flag not judged below activation"); } else { assert_eq!(flagged.unwrap_err(), FAUCET_FLAG_ERROR); }
+            });
+            n.x.mempool.lock().unwrap().clear();
+        }
+        // producer below H: fee/type entries are never included, whatever put them in the pool
+        at(Some(H), || {
+            stale(&n.x, n.signed("transfer", -1.0, None));
+            stale(&n.x, n.signed("slash", 0.0, None));
+            assert!(n.x.mine_pending().unwrap().is_none());
+            assert_eq!(n.x.tip_height().unwrap(), 0);
+        });
+        n.x.mempool.lock().unwrap().clear();
+        // an ordinary block 1, produced and imported by the other node
+        let b1 = at(Some(H), || { n.x.add_tx_to_mempool(n.ordinary()).expect("admitted"); n.x.mine_pending().unwrap().expect("produced") });
+        at(Some(H), || n.y.import_block(serde_json::from_str(&serde_json::to_string(&b1).unwrap()).unwrap())).expect("imported");
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        // next block = H: admission refuses all shapes; a stale entry is not produced
+        at(Some(H), || {
+            for (bad, why) in n.refused_shapes() {
+                assert_eq!(n.x.add_tx_to_mempool(bad.clone()).unwrap_err(), why);
+                stale(&n.x, bad);
+            }
+            assert!(n.x.mine_pending().unwrap().is_none(), "nothing valid to produce");
+            assert_eq!(n.x.tip_height().unwrap(), 1);
+            n.x.mempool.lock().unwrap().clear();
+            // ordinary transactions still flow, mixed with stale entries that are left out
+            stale(&n.x, n.signed("transfer", 0.1, Some(true)));
+            let good = n.ordinary();
+            n.x.add_tx_to_mempool(good.clone()).expect("admitted");
+            let b2 = n.x.mine_pending().unwrap().expect("produced");
+            assert_eq!(b2.txs.iter().map(compute_single_tx_hash).collect::<Vec<_>>(), vec![compute_single_tx_hash(&good)]);
+            n.y.import_block(serde_json::from_str(&serde_json::to_string(&b2).unwrap()).unwrap()).expect("imported");
+        });
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+    }
+
+    /// Legitimate flows are untouched by the always-on admission checks: fee-0 and ordinary-fee
+    /// transactions, and the node's own faucet where the network has one.
+    #[test]
+    fn ordinary_client_flows_are_unaffected() {
+        let n = net();
+        for fee in [0.0, 0.1, 1.0, 100.0] { n.x.add_tx_to_mempool(n.signed("transfer", fee, None)).expect("admitted"); }
+        let faucet = n.x.submit_faucet_tx(&n.user.public_key_hex, 5).expect("the node's faucet transaction is built and queued");
+        assert_eq!((faucet.fee, faucet.payload.faucet), (0.0, Some(true)));
+        assert!(fee_and_type_sanity(&faucet).is_ok());
+        assert!(monetary_integrity_check(&faucet, crate::upgrades::TESTNET.faucet_mint).is_ok(), "allowed where the schedule has a faucet");
+        assert!(monetary_integrity_check(&faucet, crate::upgrades::MAINNET.faucet_mint).is_err());
+        let b = n.x.mine_pending().unwrap().expect("produced with the rule unscheduled");
+        assert_eq!(b.txs.len(), 5);
+    }
+
+    /// Mainnet 0..=137 replays to the same blocks and root with the rule unscheduled, scheduled
+    /// above the fixture, and scheduled at the lowest height history allows (just above the last
+    /// historical shield/unshield; blocks 1 and 2 also carry the genesis-era faucet transactions).
+    #[test]
+    fn mainnet_history_replays_identically_with_monetary_integrity_scheduled() {
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl");
+        let run = |act: Option<u64>| {
+            set_test_monetary_integrity(act);
+            let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+            let out = (ok, fail, n.get_state_root().unwrap(), n.get_all_blocks().unwrap().iter().map(|b| b.hash.clone()).collect::<Vec<_>>(),
+                n.balances.lock().unwrap().clone().into_iter().collect::<std::collections::BTreeMap<_, _>>(), n.get_total_fees_burned().to_bits());
+            set_test_monetary_integrity(None);
+            out
+        };
+        let base = run(None);
+        assert_eq!((base.0, &base.1), (137, &None));
+        assert_eq!(run(Some(138)), base, "scheduled above the fixture");
+        assert_eq!(run(Some(1_000_000)), base);
+        // History carries genesis-era faucet transactions (blocks 1 and 2) and real shield/unshield
+        // transactions, so the rule can only ever be scheduled above the last of them. Apart from
+        // those, every historical transaction already satisfies the rule.
+        let mut suspended_heights = Vec::new();
+        for line in std::fs::read_to_string(fixture).unwrap().lines() {
+            let b: BlockV1 = serde_json::from_str(line).unwrap();
+            for tx in &b.txs {
+                let verdict = monetary_integrity_check(tx, false);
+                if b.header.height <= 2 { assert_eq!(verdict.unwrap_err(), FAUCET_FLAG_ERROR); }
+                else if SUSPENDED_TX_TYPES.contains(&tx.tx_type.as_str()) {
+                    assert!(matches!(tx.tx_type.as_str(), "shield" | "unshield"), "only shield/unshield occur in history, found {}", tx.tx_type);
+                    assert_eq!(verdict.unwrap_err(), SUSPENDED_TX_TYPE_ERROR);
+                    suspended_heights.push(b.header.height);
+                } else { assert!(verdict.is_ok(), "height {}", b.header.height); }
+            }
+        }
+        let (first, last) = (*suspended_heights.first().expect("history has shielded transactions"), *suspended_heights.last().unwrap());
+        assert_eq!(run(Some(last + 1)), base, "scheduled at the lowest height history allows");
+        let mid = run(Some(3));
+        assert_eq!(mid.0, first - 1, "replay stops at the first historical shielded transaction");
+        assert!(mid.1.as_ref().is_some_and(|(h, e)| *h == first && e.ends_with(SUSPENDED_TX_TYPE_ERROR)), "{:?}", mid.1);
+        let early = run(Some(1));
+        assert_eq!((early.0, early.1), (0, Some((1, format!("block 1 rejected: tx #0: {FAUCET_FLAG_ERROR}")))), "it cannot be scheduled below them");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix 4 — XRGE supply invariant.
+//
+// "Total XRGE" is conserved across every consensus path except a small, enumerated
+// set of mint paths that require an authorized (genesis-authority) signer. The total
+// counted here is, in integer quanta:
+//
+//     ledger balances
+//   + validator stake                 (whole XRGE × QUANTA_PER_XRGE)
+//   + queued unbonding amounts
+//   + shielded supply
+//   + XRGE side of every AMM pool reserve
+//   + burned XRGE
+//   + fee-burn accumulator
+//
+// value only ENTERS this total through:                                 (classification)
+//   • genesis allocations                                               — not a tx
+//   • a faucet `transfer` (payload.faucet, signer == node/authority)    — XrgeMintAuthorized
+//   • a `bridge_mint` of XRGE (signer in the authority set)             — XrgeMintAuthorized
+//
+// Every other ledger transaction type is value-CONSERVING for an ordinary signer: it
+// moves XRGE between the buckets above (transfer, stake/unstake, shield/unshield of a
+// backed note, the AMM, fees) or debits it (token_lock, burns), but never raises the
+// total. The tests below assert that, pin the enumerated mint paths, and verify the
+// mainnet fixture only ever gains XRGE in blocks that carry an enumerated mint.
+//
+// THREE CONFIRMED DEFECTS are characterized (not fixed — a consensus change needs its
+// own fork height, which only the owner sets). They all have one root cause:
+// `apply_web3_state_effects` and `apply_shielded_state_effects` have had NO call site
+// since the F=49 fork (commit 061b2ad), so the credit halves of lock / unshield that
+// live in `apply_balance_tx_inner` run with their validation (lock ownership, nullifier
+// spend, STARK proof) never executed in consensus:
+//   F-1  `token_unlock` credits `amount` with no lock → unbacked XRGE mint by any signer
+//   F-2  `unshield`     credits `amount` with no proof and never marks the nullifier spent
+//        → unbacked XRGE mint, replayable with the same nullifier
+//   F-3  `token_lock`   debits XRGE but records no lock → funds are stranded (loss, not mint)
+// See infra/security/ candidate report for reachability and the proposed fork fix.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod xrge_supply_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, signed, TmpDir};
+    use quantum_vault_crypto::pqc_keygen;
+
+    const Q: u128 = 1_000_000_000;
+
+    /// Total conserved XRGE in integer quanta (see the module header).
+    fn total_xrge_q(n: &L1Node) -> u128 {
+        let ledger: u128 = n.balances.lock().unwrap().values().sum();
+        let stake: u128 = n.validator_store.list_validators().unwrap().iter().map(|(_, v)| v.stake).sum::<u128>() * Q;
+        let unbond: u128 = n.unbonding_queue.lock().unwrap().iter().map(|e| (e.amount * Q as f64).round() as u128).sum();
+        let shielded = (n.get_shielded_supply() * Q as f64).round() as u128;
+        let pool: u128 = n.pool_store.list_pools().unwrap().iter().map(|p|
+            (if p.token_a == "XRGE" { p.reserve_a as u128 } else { 0 }) + (if p.token_b == "XRGE" { p.reserve_b as u128 } else { 0 })
+        ).sum::<u128>() * Q;
+        let burned = (*n.burned_tokens.lock().unwrap().get("XRGE").unwrap_or(&0.0) * Q as f64).round() as u128;
+        let fee_burn = (n.get_total_fees_burned() * Q as f64).round() as u128;
+        ledger + stake + unbond + shielded + pool + burned + fee_burn
+    }
+
+    /// How a ledger transaction type relates to the XRGE supply.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum Class { Conserving, XrgeMintAuthorized, XrgeMintUnbacked }
+    use Class::*;
+
+    /// EVERY transaction type the economic ledger (`apply_balance_tx_inner`) dispatches on,
+    /// with its supply classification. The exhaustiveness test below fails if an arm is added
+    /// to that function without being classified here.
+    const LEDGER_TX_TYPES: &[(&str, Class)] = &[
+        ("transfer", XrgeMintAuthorized),    // faucet branch, authorized signer only; otherwise conserving
+        ("stake", Conserving),
+        ("unstake", Conserving),
+        ("create_token", Conserving),        // mints a CUSTOM token, never XRGE
+        ("mint_tokens", Conserving),         // custom token
+        ("bridge_mint", XrgeMintAuthorized), // XRGE when authorized; a token otherwise
+        ("bridge_withdraw", Conserving),     // debits + burns
+        ("slash", Conserving),               // no-op in the ledger
+        ("shield", Conserving),
+        ("unshield", XrgeMintUnbacked),      // F-2: credits with no backing on the consensus path
+        ("shielded_transfer", Conserving),   // fee only
+        ("token_lock", Conserving),          // F-3: debits only (and strands) — never raises the total
+        ("token_unlock", XrgeMintUnbacked),  // F-1: credits with no backing on the consensus path
+        ("create_staking_pool", Conserving),
+        ("token_stake", Conserving),         // custom-token debit
+        ("token_unstake", Conserving),       // credits a CUSTOM token, never XRGE
+        ("create_proposal", Conserving),
+        ("cast_vote", Conserving),
+        ("execute_proposal", Conserving),    // treasury spend lives in dead code → no XRGE effect
+        ("token_approve", Conserving),
+        ("token_transfer_from", Conserving),
+        ("token_airdrop", Conserving),
+    ];
+
+    fn class_of(ty: &str) -> Class { LEDGER_TX_TYPES.iter().find(|(t, _)| *t == ty).unwrap().1 }
+
+    /// Guard: every `"type" =>` arm of `apply_balance_tx_inner` is classified in LEDGER_TX_TYPES.
+    /// Reads this very file, slices the function, and collects the quoted arm labels, so a new
+    /// ledger arm that nobody classified makes this test fail rather than silently escaping the
+    /// supply invariant.
+    #[test]
+    fn every_ledger_arm_is_classified() {
+        let src = include_str!("node.rs");
+        let start = src.find("fn apply_balance_tx_inner").expect("function present");
+        let body = &src[start..];
+        let end = body[20..].find("\n    fn ").map(|i| i + 20).unwrap_or(body.len());
+        let mut found: std::collections::BTreeSet<String> = Default::default();
+        for line in body[..end].lines() {
+            let t = line.trim_start();
+            if t.starts_with('"') && line.contains("=>") {
+                // collect every "literal" on the arm header (handles `"a" | "b" | "c" =>`)
+                let head = &t[..t.find("=>").unwrap()];
+                let mut rest = head;
+                while let Some(o) = rest.find('"') {
+                    let after = &rest[o + 1..];
+                    if let Some(c) = after.find('"') { found.insert(after[..c].to_string()); rest = &after[c + 1..]; } else { break; }
+                }
+            }
+        }
+        let classified: std::collections::BTreeSet<String> = LEDGER_TX_TYPES.iter().map(|(t, _)| t.to_string()).collect();
+        assert!(!found.is_empty(), "failed to parse arms");
+        assert_eq!(found, classified, "a ledger tx-type arm is unclassified (or a stale classification): parsed={found:?}");
+        // The enumerated XRGE mint paths are exactly faucet-transfer and bridge_mint.
+        let mints: std::collections::BTreeSet<&str> = LEDGER_TX_TYPES.iter().filter(|(_, c)| *c == XrgeMintAuthorized).map(|(t, _)| *t).collect();
+        assert_eq!(mints, ["bridge_mint", "transfer"].into_iter().collect());
+    }
+
+    struct Net { _d: Vec<TmpDir>, a: L1Node, b: L1Node, prop: PQKeypair, seq: std::cell::Cell<u64> }
+    fn net() -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let (da, a, _) = node_with_store();
+        let (db, b, _) = node_with_store();
+        Net { _d: vec![da, db], a, b, prop: pqc_keygen(), seq: std::cell::Cell::new(0) }
+    }
+    impl Net {
+        fn next(&self) -> u64 { self.seq.set(self.seq.get() + 1); self.seq.get() }
+        /// Mine `txs` on A (correct root via probe+rollback), relay to B as JSON, import on both;
+        /// returns (delta_total_xrge_quanta on A, A==B agreement).
+        fn run(&self, txs: Vec<TxV1>) -> (i128, bool) {
+            let before = total_xrge_q(&self.a);
+            let t = self.a.tip_height().unwrap() + 1;
+            let probe = sealed_block(&self.a, &self.prop.public_key_hex, &self.prop.secret_key_hex, txs.clone(), None, t);
+            let snap = self.a.capture_pre_apply_snapshot(&probe).unwrap();
+            let _ = self.a.apply_balance_block(&probe).unwrap();
+            let root = self.a.compute_state_root_for_height(probe.header.height).unwrap();
+            self.a.restore_pre_apply_snapshot(snap).unwrap();
+            let good = sealed_block(&self.a, &self.prop.public_key_hex, &self.prop.secret_key_hex, txs, Some(root), t);
+            self.a.import_block(good.clone()).expect("A imports");
+            let relayed: BlockV1 = serde_json::from_str(&serde_json::to_string(&good).unwrap()).unwrap();
+            self.b.import_block(relayed).expect("B imports");
+            let agree = self.a.get_state_root().unwrap() == self.b.get_state_root().unwrap();
+            (total_xrge_q(&self.a) as i128 - before as i128, agree)
+        }
+        fn fund(&self, pk: &str, xrge: f64) { for n in [&self.a, &self.b] { fund_xrge(n, pk, xrge); } }
+        fn tx(&self, kp: &PQKeypair, ty: &str, mut p: TxPayload, fee: f64) -> TxV1 {
+            p = TxPayload { ..p };
+            signed(TxV1 { version: 1, tx_type: ty.into(), from_pub_key: kp.public_key_hex.clone(), nonce: self.next(), payload: p, fee, sig: String::new(), signed_payload: None }, &kp.secret_key_hex)
+        }
+    }
+
+    /// An ordinary funded account cannot raise total XRGE with any value-conserving type: each
+    /// representative transaction leaves the total unchanged or lower, and both nodes agree.
+    #[test]
+    fn ordinary_account_never_increases_total_xrge_for_conserving_types() {
+        let n = net();
+        let (u, v) = (pqc_keygen(), pqc_keygen());
+        n.fund(&u.public_key_hex, 100_000.0);
+        n.fund(&v.public_key_hex, 1_000.0);
+        // Give u a custom token to move around.
+        for node in [&n.a, &n.b] { node.token_balances.lock().unwrap().insert((canon_addr(&u.public_key_hex), "Tok".into()), 1_000); }
+
+        let p = TxPayload::default;
+        let cases: Vec<(&str, TxPayload, f64)> = vec![
+            ("transfer", TxPayload { to_pub_key_hex: Some(v.public_key_hex.clone()), amount: Some(10), ..p() }, 0.1),
+            ("transfer", TxPayload { to_pub_key_hex: Some(BURN_ADDRESS.to_string()), amount: Some(5), ..p() }, 0.1), // burn
+            ("stake", TxPayload { amount: Some(50), ..p() }, 0.1),
+            ("shield", TxPayload { shielded_value: Some(20), shielded_commitment: Some("c1".into()), ..p() }, 0.1),
+            ("create_token", TxPayload { token_symbol: Some("NEW".into()), token_name: Some("NEW".into()), token_total_supply: Some(10), ..p() }, 1.0),
+            ("bridge_withdraw", TxPayload { token_symbol: Some("XRGE".into()), amount: Some(30), evm_address: Some("0x00000000000000000000000000000000000000a1".into()), ..p() }, 0.1),
+            ("token_approve", TxPayload { token_symbol: Some("TOK".into()), spender_pub_key: Some(v.public_key_hex.clone()), allowance_amount: Some(100), ..p() }, 0.1),
+            ("token_airdrop", TxPayload { token_symbol: Some("TOK".into()), airdrop_recipients: Some(vec![v.public_key_hex.clone()]), airdrop_amounts: Some(vec![10]), ..p() }, 0.1),
+            ("create_proposal", TxPayload { token_symbol: Some("TOK".into()), proposal_title: Some("t".into()), proposal_description: Some("d".into()), ..p() }, 0.1),
+            ("shielded_transfer", TxPayload { shielded_nullifiers: Some(vec!["x".into()]), shielded_output_commitments: Some(vec!["y".into()]), shielded_proof: Some("00".into()), ..p() }, 0.1),
+            ("slash", TxPayload { target_pub_key: Some(v.public_key_hex.clone()), ..p() }, 0.1),
+        ];
+        for (ty, payload, fee) in cases {
+            let (delta, agree) = n.run(vec![n.tx(&u, ty, payload, fee)]);
+            assert!(delta <= 0, "{ty} raised total XRGE by {delta} quanta");
+            assert!(agree, "{ty}: A and B disagree");
+        }
+    }
+
+    /// The AMM conserves XRGE: creating a pool and swapping through it only moves XRGE between
+    /// the ledger and the pool reserve (minus fees), never raising the total.
+    #[test]
+    fn amm_conserves_total_xrge() {
+        let n = net();
+        let u = pqc_keygen();
+        n.fund(&u.public_key_hex, 1_000_000.0);
+        for node in [&n.a, &n.b] { node.token_balances.lock().unwrap().insert((canon_addr(&u.public_key_hex), "TOK".into()), 1_000_000); }
+        let (d1, a1) = n.run(vec![n.tx(&u, "create_pool", TxPayload { token_a_symbol: Some("XRGE".into()), token_b_symbol: Some("TOK".into()), amount_a: Some(1000), amount_b: Some(1000), ..TxPayload::default() }, 0.1)]);
+        assert!(d1 <= 0 && a1, "create_pool raised XRGE by {d1}");
+        let pool_id = n.a.pool_store.list_pools().unwrap()[0].pool_id.clone();
+        let (d2, a2) = n.run(vec![n.tx(&u, "swap", TxPayload { pool_id: Some(pool_id.clone()), token_a_symbol: Some("TOK".into()), token_b_symbol: Some("XRGE".into()), amount: Some(100), amount_a: Some(100), min_amount_out: Some(1), ..TxPayload::default() }, 0.1)]);
+        assert!(d2 <= 0 && a2, "swap raised XRGE by {d2}");
+    }
+
+    /// Enumerated mint path: a faucet transfer (the node's own authorized mint) raises the total
+    /// by exactly the minted amount; an ordinary signer's `bridge_mint` of XRGE mints nothing.
+    #[test]
+    fn enumerated_mints_need_an_authorized_signer() {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let (_d, node, _) = node_with_store();
+        // faucet: the node signs with its own key (the authorized identity on an empty authority set).
+        let before = total_xrge_q(&node);
+        node.submit_faucet_tx(&pqc_keygen().public_key_hex, 250).expect("faucet queued");
+        node.mine_pending().unwrap().expect("faucet block produced");
+        assert_eq!(total_xrge_q(&node) as i128 - before as i128, 250 * Q as i128, "faucet minted exactly 250 XRGE");
+        // an outsider bridge_mint of XRGE is refused by the authorization check: no mint.
+        let outsider = pqc_keygen();
+        fund_xrge(&node, &outsider.public_key_hex, 10.0);
+        let before2 = total_xrge_q(&node);
+        let bm = signed(TxV1 { version: 1, tx_type: "bridge_mint".into(), from_pub_key: outsider.public_key_hex.clone(), nonce: 1,
+            payload: TxPayload { to_pub_key_hex: Some(outsider.public_key_hex.clone()), token_symbol: Some("XRGE".into()), amount: Some(1_000), ..TxPayload::default() },
+            fee: 0.0, sig: String::new(), signed_payload: None }, &outsider.secret_key_hex);
+        node.add_tx_to_mempool(bm).expect("admitted");
+        node.mine_pending().unwrap();
+        assert_eq!(total_xrge_q(&node), before2, "an unauthorized bridge_mint minted nothing");
+    }
+
+    // ── Confirmed defects (characterized, deterministic; see module header & report) ──
+
+    /// F-1: `token_unlock` with a fabricated lock_id credits `amount` to the signer with no lock
+    /// backing — an unbacked XRGE mint by an ordinary account, accepted on the real import path
+    /// and agreed by a second node (so it is a consensus state, not a local quirk).
+    #[test]
+    fn FINDING_token_unlock_mints_unbacked_xrge() {
+        let n = net();
+        let u = pqc_keygen();
+        n.fund(&u.public_key_hex, 1_000.0);
+        let (delta, agree) = n.run(vec![n.tx(&u, "token_unlock", TxPayload { lock_id: Some("never-locked".into()), amount: Some(500), ..TxPayload::default() }, 0.1)]);
+        assert!(agree, "both nodes applied the unbacked credit identically");
+        // +500 credited, −0.1 fee of which half is burned (stays in the total); net +499.9 XRGE.
+        assert_eq!(delta, 499_900_000_000, "token_unlock minted XRGE out of nothing (delta quanta)");
+        assert_eq!(n.a.get_balance(&u.public_key_hex).unwrap(), 1_499.9);
+    }
+
+    /// F-2: `unshield` credits `shielded_value` with no STARK proof check (that check is only in the
+    /// API handler, not consensus) and never marks the nullifier spent, so the same nullifier can be
+    /// replayed block after block — each one an unbacked XRGE mint by an ordinary account.
+    #[test]
+    fn FINDING_unshield_mints_unbacked_and_replayable_xrge() {
+        let n = net();
+        let u = pqc_keygen();
+        n.fund(&u.public_key_hex, 1_000.0);
+        let mk = |nonce_seq: &Net| nonce_seq.tx(&u, "unshield", TxPayload { shielded_value: Some(700), shielded_nullifiers: Some(vec!["dup-nullifier".into()]), shielded_proof: Some("00".into()), ..TxPayload::default() }, 0.1);
+        let (d1, a1) = n.run(vec![mk(&n)]);
+        assert!(a1 && d1 == 699_900_000_000, "first unshield minted {d1} quanta");
+        assert_eq!(n.a.is_nullifier_spent("dup-nullifier").unwrap(), false, "the nullifier is never marked spent in consensus");
+        let (d2, a2) = n.run(vec![mk(&n)]); // same nullifier again
+        assert!(a2 && d2 == 699_900_000_000, "the SAME nullifier was replayed for another {d2} quanta");
+    }
+
+    /// `shield` on the consensus path today: the public balance is debited by amount + fee and the
+    /// shielded-supply counter rises, but the note's commitment is NOT recorded (the insert lives in
+    /// the dead `apply_shielded_state_effects`). The debit is sound; the note bookkeeping is missing.
+    #[test]
+    fn shield_debits_balance_but_records_no_commitment() {
+        let n = net();
+        let u = pqc_keygen();
+        n.fund(&u.public_key_hex, 1_000.0);
+        let before = n.a.get_commitment_count();
+        let (delta, agree) = n.run(vec![n.tx(&u, "shield", TxPayload { shielded_value: Some(200), shielded_commitment: Some("ab".repeat(32)), ..TxPayload::default() }, 0.1)]);
+        assert!(agree, "both nodes applied the shield identically");
+        assert_eq!(n.a.get_balance(&u.public_key_hex).unwrap(), 799.9, "200 XRGE + 0.1 fee left the public balance");
+        assert_eq!(n.a.get_shielded_supply(), 200.0, "the shielded-supply counter tracks the 200 XRGE");
+        assert_eq!(n.a.get_commitment_count(), before, "no commitment was recorded for the shielded note");
+        eprintln!("shield test: public-total delta quanta = {delta}");
+    }
+
+    /// F-3: `token_lock` debits XRGE but the lock record is written only in the dead
+    /// `apply_web3_state_effects`, so the funds are stranded — not minted, but unrecoverable
+    /// because the matching unlock (F-1) is itself unbacked. Loss of funds, not inflation.
+    #[test]
+    fn FINDING_token_lock_strands_xrge_without_a_lock_record() {
+        let n = net();
+        let u = pqc_keygen();
+        n.fund(&u.public_key_hex, 1_000.0);
+        let (delta, agree) = n.run(vec![n.tx(&u, "token_lock", TxPayload { lock_id: Some("L1".into()), lock_until_height: Some(999), amount: Some(400), ..TxPayload::default() }, 0.1)]);
+        assert!(agree);
+        assert_eq!(delta, -400_000_000_000, "400 XRGE left the total");
+        assert!(n.a.get_locks_by_owner(&u.public_key_hex).unwrap().is_empty(), "no lock record was created for the debited funds");
+    }
+
+    /// History: replaying mainnet 0..=137, total XRGE rises ONLY in blocks that carry an enumerated
+    /// mint (a faucet transfer, or a bridge_mint of XRGE), by exactly the minted amount; every other
+    /// block leaves it level or lower (unshield-fee and AMM sinks). The expected per-block mint is
+    /// derived here straight from the block's transactions, tying the supply change to the tx types.
+    #[test]
+    fn mainnet_history_xrge_increases_only_via_enumerated_mints() {
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(None)));
+        set_test_monetary_integrity(None);
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl");
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(super::strict_historical_replay_tests::FIXTURE_GENESIS).unwrap()).unwrap();
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(18)));
+        let dir = TmpDir::new();
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: gc.chain_id.clone(), genesis_time: gc.genesis_time, block_time_ms: gc.block_time_ms },
+            mine: false, bridge_withdraw_store: None,
+            bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(),
+            genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone(),
+        }).unwrap();
+        node.init().unwrap();
+        node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+
+        let authority: std::collections::HashSet<String> = gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect();
+        let mint_in = |b: &BlockV1| -> u128 {
+            let mut m = 0u128;
+            for tx in &b.txs {
+                let amt = tx.payload.amount.unwrap_or(0) as u128;
+                let is_faucet = tx.payload.faucet == Some(true) && authority.contains(&tx.from_pub_key);
+                let is_xrge_bridge = tx.tx_type == "bridge_mint"
+                    && tx.payload.token_symbol.as_deref().map(|s| s.eq_ignore_ascii_case("XRGE")).unwrap_or(false)
+                    && authority.contains(&tx.from_pub_key);
+                if is_faucet || is_xrge_bridge { m += amt * Q; }
+            }
+            m
+        };
+
+        let mut prev = total_xrge_q(&node);
+        let mut positive_blocks = Vec::new();
+        for line in std::fs::read_to_string(fixture).unwrap().lines() {
+            let block: BlockV1 = serde_json::from_str(line).unwrap();
+            if block.header.height == 0 { continue; }
+            let expect_mint = mint_in(&block);
+            node.import_block(block.clone()).expect("import");
+            let now = total_xrge_q(&node);
+            let delta = now as i128 - prev as i128;
+            if expect_mint > 0 {
+                assert_eq!(delta, expect_mint as i128, "block {} XRGE delta != enumerated mint", block.header.height);
+                positive_blocks.push(block.header.height);
+            } else {
+                assert!(delta <= 0, "block {} gained {} XRGE with no enumerated mint tx", block.header.height, delta);
+            }
+            prev = now;
+        }
+        // The blocks that minted are exactly the fixture's faucet (1,2) and XRGE bridge_mint blocks.
+        assert_eq!(positive_blocks, vec![1,2,3,4,6,7,8,9,11,14,15,16,19,22,23,40,44,107,108,131,132,135]);
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(None));
     }
 }

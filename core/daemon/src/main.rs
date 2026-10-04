@@ -514,7 +514,7 @@ async fn main() -> Result<(), String> {
     );
 
     eprintln!("[core-daemon] setting up gRPC...");
-    let grpc_node = GrpcNode::new(node.clone());
+    let grpc_node = GrpcNode::new(node.clone(), args.faucet_enabled);
     let reflection = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(grpc::FILE_DESCRIPTOR_SET)
         .build_v1()
@@ -7508,25 +7508,21 @@ async fn bridge_claim(
     let client = reqwest::Client::new();
     // Expected EVM chain id for deposits — defaults to Base mainnet (8453); overridable via QV_BRIDGE_CHAIN_ID.
     // (Was hardcoded to Base Sepolia 84532, which rejected every mainnet claim.)
-    let expected_chain_id: u64 = std::env::var("QV_BRIDGE_CHAIN_ID")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8453);
+    let expected_chain_id: u64 = match rouge_bridge_deposit::expected_bridge_chain_id(std::env::var("QV_BRIDGE_CHAIN_ID").ok().as_deref()) {
+        Ok(c) => c,
+        Err(e) => return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(e) })),
+    };
     let min_confirmations = bridge_min_confirmations();
-    let chain_resp = client.post(&rpc_url).json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1})).send().await;
-    if let Ok(r) = chain_resp {
-        if let Ok(json) = r.json::<serde_json::Value>().await {
-            if let Some(hex) = json.get("result").and_then(|v| v.as_str()) {
-                let id = u64::from_str_radix(hex.trim_start_matches("0x"), 16).unwrap_or(0);
-                if id != expected_chain_id {
-                    return Ok(Json(BridgeClaimResponse {
-                        success: false, tx_id: None,
-                        error: Some(format!("Wrong chain: expected chain id {}, got {}", expected_chain_id, id)),
-                    }));
-                }
-            }
-        }
+    // Fail closed: an unreachable RPC, a malformed answer or a different chain ⇒ no credit.
+    let chain_resp: Result<serde_json::Value, String> = match client.post(&rpc_url)
+        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1})).send().await {
+        Ok(r) => r.json::<serde_json::Value>().await.map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    if let Err(e) = rouge_bridge_deposit::require_chain_id(chain_resp.as_ref().map_err(|e| e.as_str()), expected_chain_id) {
+        return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(e) }));
     }
+
     let resp = client
         .post(&rpc_url)
         .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionByHash","params":[tx_hash_hex],"id":1}))
@@ -7572,8 +7568,6 @@ async fn bridge_claim(
     };
     let tx_to = tx.get("to").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
     let tx_from = tx.get("from").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-    let tx_value = tx.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
-    let value_wei = u128::from_str_radix(tx_value.trim_start_matches("0x"), 16).unwrap_or(0);
 
     // Verify the deposit sender matches the claimant.
     if tx_from != evm_from {
@@ -7608,47 +7602,41 @@ async fn bridge_claim(
             error: Some("Transaction not yet mined".to_string()),
         }));
     }
-    let tx_block = u64::from_str_radix(block_hex.trim_start_matches("0x"), 16).unwrap_or(0);
-    let latest_resp = client
-        .post(&rpc_url)
-        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}))
-        .send()
-        .await;
-    if let Ok(r) = latest_resp {
-        if let Ok(j) = r.json::<serde_json::Value>().await {
-            if let Some(hex) = j.get("result").and_then(|v| v.as_str()) {
-                let latest = u64::from_str_radix(hex.trim_start_matches("0x"), 16).unwrap_or(0);
-                if latest < tx_block + min_confirmations {
-                    return Ok(Json(BridgeClaimResponse {
-                        success: false, tx_id: None,
-                        error: Some(format!("Need {} confirmations (tx block {}, latest {})", min_confirmations, tx_block, latest)),
-                    }));
-                }
-            }
-        }
+    let tx_block = match u64::from_str_radix(block_hex.trim_start_matches("0x"), 16) {
+        Ok(b) => b,
+        Err(_) => return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some("Malformed transaction block number — refusing to credit".to_string()) })),
+    };
+    // Fail closed: an unknown chain head is not "deep enough".
+    if let Err(e) = rouge_bridge_deposit::require_confirmations(tx_block, evm_latest_block(&client, &rpc_url).await, min_confirmations) {
+        return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(e) }));
     }
+
     // Per-token verification: prove the deposit actually reached custody and derive the
     // credited amount from the chain (never a caller-supplied value), then pick the mint.
     let bridge_token = body.token.as_deref().unwrap_or("ETH").to_uppercase();
     let (amount_units, mint_symbol): (u64, &str) = if bridge_token == "ETH" {
         // Native ETH must be sent DIRECTLY to custody. Smart-wallet/EntryPoint deposits stay
         // unsupported until they can be bound to a verified depositor (deposit-theft guard).
-        if tx_to != custody {
-            return Ok(Json(BridgeClaimResponse {
-                success: false, tx_id: None,
-                error: Some(format!(
-                    "Transaction recipient mismatch: ETH must be sent directly to the custody address {} (got {}). Smart-wallet/EntryPoint deposits are not currently supported.",
-                    custody, tx_to
-                )),
-            }));
+        // The transaction existing is not enough: its receipt must prove it SUCCEEDED and that it is
+        // a plain value transfer to custody (see `verify_direct_eth_deposit`). Smart-wallet/EntryPoint
+        // deposits stay unsupported until they can be bound to a verified depositor.
+        let receipt: serde_json::Value = match client.post(&rpc_url)
+            .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash_hex],"id":1}))
+            .send().await {
+            Ok(r) => match r.json::<serde_json::Value>().await {
+                Ok(v) => v.get("result").cloned().unwrap_or(serde_json::Value::Null),
+                Err(e) => return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(format!("bad RPC response: {} — refusing to credit", e)) })),
+            },
+            Err(e) => return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(format!("RPC error: {} — refusing to credit", e)) })),
+        };
+        let dep = match rouge_bridge_deposit::verify_direct_eth_deposit(tx, &receipt, &custody) {
+            Ok(d) => d,
+            Err(e) => return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(format!("No verifiable ETH deposit: {}", e)) })),
+        };
+        if dep.sender != evm_from || dep.block != tx_block {
+            return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some("Deposit does not match the claim — refusing to credit".to_string()) }));
         }
-        if value_wei == 0 {
-            return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some("Transaction has zero value".to_string()) }));
-        }
-        let units = (value_wei / 1_000_000_000_000) as u64; // 18-dec ETH -> 6-dec qETH
-        if units == 0 {
-            return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some("Amount too small (min 0.000001 ETH)".to_string()) }));
-        }
+        let units = dep.l1_units;
         (units, "qETH")
     } else if bridge_token == "USDC" {
         // ERC-20 deposit: the tx `to` is the USDC contract. Verify it against the CONFIGURED
@@ -7867,8 +7855,9 @@ async fn process_bridge_reclaim(
     let tx_hash_hex = format!("0x{}", tx_hash);
     let requested_recipient = normalize_recipient(recipient_rougechain_pubkey);
 
-    // Check if already claimed
-    let claim_key = if token == "XRGE" { format!("xrge:{}", tx_hash_hex) } else { tx_hash_hex.clone() };
+    // Check if already claimed. XRGE shares its key with /api/bridge/xrge/claim (one deposit, one
+    // claim, whichever path runs first); ETH/USDC key on the bare tx hash.
+    let claim_key = if token == "XRGE" { rouge_bridge_deposit::xrge_claim_key(evm_tx_hash) } else { tx_hash_hex.clone() };
     if state.bridge_claim_store.contains(&claim_key).await {
         return serde_json::json!({ "success": false, "error": "Transaction already claimed" });
     }
@@ -8958,7 +8947,8 @@ async fn xrge_bridge_claim(
 
     let tx_hash = body.evm_tx_hash.trim_start_matches("0x").to_lowercase();
     let tx_hash_hex = format!("0x{}", tx_hash);
-    let prefixed_hash = format!("xrge:{}", tx_hash_hex);
+    // Shared with process_bridge_reclaim: one deposit, one claim key, whichever path runs first.
+    let prefixed_hash = rouge_bridge_deposit::xrge_claim_key(&body.evm_tx_hash);
 
     if state.bridge_claim_store.contains(&prefixed_hash).await {
         return Json(serde_json::json!({ "success": false, "error": "Transaction already claimed" }));
