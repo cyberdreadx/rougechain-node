@@ -65,6 +65,7 @@ import TokenDetailDialog from "@/components/wallet/TokenDetailDialog";
 import ShieldDialog from "@/components/wallet/ShieldDialog";
 import UnshieldDialog from "@/components/wallet/UnshieldDialog";
 import { getShieldedBalance } from "@/lib/note-store";
+import { shieldedEnabled, SHIELDED_PAUSED_NOTICE } from "@/lib/shielded-flag";
 import { 
   UnifiedWallet,
   VaultSettings,
@@ -1029,8 +1030,8 @@ const Wallet = () => {
                   { key: "faucet-qusdc", label: "Get qUSDC", title: "Testnet qUSDC faucet", icon: DollarSign, tone: "green" as const, onClick: () => claimBridgeFaucet("qUSDC"), loading: minting },
                 ] : []),
                 { key: "create", label: t("wallet.actions.create"), icon: Plus, tone: "violet", onClick: () => setShowCreateToken(true) },
-                { key: "shield", label: t("wallet.actions.shield"), icon: Shield, tone: "amber", onClick: () => setShowShield(true), disabled: xrgeBalance <= 1 },
-                { key: "unshield", label: t("wallet.actions.unshield"), icon: ShieldOff, tone: "purple", onClick: () => setShowUnshield(true) },
+                { key: "shield", label: t("wallet.actions.shield"), icon: Shield, tone: "amber", onClick: () => setShowShield(true), disabled: !shieldedEnabled() || xrgeBalance <= 1, title: shieldedEnabled() ? undefined : SHIELDED_PAUSED_NOTICE },
+                { key: "unshield", label: t("wallet.actions.unshield"), icon: ShieldOff, tone: "purple", onClick: () => setShowUnshield(true), disabled: !shieldedEnabled(), title: shieldedEnabled() ? undefined : SHIELDED_PAUSED_NOTICE },
               ]}
             />
 
