@@ -39,7 +39,7 @@ pub struct UpgradeSchedule {
     /// activate at the same height as TOKEN_MINTING (runbook in `docs/running-a-node/upgrade-schedule.md`).
     pub contract_nft_royalty: Option<u64>,
     /// MONETARY_INTEGRITY (fee range, no `slash` transactions, faucet flag only where
-    /// `faucet_mint` allows it). Not scheduled on any network yet — see
+    /// `faucet_mint` allows it, no suspended transaction types). Not scheduled on any network yet — see
     /// `node::MONETARY_INTEGRITY_ACTIVATION_HEIGHT`.
     pub monetary_integrity: Option<u64>,
     /// Whether this network has a faucet (a mint signed by a genesis validator key). Judged in

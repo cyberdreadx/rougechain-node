@@ -388,9 +388,10 @@ pub fn contract_nft_royalty_active(height: u64) -> bool {
 }
 
 /// MONETARY_INTEGRITY — from this height a block is invalid if it carries a transaction that
-/// (a) has a fee that is not a finite number ≥ 0, (b) is of type `slash`, or (c) sets the faucet
+/// (a) has a fee that is not a finite number ≥ 0, (b) is of type `slash`, (c) sets the faucet
 /// flag on a network whose schedule does not allow faucet mints (`upgrades::…faucet_mint`; mainnet
-/// does not). Execution is unchanged, so history below the height replays byte-identically.
+/// does not), or (d) is of a suspended type (`SUSPENDED_TX_TYPES`).
+/// Execution is unchanged, so history below the height replays byte-identically.
 /// `None` = not scheduled (mainnet height; the node reads `crate::upgrades::current()`).
 pub const MONETARY_INTEGRITY_ACTIVATION_HEIGHT: Option<u64> = None;
 #[cfg(test)]
@@ -415,6 +416,21 @@ pub fn monetary_integrity_active(height: u64) -> bool {
 pub const FEE_RANGE_ERROR: &str = "transaction fee must be a finite number that is not negative";
 pub const SLASH_TX_ERROR: &str = "slash transactions are not accepted";
 pub const FAUCET_FLAG_ERROR: &str = "faucet mints are not allowed on this network";
+pub const SUSPENDED_TX_TYPE_ERROR: &str = "this transaction type is suspended";
+
+/// Transaction types suspended from MONETARY_INTEGRITY activation: their ledger effects are
+/// applied without the state checks they depend on (`apply_shielded_state_effects` and
+/// `apply_web3_state_effects` have had no call site since F=49), so a block may not carry them
+/// until those features are restored by a later upgrade. Consensus from activation only (not
+/// part of the always-on node-local check), so funds already in these features can leave first.
+pub const SUSPENDED_TX_TYPES: &[&str] = &[
+    "shield", "shielded_transfer", "unshield",
+    "token_lock", "token_unlock",
+    "create_staking_pool", "token_stake", "token_unstake",
+    "create_proposal", "cast_vote", "execute_proposal",
+    "delegate", "undelegate",
+    "token_approve", "token_transfer_from",
+];
 
 /// The fee and transaction-type part of MONETARY_INTEGRITY. Node-local and ALWAYS ON at mempool
 /// admission and block production (no honest client produces either), consensus from activation.
@@ -433,6 +449,9 @@ pub fn monetary_integrity_check(tx: &TxV1, faucet_mint_allowed: bool) -> Result<
     fee_and_type_sanity(tx)?;
     if tx.payload.faucet == Some(true) && !faucet_mint_allowed {
         return Err(FAUCET_FLAG_ERROR.to_string());
+    }
+    if SUSPENDED_TX_TYPES.contains(&tx.tx_type.as_str()) {
+        return Err(SUSPENDED_TX_TYPE_ERROR.to_string());
     }
     Ok(())
 }
@@ -13559,10 +13578,14 @@ mod monetary_integrity_tests {
             signed(raw(ty, &self.user.public_key_hex, self.nonce.get(), fee, faucet), &self.user.secret_key_hex)
         }
         fn ordinary(&self) -> TxV1 { self.signed("transfer", 0.1, None) }
-        /// The three shapes the rule refuses, as validly signed transactions.
+        /// The shapes the rule refuses, as validly signed transactions.
         fn refused_shapes(&self) -> Vec<(TxV1, &'static str)> {
-            vec![(self.signed("transfer", -1.0, None), FEE_RANGE_ERROR), (self.signed("transfer", -0.0, None), FEE_RANGE_ERROR),
-                 (self.signed("slash", 0.0, None), SLASH_TX_ERROR), (self.signed("transfer", 0.1, Some(true)), FAUCET_FLAG_ERROR)]
+            let mut v = vec![(self.signed("transfer", -1.0, None), FEE_RANGE_ERROR), (self.signed("transfer", -0.0, None), FEE_RANGE_ERROR),
+                 (self.signed("slash", 0.0, None), SLASH_TX_ERROR), (self.signed("transfer", 0.1, Some(true)), FAUCET_FLAG_ERROR)];
+            for ty in ["shield", "unshield", "shielded_transfer", "token_lock", "token_unlock", "token_unstake", "token_transfer_from"] {
+                v.push((self.signed(ty, 0.1, None), SUSPENDED_TX_TYPE_ERROR));
+            }
+            v
         }
         /// A fully valid block on `n`'s tip carrying `txs` (correct root found by probe + rollback).
         fn block(&self, n: &L1Node, txs: Vec<TxV1>) -> BlockV1 {
@@ -13615,9 +13638,21 @@ mod monetary_integrity_tests {
         assert_eq!(fee_and_type_sanity(&slash).unwrap_err(), SLASH_TX_ERROR);
         assert_eq!(monetary_integrity_tx_rule(&slash, 10).unwrap_err(), SLASH_TX_ERROR);
         assert!(monetary_integrity_tx_rule(&slash, 9).is_ok());
-        for ty in ["transfer", "stake", "unstake", "bridge_mint", "bridge_withdraw", "create_token", "mint_tokens", "swap", "shield",
-                   "unshield", "create_pool", "add_liquidity", "remove_liquidity", "contract_call", "nft_create_collection", "Slash", "slash "] {
+        for ty in ["transfer", "stake", "unstake", "bridge_mint", "bridge_withdraw", "create_token", "mint_tokens", "swap",
+                   "create_pool", "add_liquidity", "remove_liquidity", "contract_call", "nft_create_collection", "nft_lock",
+                   "token_airdrop", "Slash", "slash ", "Shield", "unshield ", "token_unlocks"] {
             assert!(monetary_integrity_tx_rule(&raw(ty, "k", 1, 0.5, None), 10).is_ok(), "{ty}");
+        }
+        // suspended types: refused in consensus from activation, untouched below it, and NOT part
+        // of the always-on node-local check (funds already inside can leave before activation)
+        assert_eq!(SUSPENDED_TX_TYPES.len(), 15);
+        for ty in SUSPENDED_TX_TYPES {
+            let t = raw(ty, "k", 1, 0.5, None);
+            assert_eq!(monetary_integrity_tx_rule(&t, 10).unwrap_err(), SUSPENDED_TX_TYPE_ERROR, "{ty}");
+            assert_eq!(monetary_integrity_tx_rule(&t, u64::MAX).unwrap_err(), SUSPENDED_TX_TYPE_ERROR, "{ty}");
+            assert!(monetary_integrity_tx_rule(&t, 9).is_ok(), "{ty}: no check below activation");
+            assert!(fee_and_type_sanity(&t).is_ok(), "{ty}: not in the always-on check");
+            assert_eq!(monetary_integrity_check(&t, true).unwrap_err(), SUSPENDED_TX_TYPE_ERROR, "{ty}: on every network");
         }
         // faucet flag: judged against the network's schedule, on any transaction type
         for ty in ["transfer", "stake", "bridge_mint"] {
@@ -13785,8 +13820,8 @@ mod monetary_integrity_tests {
     }
 
     /// Mainnet 0..=137 replays to the same blocks and root with the rule unscheduled, scheduled
-    /// above the fixture, and scheduled at the lowest height history allows (3: blocks 1 and 2
-    /// carry the genesis-era faucet transactions, so the rule can never be scheduled below them).
+    /// above the fixture, and scheduled at the lowest height history allows (just above the last
+    /// historical shield/unshield; blocks 1 and 2 also carry the genesis-era faucet transactions).
     #[test]
     fn mainnet_history_replays_identically_with_monetary_integrity_scheduled() {
         let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl");
@@ -13802,15 +13837,27 @@ mod monetary_integrity_tests {
         assert_eq!((base.0, &base.1), (137, &None));
         assert_eq!(run(Some(138)), base, "scheduled above the fixture");
         assert_eq!(run(Some(1_000_000)), base);
-        assert_eq!(run(Some(3)), base, "scheduled at the lowest height history allows");
-        // every historical transaction above block 2 already satisfies the rule
+        // History carries genesis-era faucet transactions (blocks 1 and 2) and real shield/unshield
+        // transactions, so the rule can only ever be scheduled above the last of them. Apart from
+        // those, every historical transaction already satisfies the rule.
+        let mut suspended_heights = Vec::new();
         for line in std::fs::read_to_string(fixture).unwrap().lines() {
             let b: BlockV1 = serde_json::from_str(line).unwrap();
             for tx in &b.txs {
                 let verdict = monetary_integrity_check(tx, false);
-                if b.header.height <= 2 { assert_eq!(verdict.unwrap_err(), FAUCET_FLAG_ERROR); } else { assert!(verdict.is_ok(), "height {}", b.header.height); }
+                if b.header.height <= 2 { assert_eq!(verdict.unwrap_err(), FAUCET_FLAG_ERROR); }
+                else if SUSPENDED_TX_TYPES.contains(&tx.tx_type.as_str()) {
+                    assert!(matches!(tx.tx_type.as_str(), "shield" | "unshield"), "only shield/unshield occur in history, found {}", tx.tx_type);
+                    assert_eq!(verdict.unwrap_err(), SUSPENDED_TX_TYPE_ERROR);
+                    suspended_heights.push(b.header.height);
+                } else { assert!(verdict.is_ok(), "height {}", b.header.height); }
             }
         }
+        let (first, last) = (*suspended_heights.first().expect("history has shielded transactions"), *suspended_heights.last().unwrap());
+        assert_eq!(run(Some(last + 1)), base, "scheduled at the lowest height history allows");
+        let mid = run(Some(3));
+        assert_eq!(mid.0, first - 1, "replay stops at the first historical shielded transaction");
+        assert!(mid.1.as_ref().is_some_and(|(h, e)| *h == first && e.ends_with(SUSPENDED_TX_TYPE_ERROR)), "{:?}", mid.1);
         let early = run(Some(1));
         assert_eq!((early.0, early.1), (0, Some((1, format!("block 1 rejected: tx #0: {FAUCET_FLAG_ERROR}")))), "it cannot be scheduled below them");
     }
@@ -14076,6 +14123,23 @@ mod xrge_supply_tests {
         assert_eq!(n.a.is_nullifier_spent("dup-nullifier").unwrap(), false, "the nullifier is never marked spent in consensus");
         let (d2, a2) = n.run(vec![mk(&n)]); // same nullifier again
         assert!(a2 && d2 == 699_900_000_000, "the SAME nullifier was replayed for another {d2} quanta");
+    }
+
+    /// `shield` on the consensus path today: the public balance is debited by amount + fee and the
+    /// shielded-supply counter rises, but the note's commitment is NOT recorded (the insert lives in
+    /// the dead `apply_shielded_state_effects`). The debit is sound; the note bookkeeping is missing.
+    #[test]
+    fn shield_debits_balance_but_records_no_commitment() {
+        let n = net();
+        let u = pqc_keygen();
+        n.fund(&u.public_key_hex, 1_000.0);
+        let before = n.a.get_commitment_count();
+        let (delta, agree) = n.run(vec![n.tx(&u, "shield", TxPayload { shielded_value: Some(200), shielded_commitment: Some("ab".repeat(32)), ..TxPayload::default() }, 0.1)]);
+        assert!(agree, "both nodes applied the shield identically");
+        assert_eq!(n.a.get_balance(&u.public_key_hex).unwrap(), 799.9, "200 XRGE + 0.1 fee left the public balance");
+        assert_eq!(n.a.get_shielded_supply(), 200.0, "the shielded-supply counter tracks the 200 XRGE");
+        assert_eq!(n.a.get_commitment_count(), before, "no commitment was recorded for the shielded note");
+        eprintln!("shield test: public-total delta quanta = {delta}");
     }
 
     /// F-3: `token_lock` debits XRGE but the lock record is written only in the dead
