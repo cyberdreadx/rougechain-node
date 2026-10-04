@@ -392,8 +392,8 @@ pub fn contract_nft_royalty_active(height: u64) -> bool {
 /// flag on a network whose schedule does not allow faucet mints (`upgrades::…faucet_mint`; mainnet
 /// does not), or (d) is of a suspended type (`SUSPENDED_TX_TYPES`).
 /// Execution is unchanged, so history below the height replays byte-identically.
-/// `None` = not scheduled (mainnet height; the node reads `crate::upgrades::current()`).
-pub const MONETARY_INTEGRITY_ACTIVATION_HEIGHT: Option<u64> = None;
+/// Mainnet height (the node reads `crate::upgrades::current()`); testnet's is in `upgrades.rs`.
+pub const MONETARY_INTEGRITY_ACTIVATION_HEIGHT: Option<u64> = Some(245);
 #[cfg(test)]
 thread_local! {
     static TEST_MONETARY_INTEGRITY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
@@ -13605,16 +13605,20 @@ mod monetary_integrity_tests {
     }
 
     #[test]
-    fn mainnet_and_testnet_leave_the_rule_unscheduled() {
-        assert_eq!(MONETARY_INTEGRITY_ACTIVATION_HEIGHT, None);
-        assert_eq!((crate::upgrades::MAINNET.monetary_integrity, crate::upgrades::MAINNET.faucet_mint), (None, false));
-        assert_eq!((crate::upgrades::TESTNET.monetary_integrity, crate::upgrades::TESTNET.faucet_mint), (None, true));
-        // with nothing scheduled the consensus rule accepts every shape at every height
-        for h in [0, 1, 235, 1_000_000, u64::MAX] {
+    fn mainnet_and_testnet_heights_are_pinned() {
+        assert_eq!(MONETARY_INTEGRITY_ACTIVATION_HEIGHT, Some(245));
+        assert_eq!((crate::upgrades::MAINNET.monetary_integrity, crate::upgrades::MAINNET.faucet_mint), (Some(245), false));
+        assert_eq!((crate::upgrades::TESTNET.monetary_integrity, crate::upgrades::TESTNET.faucet_mint), (Some(1390), true));
+        // tests run on the mainnet schedule: silent through 244, in force from 245
+        let shapes = [raw("transfer", "k", 1, -1.0, None), raw("slash", "k", 1, 0.0, None), raw("transfer", "k", 1, 0.0, Some(true)), raw("unshield", "k", 1, 0.1, None)];
+        for h in [0, 1, 211, 235, 244] {
             assert!(!monetary_integrity_active(h));
-            for tx in [raw("transfer", "k", 1, -1.0, None), raw("slash", "k", 1, 0.0, None), raw("transfer", "k", 1, 0.0, Some(true))] {
-                assert!(monetary_integrity_tx_rule(&tx, h).is_ok());
-            }
+            for tx in &shapes { assert!(monetary_integrity_tx_rule(tx, h).is_ok(), "height {h}"); }
+        }
+        for h in [245, 246, 1_000_000, u64::MAX] {
+            assert!(monetary_integrity_active(h));
+            for tx in &shapes { assert!(monetary_integrity_tx_rule(tx, h).is_err(), "height {h}"); }
+            assert!(monetary_integrity_tx_rule(&raw("transfer", "k", 1, 0.1, None), h).is_ok());
         }
     }
 
