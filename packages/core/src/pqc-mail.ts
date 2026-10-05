@@ -3,7 +3,7 @@
  * Reuses ML-KEM-768 + ML-DSA-65 encryption from pqc-messenger.ts
  */
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
-import { encryptMessage, buildSignedRequest, type WalletWithPrivateKeys, type Wallet, getWallets } from "./pqc-messenger";
+import { encryptMessage, buildSignedRequest, withMessagingKeyFallback, type WalletWithPrivateKeys, type Wallet, getWallets } from "./pqc-messenger";
 
 export const MAIL_DOMAIN = "rouge.quant";
 export const MAIL_DOMAIN_ALT = "qwalla.mail";
@@ -390,17 +390,17 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string): Promise
       let signatureValid: boolean | null = null;
 
       try {
-        subject = await decryptMailContent(msg.subjectEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
+        subject = await withMessagingKeyFallback(wallet, (priv, pub) => decryptMailContent(msg.subjectEncrypted, priv, pub));
       } catch { /* */ }
 
       try {
-        body = await decryptMailContent(msg.bodyEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
+        body = await withMessagingKeyFallback(wallet, (priv, pub) => decryptMailContent(msg.bodyEncrypted, priv, pub));
       } catch { /* */ }
 
       let attachmentData: MailAttachment | undefined;
       if (msg.hasAttachment && msg.attachmentEncrypted) {
         try {
-          const attachPlain = await decryptMailContent(msg.attachmentEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
+          const attachPlain = await withMessagingKeyFallback(wallet, (priv, pub) => decryptMailContent(msg.attachmentEncrypted!, priv, pub));
           attachmentData = JSON.parse(attachPlain) as MailAttachment;
         } catch { /* */ }
       }

@@ -57,7 +57,7 @@ beforeEach(() => {
 });
 
 describe("same-origin continuity with apps/web", () => {
-  it("reads an apps/web wallet (saveUnifiedWallet) as unlocked with the same address, writing nothing", async () => {
+  it("reads an apps/web wallet (saveUnifiedWallet) as unlocked with the same address; only its random messaging key moves to the phrase-derived one", async () => {
     const w = seedAppsWebWallet();
     const beforeLocal = dumpStorage(localStorage);
     const beforeSession = dumpStorage(sessionStorage);
@@ -70,8 +70,22 @@ describe("same-origin continuity with apps/web", () => {
     expect(ctx.wallet?.signingPrivateKey).toBe(w.signingPrivateKey);
     expect(ctx.wallet?.mnemonic).toBe(w.mnemonic);
 
-    expect(dumpStorage(localStorage)).toEqual(beforeLocal);
-    expect(dumpStorage(sessionStorage)).toEqual(beforeSession);
+    // The wallet is otherwise untouched: same storage keys, no secret in localStorage, and the
+    // session copy differs only by the derived messaging key plus the old key kept beside it.
+    const afterLocal = dumpStorage(localStorage);
+    const afterSession = dumpStorage(sessionStorage);
+    expect(Object.keys(afterLocal).sort()).toEqual(Object.keys(beforeLocal).sort());
+    expect(Object.keys(afterSession).sort()).toEqual(Object.keys(beforeSession).sort());
+    expect(JSON.stringify(afterLocal)).not.toContain(w.signingPrivateKey);
+    expect(JSON.stringify(afterLocal)).not.toContain(w.encryptionPrivateKey);
+    const d = deriveMessagingKeypair(w.mnemonic, w.signingPrivateKey);
+    expect(JSON.parse(afterSession["pqc-unified-wallet:mainnet"])).toEqual({
+      ...w,
+      encryptionPublicKey: d.publicKey,
+      encryptionPrivateKey: d.privateKey,
+      legacyEncryptionPublicKey: w.encryptionPublicKey,
+      legacyEncryptionPrivateKey: w.encryptionPrivateKey,
+    });
   });
 
   it("reads an apps/web locked vault (lockUnifiedWallet) as locked, then unlocks it to the same wallet", async () => {
@@ -400,24 +414,32 @@ describe("seed-derived messaging key (same as Qwalla)", () => {
     expect(ctx.wallet?.encryptionPublicKey).toBe(deriveMessagingKeypair(null, w.signingPrivateKey).publicKey);
   }, 60_000);
 
-  it("never re-derives an already stored wallet (session, legacy plaintext, vault)", async () => {
+  it("moves a stored phrase wallet with a random key to the derived key and keeps the old key (session, legacy plaintext, vault)", async () => {
     const w = seedAppsWebWallet(); // session copy, random messaging key
     expect(w.encryptionPublicKey).not.toBe(derived(w).publicKey);
     const view = mount(true);
-    expect(ctx.wallet?.encryptionPublicKey).toBe(w.encryptionPublicKey);
-    expect(ctx.wallet?.encryptionPrivateKey).toBe(w.encryptionPrivateKey);
+    expect(ctx.wallet?.encryptionPublicKey).toBe(derived(w).publicKey);
+    expect(ctx.wallet?.encryptionPrivateKey).toBe(derived(w).privateKey);
+    expect(ctx.wallet?.legacyEncryptionPublicKey).toBe(w.encryptionPublicKey);
+    expect(ctx.wallet?.legacyEncryptionPrivateKey).toBe(w.encryptionPrivateKey);
     view.unmount();
 
     sessionStorage.clear();
     localStorage.setItem("pqc-unified-wallet:mainnet", JSON.stringify(w)); // legacy plaintext
     resetWalletStoreForTests();
     mount();
-    expect(ctx.wallet?.encryptionPublicKey).toBe(w.encryptionPublicKey);
+    expect(ctx.wallet?.encryptionPublicKey).toBe(w.encryptionPublicKey); // untouched until unlock / page load
     await act(() => ctx.setPassword("vault-pass-1"));
     act(() => ctx.lock());
     await act(() => ctx.unlock("vault-pass-1"));
-    expect(ctx.wallet?.encryptionPublicKey).toBe(w.encryptionPublicKey);
-    expect(ctx.wallet?.encryptionPrivateKey).toBe(w.encryptionPrivateKey);
+    expect(ctx.wallet?.encryptionPublicKey).toBe(derived(w).publicKey);
+    expect(ctx.wallet?.legacyEncryptionPublicKey).toBe(w.encryptionPublicKey);
+    expect(ctx.wallet?.legacyEncryptionPrivateKey).toBe(w.encryptionPrivateKey);
+    // a second lock / unlock re-encrypts the migrated wallet: the old key must survive it
+    act(() => ctx.lock());
+    await act(() => ctx.unlock("vault-pass-1"));
+    expect(ctx.wallet?.encryptionPublicKey).toBe(derived(w).publicKey);
+    expect(ctx.wallet?.legacyEncryptionPrivateKey).toBe(w.encryptionPrivateKey);
   }, 60_000);
 });
 

@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
-import { deriveMessagingKeypair, hasMessagingKeys, withDerivedMessagingKeys } from "../src/messaging-keys";
+import { deriveMessagingKeypair, hasMessagingKeys, migrateToDerivedMessagingKeys, withDerivedMessagingKeys } from "../src/messaging-keys";
 import { keypairFromMnemonic } from "../src/mnemonic";
 import { pubkeyToAddress } from "../src/address";
 
@@ -111,4 +111,61 @@ describe("withDerivedMessagingKeys (backup import)", () => {
     const w = { signingPublicKey: publicKey, signingPrivateKey: "", encryptionPublicKey: "", encryptionPrivateKey: "" };
     expect(withDerivedMessagingKeys(w)).toBe(w);
   });
+});
+
+describe("stored wallet with a random messaging key (migrateToDerivedMessagingKeys)", () => {
+    const signing = keypairFromMnemonic(PHRASE_A);
+    const random = ml_kem768.keygen();
+    const old = {
+        signingPrivateKey: signing.secretKey,
+        encryptionPublicKey: hex(random.publicKey),
+        encryptionPrivateKey: hex(random.secretKey),
+        mnemonic: PHRASE_A,
+        displayName: "kept",
+    };
+
+    it("moves to the phrase-derived key and keeps the old keypair as the decrypt-only fallback", () => {
+        const m = migrateToDerivedMessagingKeys(old);
+        expect(sha(m.encryptionPublicKey)).toBe(QWALLA.A.kemPubSha);
+        expect(sha(m.encryptionPrivateKey)).toBe(QWALLA.A.kemSecSha);
+        expect(m.legacyEncryptionPublicKey).toBe(old.encryptionPublicKey);
+        expect(m.legacyEncryptionPrivateKey).toBe(old.encryptionPrivateKey);
+        expect(m.displayName).toBe("kept");
+        expect(m.mnemonic).toBe(PHRASE_A);
+    });
+
+    it("content encrypted to the old key still opens with the kept key, and new content with the derived key", () => {
+        const m = migrateToDerivedMessagingKeys(old);
+        const fromHex = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
+        const toOld = ml_kem768.encapsulate(random.publicKey);
+        expect(hex(ml_kem768.decapsulate(toOld.cipherText, fromHex(m.legacyEncryptionPrivateKey!)))).toBe(hex(toOld.sharedSecret));
+        const toNew = ml_kem768.encapsulate(fromHex(m.encryptionPublicKey));
+        expect(hex(ml_kem768.decapsulate(toNew.cipherText, fromHex(m.encryptionPrivateKey)))).toBe(hex(toNew.sharedSecret));
+    });
+
+    it("is idempotent: a migrated wallet is returned as the same object and never loses the first old key", () => {
+        const m = migrateToDerivedMessagingKeys(old);
+        expect(migrateToDerivedMessagingKeys(m)).toBe(m);
+        // even if the current key is later replaced, the recorded legacy key is not overwritten
+        const other = ml_kem768.keygen();
+        const changed = { ...m, encryptionPublicKey: hex(other.publicKey), encryptionPrivateKey: hex(other.secretKey) };
+        expect(migrateToDerivedMessagingKeys(changed)).toBe(changed);
+    });
+
+    it("leaves a wallet already on the derived key untouched (no legacy fields added)", () => {
+        const d = deriveMessagingKeypair(PHRASE_A, signing.secretKey);
+        const w = { ...old, encryptionPublicKey: d.publicKey, encryptionPrivateKey: d.privateKey };
+        const out = migrateToDerivedMessagingKeys(w);
+        expect(out).toBe(w);
+        expect("legacyEncryptionPrivateKey" in out).toBe(false);
+    });
+
+    it("leaves wallets without a phrase, without a signing key, or without usable messaging keys untouched", () => {
+        const noPhrase = { ...old, mnemonic: undefined };
+        expect(migrateToDerivedMessagingKeys(noPhrase)).toBe(noPhrase);
+        const publicOnly = { ...old, signingPrivateKey: "" };
+        expect(migrateToDerivedMessagingKeys(publicOnly)).toBe(publicOnly);
+        const noKeys = { ...old, encryptionPrivateKey: "" };
+        expect(migrateToDerivedMessagingKeys(noKeys)).toBe(noKeys);
+    });
 });
