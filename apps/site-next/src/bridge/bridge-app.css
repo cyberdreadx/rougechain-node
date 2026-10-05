@@ -442,3 +442,10 @@
   width: auto;
   flex: none;
 }
+
+/* iOS: keep this display-size amount field (the global iOS rule sets fields to 16px to stop focus zoom). */
+@supports (-webkit-touch-callout: none) {
+  .bridge-amount .input {
+    font-size: 20px !important;
+  }
+}
