@@ -28,6 +28,7 @@ import { UnlockForm } from "../wallet/parts";
 import { useBaseAddress } from "../wallet/BaseWallet";
 import { ApprovalDialog } from "./ApprovalDialog";
 import { BtcDepositPanel, ClaimExistingCard, EvmDepositForm, type ChainInfo } from "./DepositPanels";
+import { InflightDeposits } from "./InflightDeposits";
 import { ActivityCard, PendingWithdrawalsCard } from "./StatusCards";
 import { useBaseConnection, useEvmBalances } from "./useBaseConnection";
 import { WithdrawPanel, type L1Balances } from "./WithdrawPanel";
@@ -222,6 +223,8 @@ function BridgeApp({ network, chainId, config, xrge }: { network: NetworkType; c
   const wallet = w.wallet;
   return (
     <div className="bridge-layout">
+      {/* Outside the tab panels: a deposit on its way stays visible whichever tab is open. */}
+      {w.publicKey && <InflightDeposits pubkey={w.publicKey} network={network} onCredited={onDone} />}
       <section className="surface bridge-panel" aria-label={t("title")}>
         <div className="bridge-tabs" role="tablist" aria-label={t("title")}>
           {(["deposit", "withdraw"] as const).map((d) => (
@@ -258,6 +261,7 @@ function BridgeApp({ network, chainId, config, xrge }: { network: NetworkType; c
                   ) : (
                     <EvmDepositForm
                       asset={current}
+                      network={network}
                       conn={conn}
                       evm={evm}
                       chain={chain}

@@ -14,6 +14,8 @@ const ACTIONS: Record<string, "approve" | "transfer" | "deposit"> = {
   "0x095ea7b3": "approve",
   "0xa9059cbb": "transfer",
   "0xf1215d25": "deposit",
+  "0x9b1c48e6": "deposit",
+  "0x5a67cb87": "deposit",
 };
 
 export function ApprovalDialog({

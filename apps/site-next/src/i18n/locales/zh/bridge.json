@@ -59,7 +59,7 @@
   },
   "info": {
     "depositXrge": "通过 Base 钱包完成两笔交易：授权 + 存入。1:1 兑换。",
-    "depositEvm": "通过您的 Base 钱包发送 {{asset}} → 在 RougeChain 上自动领取 {{l1}}。1:1 兑换。",
+    "depositEvm": "从您的 Base 钱包存入 {{asset}}。{{l1}} 会自动到达 RougeChain，通常需要几分钟。1:1 兑换。",
     "withdrawBtc": "提交提取请求 → BTC 中继器将比特币发送至您的地址。确认时间取决于比特币网络。",
     "withdrawEvm": "提交提取请求 → 中继器在 Base 上释放（通常不到 2 分钟）。"
   },
@@ -73,8 +73,8 @@
     "network": "网络",
     "fee": "跨链手续费",
     "steps": "钱包步骤",
-    "depositEthSteps": "1 笔 Base 交易（向跨链桥发送 ETH），然后 1 次签名以领取。",
-    "depositUsdcSteps": "1 笔 Base 交易（向跨链桥转账 USDC），然后 1 次签名以领取。",
+    "depositEthSteps": "1 笔 Base 交易。之后您的 qETH 会自动到账，无需签名或领取。",
+    "depositUsdcSteps": "2 笔 Base 交易：先允许跨链桥使用您的 USDC，再存入。之后您的 qUSDC 会自动到账。",
     "depositXrgeSteps": "2 笔 Base 交易：先授权金库，再存入。",
     "withdrawLocal": "在此浏览器中使用您的 ML-DSA-65 密钥签名。您的密钥绝不会离开此页面。",
     "withdrawExtension": "您的 RougeChain 扩展将请求您批准此次提取。",
@@ -169,7 +169,8 @@
     "sendingToBridge": "正在将 {{symbol}} 发送至跨链桥…",
     "signingClaim": "正在签署领取请求…",
     "signingWithdrawal": "正在签署提取请求…",
-    "submittingWithdrawal": "正在提交提取请求…"
+    "submittingWithdrawal": "正在提交提取请求…",
+    "approvingToken": "正在授权 {{symbol}}…"
   },
   "toasts": {
     "claimed": "领取成功！{{token}} 已铸造到您的 RougeChain 钱包。",
@@ -181,7 +182,8 @@
     "depositSentPending": "存款已发送——{{token}} 将在确认后到账。如未到账，请使用“领取已有存款”并输入交易 {{tx}}…",
     "withdrawQueuedBtc": "提取请求已排队——BTC 中继器将向您的比特币地址发送 BTC。",
     "withdrawSubmittedXrge": "提取请求已提交！中继器将在 Base 上释放 XRGE。",
-    "withdrawSubmittedEvm": "提取请求已提交！中继器将向您的 Base 地址发送 {{symbol}}。"
+    "withdrawSubmittedEvm": "提取请求已提交！中继器将向您的 Base 地址发送 {{symbol}}。",
+    "depositSentAuto": "存款已发送。您的 {{token}} 将自动到账，通常需要几分钟——您可以离开此页面。"
   },
   "errors": {
     "networkNotConfirmed": "网络未确认——为保护您的资金，跨链桥已禁用",
@@ -215,7 +217,9 @@
     "withdrawFailed": "提取失败",
     "btcBelowMinimum": "qBTC 最低提现金额为 {{min}} BTC（比特币网络手续费从支付金额中扣除）。",
     "wrongChain": "您的 Base 钱包处于错误的网络（链 {{actual}}）；请切换到 {{chain}}（{{expected}}）后重试。",
-    "rejected": "请求已在您的钱包中被拒绝"
+    "rejected": "请求已在您的钱包中被拒绝",
+    "approvalFailedToken": "{{symbol}} 授权在 Base 上失败或超时",
+    "depositReverted": "存款交易在 Base 上失败，因此没有存入任何资金。您可以重试。"
   },
   "approve": {
     "txTitle": "批准 {{chain}} 交易",
@@ -237,6 +241,16 @@
     "mainnetWarning": "这是 Base Mainnet，涉及真实资金。交易无法撤销，请核对地址。",
     "testnetWarning": "Base Sepolia Testnet：这些代币没有价值。",
     "localSign": "使用由您的助记词派生的密钥在浏览器本地签名，任何机密信息都不会离开此页面。"
+  },
+  "inflight": {
+    "title": "您的存款",
+    "waiting": "已发送——等待 Base 网络确认",
+    "credited": "已到账 ✓（+{{amount}} {{symbol}}）",
+    "slow": "耗时比预期更长",
+    "slowHelp": "我们仍在跟踪这笔存款。如果一直未到账，请联系客服并提供这笔 Base 交易：",
+    "leaveHint": "您可以离开此页面——存款会自动到账，通常需要几分钟。",
+    "dismiss": "关闭",
+    "txLabel": "Base 交易哈希"
   },
   "networkWord": {
     "mainnet": "Mainnet",

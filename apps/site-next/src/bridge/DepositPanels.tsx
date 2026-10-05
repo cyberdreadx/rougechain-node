@@ -12,6 +12,7 @@ import i18n from "../i18n";
 import { BaseConnect, shortAddr } from "./BaseConnect";
 import { claimBtcDeposit, claimExistingDeposit, depositFromBase, errorMessage, evmDepositsEnabled, L1_SYMBOL, type FlowCtx, type FlowOutcome } from "./flows";
 import { WrongChainError } from "./evm";
+import { addInflight, markCredited, removeInflight } from "./inflight";
 import type { BaseConnection, EvmBalances } from "./useBaseConnection";
 import { assetDef, formatUnits, isBaseTxHash, normalizeBtcTxid, parseDepositAmount, type DepositAmount } from "./validate";
 
@@ -39,6 +40,7 @@ function flowError(e: unknown, fallback: string, chain: ChainInfo): string {
 
 export function EvmDepositForm({
   asset,
+  network,
   conn,
   evm,
   chain,
@@ -49,6 +51,8 @@ export function EvmDepositForm({
   onDone,
 }: {
   asset: "ETH" | "USDC" | "XRGE";
+  /** RougeChain network — in-flight deposits are remembered per network. */
+  network: string;
   conn: BaseConnection;
   evm: EvmBalances;
   chain: ChainInfo;
@@ -112,8 +116,15 @@ export function EvmDepositForm({
           usdcAddress: chain.usdcAddress,
           xrge,
         },
-        { onStep: setStep, sleep: flowTiming.sleep },
+        {
+          onStep: setStep,
+          sleep: flowTiming.sleep,
+          // Remembered the moment the wallet returns the hash, so leaving the page loses nothing.
+          onSent: (record) => addInflight(network, record),
+          onReverted: (hash) => removeInflight(network, hash),
+        },
       );
+      if (outcome.kind === "success" && outcome.txHash) markCredited(network, outcome.txHash, outcome.txId);
       report(outcome);
       setAmount("");
       setStage("form");

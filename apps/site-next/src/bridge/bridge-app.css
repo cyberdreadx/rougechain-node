@@ -415,6 +415,12 @@
 .bridge-main .pill.tone-info {
   color: var(--violet);
 }
+.bridge-inflight {
+  grid-column: 1 / -1;
+}
+.bridge-inflight .mono {
+  overflow-wrap: anywhere;
+}
 
 @media (max-width: 960px) {
   .bridge-layout {

@@ -59,7 +59,7 @@
   },
   "info": {
     "depositXrge": "Aprobar + depositar en dos transacciones de tu cartera de Base. Conversión 1:1.",
-    "depositEvm": "Envía {{asset}} desde tu cartera de Base → se reclama {{l1}} automáticamente en RougeChain. Conversión 1:1.",
+    "depositEvm": "Deposita {{asset}} desde tu cartera de Base. {{l1}} llega a RougeChain automáticamente, normalmente en unos minutos. Conversión 1:1.",
     "withdrawBtc": "Envía el retiro → el relayer de BTC manda Bitcoin a tu dirección. El tiempo de confirmación depende de la red de Bitcoin.",
     "withdrawEvm": "Envía el retiro → el relayer lo libera en Base (normalmente en menos de 2 minutos)."
   },
@@ -73,8 +73,8 @@
     "network": "Red",
     "fee": "Comisión del puente",
     "steps": "Pasos en la cartera",
-    "depositEthSteps": "1 transacción en Base (enviar ETH al puente) y luego 1 firma para reclamar.",
-    "depositUsdcSteps": "1 transacción en Base (transferencia de USDC al puente) y luego 1 firma para reclamar.",
+    "depositEthSteps": "1 transacción en Base. Después tus qETH llegan automáticamente, sin firmar ni reclamar nada.",
+    "depositUsdcSteps": "2 transacciones en Base: permitir que el puente use tus USDC y luego depositar. Después tus qUSDC llegan automáticamente.",
     "depositXrgeSteps": "2 transacciones en Base: aprobar la bóveda y luego depositar.",
     "withdrawLocal": "Se firma en este navegador con tu clave ML-DSA-65. Tu clave nunca sale de esta página.",
     "withdrawExtension": "Tu extensión de RougeChain te pedirá aprobar este retiro.",
@@ -170,7 +170,8 @@
     "sendingToBridge": "Enviando {{symbol}} al puente…",
     "signingClaim": "Firmando la reclamación…",
     "signingWithdrawal": "Firmando el retiro…",
-    "submittingWithdrawal": "Enviando el retiro…"
+    "submittingWithdrawal": "Enviando el retiro…",
+    "approvingToken": "Aprobando {{symbol}}…"
   },
   "toasts": {
     "claimed": "¡Reclamado! Se acuñaron {{token}} en tu cartera de RougeChain.",
@@ -182,7 +183,8 @@
     "depositSentPending": "Depósito enviado: {{token}} llegará cuando se confirme. Si no llega, usa \"Reclamar un depósito existente\" con la tx {{tx}}…",
     "withdrawQueuedBtc": "Retiro en cola: el relayer de BTC enviará BTC a tu dirección de Bitcoin.",
     "withdrawSubmittedXrge": "¡Retiro enviado! El relayer liberará XRGE en Base.",
-    "withdrawSubmittedEvm": "¡Retiro enviado! El relayer enviará {{symbol}} a tu dirección de Base."
+    "withdrawSubmittedEvm": "¡Retiro enviado! El relayer enviará {{symbol}} a tu dirección de Base.",
+    "depositSentAuto": "Depósito enviado. Tus {{token}} se acreditarán automáticamente, normalmente en unos minutos; puedes salir de esta página."
   },
   "errors": {
     "networkNotConfirmed": "Red no confirmada: puente deshabilitado para proteger tus fondos",
@@ -216,7 +218,9 @@
     "withdrawFailed": "El retiro falló",
     "btcBelowMinimum": "El retiro mínimo de qBTC es {{min}} BTC (la comisión de la red Bitcoin se descuenta del pago).",
     "wrongChain": "Tu cartera de Base está en la red equivocada (cadena {{actual}}); cambia a {{chain}} ({{expected}}) e inténtalo de nuevo.",
-    "rejected": "Solicitud rechazada en tu cartera"
+    "rejected": "Solicitud rechazada en tu cartera",
+    "approvalFailedToken": "La aprobación de {{symbol}} falló o se agotó el tiempo en Base",
+    "depositReverted": "La transacción de depósito falló en Base, así que no se depositó nada. Puedes intentarlo de nuevo."
   },
   "approve": {
     "txTitle": "Aprobar transacción en {{chain}}",
@@ -238,6 +242,16 @@
     "mainnetWarning": "Esto es Base mainnet con fondos reales. Las transacciones no se pueden revertir: revisa la dirección.",
     "testnetWarning": "Testnet Base Sepolia: estos tokens no tienen valor.",
     "localSign": "Se firma localmente en tu navegador con la clave derivada de tu frase de recuperación. Nada secreto sale de esta página."
+  },
+  "inflight": {
+    "title": "Tus depósitos",
+    "waiting": "Enviado: esperando confirmaciones de Base",
+    "credited": "Acreditado ✓ (+{{amount}} {{symbol}})",
+    "slow": "Está tardando más de lo esperado",
+    "slowHelp": "Seguimos pendientes de él. Si no llega, contacta con soporte e indica esta transacción de Base:",
+    "leaveHint": "Puedes salir de esta página: los depósitos se acreditan automáticamente, normalmente en unos minutos.",
+    "dismiss": "Descartar",
+    "txLabel": "hash de la transacción de Base"
   },
   "networkWord": {
     "mainnet": "mainnet",

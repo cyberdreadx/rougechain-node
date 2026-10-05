@@ -59,7 +59,7 @@
   },
   "info": {
     "depositXrge": "Baseウォレットで承認と入金の2件のトランザクションを行います。1:1で変換されます。",
-    "depositEvm": "Baseウォレットから{{asset}}を送金 → RougeChain上で{{l1}}が自動的に受け取られます。1:1で変換されます。",
+    "depositEvm": "Baseウォレットから{{asset}}を入金します。{{l1}}は自動的にRougeChainに届きます（通常は数分）。1:1で変換されます。",
     "withdrawBtc": "出金を送信 → BTCリレイヤーがお客様のアドレスへBitcoinを送金します。確認時間はBitcoinネットワークの状況によります。",
     "withdrawEvm": "出金を送信 → リレイヤーがBase上でリリースします（通常2分未満）。"
   },
@@ -73,8 +73,8 @@
     "network": "ネットワーク",
     "fee": "ブリッジ手数料",
     "steps": "ウォレットでの手順",
-    "depositEthSteps": "Baseトランザクション1件（ブリッジへETHを送金）の後、受け取りのための署名1回。",
-    "depositUsdcSteps": "Baseトランザクション1件（ブリッジへUSDCを送金）の後、受け取りのための署名1回。",
+    "depositEthSteps": "Baseトランザクション1件。その後、qETHは自動的に届きます。署名や受け取り操作は不要です。",
+    "depositUsdcSteps": "Baseトランザクション2件：ブリッジにUSDCの使用を許可し、その後入金します。その後、qUSDCは自動的に届きます。",
     "depositXrgeSteps": "Baseトランザクション2件：ボールトを承認してから入金します。",
     "withdrawLocal": "このブラウザ内でML-DSA-65鍵により署名します。鍵がこのページの外に出ることはありません。",
     "withdrawExtension": "RougeChain拡張機能がこの出金の承認を求めます。",
@@ -169,7 +169,8 @@
     "sendingToBridge": "{{symbol}}をブリッジへ送金中…",
     "signingClaim": "受け取りに署名中…",
     "signingWithdrawal": "出金に署名中…",
-    "submittingWithdrawal": "出金を送信中…"
+    "submittingWithdrawal": "出金を送信中…",
+    "approvingToken": "{{symbol}}を承認中…"
   },
   "toasts": {
     "claimed": "受け取り完了。{{token}}をRougeChainウォレットにミントしました。",
@@ -181,7 +182,8 @@
     "depositSentPending": "入金を送信しました。確認後に{{token}}が届きます。届かない場合は、tx {{tx}}…を使って「既存の入金を受け取る」をお試しください。",
     "withdrawQueuedBtc": "出金をキューに追加しました。BTCリレイヤーがお客様のBitcoinアドレスへBTCを送金します。",
     "withdrawSubmittedXrge": "出金を送信しました！リレイヤーがBase上でXRGEをリリースします。",
-    "withdrawSubmittedEvm": "出金を送信しました！リレイヤーがお客様のBaseアドレスへ{{symbol}}を送金します。"
+    "withdrawSubmittedEvm": "出金を送信しました！リレイヤーがお客様のBaseアドレスへ{{symbol}}を送金します。",
+    "depositSentAuto": "入金を送信しました。{{token}}は自動的に反映されます（通常は数分）。このページを離れても大丈夫です。"
   },
   "errors": {
     "networkNotConfirmed": "ネットワーク未確認 — 資金保護のためブリッジを無効にしています",
@@ -215,7 +217,9 @@
     "withdrawFailed": "出金に失敗しました",
     "btcBelowMinimum": "qBTCの最低出金額は{{min}} BTCです（Bitcoinネットワーク手数料は支払額から差し引かれます）。",
     "wrongChain": "Baseウォレットが誤ったネットワーク（チェーン{{actual}}）に接続されています。{{chain}}（{{expected}}）に切り替えて、もう一度お試しください。",
-    "rejected": "ウォレットでリクエストが拒否されました"
+    "rejected": "ウォレットでリクエストが拒否されました",
+    "approvalFailedToken": "{{symbol}}の承認がBase上で失敗またはタイムアウトしました",
+    "depositReverted": "入金トランザクションがBase上で失敗したため、何も入金されていません。もう一度お試しください。"
   },
   "approve": {
     "txTitle": "{{chain}}のトランザクションを承認",
@@ -237,6 +241,16 @@
     "mainnetWarning": "これは実際の資金を扱うBaseメインネットです。取引は取り消せません。アドレスを確認してください。",
     "testnetWarning": "Base Sepoliaテストネット：これらのトークンに価値はありません。",
     "localSign": "リカバリーフレーズから導出した鍵で、ブラウザ内でローカルに署名します。秘密情報がこのページの外に出ることはありません。"
+  },
+  "inflight": {
+    "title": "あなたの入金",
+    "waiting": "送信済み — Baseの承認を待っています",
+    "credited": "反映済み ✓（+{{amount}} {{symbol}}）",
+    "slow": "通常より時間がかかっています",
+    "slowHelp": "引き続き確認しています。届かない場合は、サポートにこのBaseトランザクションをお伝えください：",
+    "leaveHint": "このページを離れても大丈夫です。入金は自動的に反映されます（通常は数分）。",
+    "dismiss": "閉じる",
+    "txLabel": "Baseトランザクションハッシュ"
   },
   "networkWord": {
     "mainnet": "メインネット",

@@ -146,6 +146,34 @@ export function vaultDepositCalldata(amountWei: bigint, rougechainPubkey: string
 /** Fixed gas limit apps/web sets on the vault deposit (500k). */
 export const VAULT_DEPOSIT_GAS = "0x7A120";
 
+const word = (n: bigint | number): string => n.toString(16).padStart(64, "0");
+
+/** ABI tail of a dynamic `string`: byte length, then the UTF-8 bytes right-padded to a 32-byte boundary. */
+function abiStringTail(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  const hex = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return word(bytes.length) + hex.padEnd(Math.ceil(hex.length / 64) * 64, "0");
+}
+
+/** RougeBridge.depositETH(string rougechainPubkey) — sent with the ETH amount as `value`. */
+export function bridgeDepositEthCalldata(rougechainPubkey: string): string {
+  return "0x9b1c48e6" + word(32) + abiStringTail(rougechainPubkey);
+}
+
+/** RougeBridge.depositERC20(address token, uint256 amount, string rougechainPubkey) — needs a prior approve(bridge, amount). */
+export function bridgeDepositErc20Calldata(token: string, amount: bigint, rougechainPubkey: string): string {
+  return "0x5a67cb87" + token.slice(2).toLowerCase().padStart(64, "0") + word(amount) + word(96) + abiStringTail(rougechainPubkey);
+}
+
+/**
+ * Gas limit for a RougeBridge deposit: the same fixed 500k as the vault deposit. The recipient key
+ * is a 3,904-character string, so calldata (~180k at the EIP-7623 floor price) and the event that
+ * repeats it dominate; wallets tend to under-estimate that, and unused gas is refunded.
+ */
+export const BRIDGE_DEPOSIT_GAS = VAULT_DEPOSIT_GAS;
+
 /** The message the Base wallet personal_signs to claim an ETH/USDC deposit. */
 export function claimMessage(txHash: string, recipientPubkey: string): string {
   return `RougeChain bridge claim\nTx: ${txHash}\nRecipient: ${recipientPubkey}`;
