@@ -12,11 +12,10 @@
 
 [build.environment]
   NODE_VERSION = "20.19.0"
-  # ETH / USDC bridge deposits (site form + manual claim). Paused again 2026-10-05: a deposit sent
-  # from a smart-contract wallet (Base app, Safe, other ERC-4337 accounts) reaches the bridge but
-  # cannot be claimed, and the form did not stop it. Set to "true" once the form deposits through
-  # the bridge contract (credited automatically) or refuses such wallets.
-  VITE_EVM_DEPOSIT_ENABLED = "false"
+  # ETH / USDC bridge deposits. The form now deposits through the bridge contract (credited
+  # automatically by the relayer, any wallet type) and tracks a deposit until it is credited.
+  # Set to "false" to pause the form again.
+  VITE_EVM_DEPOSIT_ENABLED = "true"
 
 [[headers]]
   for = "/assets/*"
