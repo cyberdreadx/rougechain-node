@@ -477,7 +477,17 @@ function ComposeView({
   onBack: () => void;
 }) {
   const { t } = useTranslation("messenger");
-  const [to, setTo] = useState(replyTo?.message.senderName || replyTo?.message.fromWalletId || "");
+  // A reply goes to the wallet that sent the mail. The To field shows the sender's label (their
+  // mail name, or a display name / shortened id when they have none); that label is only looked
+  // up as an address if the user edits it — a display name is not an address and could otherwise
+  // resolve to whoever registered it as a mail name.
+  const replyLabel = replyTo?.message.senderName || replyTo?.message.fromWalletId || "";
+  const replyWalletId = replyTo?.message.fromWalletId || null;
+  const resolveTo = useCallback(
+    (input: string) => (replyWalletId && input.trim() === replyLabel.trim() ? Promise.resolve<string | null>(replyWalletId) : resolveRecipient(input)),
+    [replyLabel, replyWalletId],
+  );
+  const [to, setTo] = useState(replyLabel);
   const [subject, setSubject] = useState(replyTo ? `Re: ${replyTo.message.subject || ""}` : "");
   const [body, setBody] = useState(() => signatureBlock(settings));
   const [sending, setSending] = useState(false);
@@ -493,7 +503,7 @@ function ComposeView({
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const id = await resolveRecipient(to);
+        const id = await resolveTo(to);
         if (!cancelled) setResolved(id);
       } catch {
         if (!cancelled) setResolved(null);
@@ -505,14 +515,14 @@ function ComposeView({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [to]);
+  }, [to, resolveTo]);
 
   const send = async () => {
     if (!to.trim() || !subject.trim() || sending) return;
     setError(null);
     setSending(true);
     try {
-      const recipientId = await resolveRecipient(to);
+      const recipientId = await resolveTo(to);
       if (!recipientId) {
         setError(t("mail.unresolved", { to, a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT }));
         return;

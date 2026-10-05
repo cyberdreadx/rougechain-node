@@ -83,6 +83,9 @@ pub struct MessengerStore {
     db: Arc<sled::Db>,
 }
 
+/// Returned by `register_wallet` when the encryption key is already registered to another wallet.
+pub const ENCRYPTION_KEY_TAKEN: &str = "This encryption key is already registered to another wallet";
+
 impl MessengerStore {
     pub fn new(data_dir: impl AsRef<Path>) -> Self {
         let db_path = data_dir.as_ref().join("messenger-db");
@@ -196,20 +199,31 @@ impl MessengerStore {
     }
 
     pub fn register_wallet(&self, wallet: MessengerWallet) -> Result<MessengerWallet, String> {
+        // (see ENCRYPTION_KEY_TAKEN)
         let tree = self.wallets_tree()?;
         let signing_idx = self.signing_key_index_tree()?;
         let enc_idx = self.enc_key_index_tree()?;
         let conv_tree = self.conversations_tree()?;
         let part_idx = self.participant_index_tree()?;
 
-        // Find and remove old wallets with matching keys
+        // An existing entry is "this wallet" only when it has the same id or the same SIGNING key
+        // (the key that authenticated the request). A matching ENCRYPTION key proves nothing — it
+        // is public in the directory — so it never identifies the registrant, and an encryption key
+        // that belongs to a different wallet cannot be registered a second time.
         let mut old_ids: Vec<String> = Vec::new();
         let all_wallets = self.list_wallets()?;
         for w in &all_wallets {
             let same_id = w.id == wallet.id;
             let same_signing = !wallet.signing_public_key.is_empty() && w.signing_public_key == wallet.signing_public_key;
             let same_enc = !wallet.encryption_public_key.is_empty() && w.encryption_public_key == wallet.encryption_public_key;
-            if same_id || same_signing || same_enc {
+            if same_enc && !same_id && !same_signing {
+                return Err(ENCRYPTION_KEY_TAKEN.to_string());
+            }
+        }
+        for w in &all_wallets {
+            let same_id = w.id == wallet.id;
+            let same_signing = !wallet.signing_public_key.is_empty() && w.signing_public_key == wallet.signing_public_key;
+            if same_id || same_signing {
                 if w.id != wallet.id {
                     old_ids.push(w.id.clone());
                 }
@@ -781,6 +795,49 @@ mod tests {
     }
     fn msg(conv: &str, sender: &str, at: &str) -> MessengerMessage {
         MessengerMessage { id: Uuid::new_v4().to_string(), conversation_id: conv.into(), sender_wallet_id: sender.into(), encrypted_content: "x".into(), signature: "s".into(), self_destruct: false, destruct_after_seconds: None, created_at: at.into(), is_read: false, read_at: None, message_type: "text".into(), spoiler: false, deleted_at: None }
+    }
+
+    fn w(id: &str, sig: &str, enc: &str) -> MessengerWallet {
+        MessengerWallet { id: id.into(), display_name: id.into(), signing_public_key: sig.into(), encryption_public_key: enc.into(), created_at: "t".into(), discoverable: true, avatar_url: None }
+    }
+
+    #[test]
+    fn an_encryption_key_never_identifies_the_registrant() {
+        let s = store(); wallet(&s, "alice"); wallet(&s, "bob");
+        let (conv, _) = s.create_or_get_conversation("alice", vec!["alice".into(), "bob".into()], None, false).unwrap();
+        // another wallet registering alice's (public) encryption key is refused, and nothing of alice's changes
+        let err = s.register_wallet(w("mallory", "sig-mallory", "enc-alice")).unwrap_err();
+        assert_eq!(err, ENCRYPTION_KEY_TAKEN);
+        let all = s.list_wallets().unwrap();
+        assert_eq!(all.len(), 2, "no entry added or removed");
+        let a = all.iter().find(|x| x.id == "alice").expect("alice's entry is intact");
+        assert_eq!((a.signing_public_key.as_str(), a.encryption_public_key.as_str()), ("sig-alice", "enc-alice"));
+        assert_eq!(s.list_conversations("alice").unwrap().len(), 1);
+        assert!(s.list_conversations("mallory").unwrap().is_empty());
+        let c = s.list_conversations("alice").unwrap().into_iter().find(|c| c.id == conv.id).unwrap();
+        assert!(c.participant_ids.contains(&"alice".to_string()) && !c.participant_ids.contains(&"mallory".to_string()));
+        // also refused without a signing key, and under alice's own id with another signing key the
+        // store still replaces by id (the API refuses that case before it gets here)
+        assert_eq!(s.register_wallet(w("ghost", "", "enc-bob")).unwrap_err(), ENCRYPTION_KEY_TAKEN);
+    }
+
+    #[test]
+    fn the_same_signing_key_moves_its_own_entry_and_may_change_its_encryption_key() {
+        let s = store(); wallet(&s, "alice"); wallet(&s, "bob");
+        s.create_or_get_conversation("alice", vec!["alice".into(), "bob".into()], None, false).unwrap();
+        // same wallet, new directory id and a new encryption key (e.g. the phrase-derived one)
+        let moved = s.register_wallet(w("sig-alice", "sig-alice", "enc-alice-derived")).unwrap();
+        assert_eq!(moved.id, "sig-alice");
+        let all = s.list_wallets().unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|x| x.id != "alice"), "the old entry is gone");
+        let conv = s.list_conversations("sig-alice").unwrap();
+        assert_eq!(conv.len(), 1, "its conversations follow");
+        assert!(conv[0].participant_ids.contains(&"sig-alice".to_string()) && !conv[0].participant_ids.contains(&"alice".to_string()));
+        // the released encryption key is free again; re-registering the same entry is idempotent
+        s.register_wallet(w("carol", "sig-carol", "enc-alice")).unwrap();
+        s.register_wallet(w("sig-alice", "sig-alice", "enc-alice-derived")).unwrap();
+        assert_eq!(s.list_wallets().unwrap().len(), 3);
     }
 
     #[test]

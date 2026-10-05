@@ -1250,8 +1250,15 @@ async fn auth_middleware<B>(
         "/api/messenger/wallets/register",
         "/api/messenger/messages/read",
         "/api/names/register",
+        // unauthenticated reads of another wallet's mail / conversations (use the signed
+        // /api/v2/mail/folder and /api/v2/messenger/*/list)
+        "/api/mail/inbox",
+        "/api/mail/sent",
+        "/api/mail/trash",
+        "/api/messenger/conversations",
+        "/api/messenger/messages",
     ];
-    if V1_KEY_ENDPOINTS.iter().any(|ep| path == *ep) {
+    if V1_KEY_ENDPOINTS.iter().any(|ep| path == *ep) || path.starts_with("/api/mail/message/") {
         if !state.dev_mode {
             return Err(StatusCode::GONE);
         }
@@ -5330,25 +5337,29 @@ async fn register_messenger_wallet_signed(
             let name_lower = display_name.to_lowercase();
             for w in &existing_wallets {
                 if w.discoverable && w.display_name.to_lowercase() == name_lower && w.id != id {
-                    let same_keys = (!signing_key.is_empty() && w.signing_public_key == signing_key)
-                        || (!encryption_key.is_empty() && w.encryption_public_key == encryption_key);
-                    if !same_keys {
+                    // The same wallet is recognised by the key that signed this request, never by
+                    // an encryption key (public in the directory).
+                    if w.signing_public_key != authed_key {
                         return Err(signed_bad(&format!("Display name '{}' is already taken", display_name)));
                     }
                 }
             }
         }
+
+        // An encryption key registered to another wallet cannot be registered again.
+        if !encryption_key.is_empty()
+            && existing_wallets.iter().any(|w| w.encryption_public_key == encryption_key && w.signing_public_key != authed_key && w.id != id)
+        {
+            return Err(signed_bad(quantum_vault_storage::messenger_store::ENCRYPTION_KEY_TAKEN));
+        }
     }
 
+    // Older entries of THIS wallet (same signing key, another id): its mail name and labels follow.
     let mut old_ids_to_update: Vec<String> = Vec::new();
     if let Ok(existing_wallets) = state.node.list_wallets() {
         for w in &existing_wallets {
-            if w.id != id {
-                let will_replace = (!signing_key.is_empty() && w.signing_public_key == signing_key)
-                    || (!encryption_key.is_empty() && w.encryption_public_key == encryption_key);
-                if will_replace {
-                    old_ids_to_update.push(w.id.clone());
-                }
+            if w.id != id && w.signing_public_key == authed_key {
+                old_ids_to_update.push(w.id.clone());
             }
         }
     }
@@ -9516,6 +9527,10 @@ async fn v2_shield(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Suspended transaction types are refused before any caller-supplied proof bytes are parsed.
+    if crate::node::monetary_integrity_active(state.node.tip_height().unwrap_or(0).saturating_add(1)) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": crate::node::SUSPENDED_TX_TYPE_ERROR}))));
+    }
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9567,6 +9582,10 @@ async fn v2_shielded_transfer(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Suspended transaction types are refused before any caller-supplied proof bytes are parsed.
+    if crate::node::monetary_integrity_active(state.node.tip_height().unwrap_or(0).saturating_add(1)) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": crate::node::SUSPENDED_TX_TYPE_ERROR}))));
+    }
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9667,6 +9686,10 @@ async fn v2_unshield(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Suspended transaction types are refused before any caller-supplied proof bytes are parsed.
+    if crate::node::monetary_integrity_active(state.node.tip_height().unwrap_or(0).saturating_add(1)) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": crate::node::SUSPENDED_TX_TYPE_ERROR}))));
+    }
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
