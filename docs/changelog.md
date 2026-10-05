@@ -4,6 +4,21 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.2: monetary-integrity rule — mainnet 245, testnet 1390 — 2026-10-04
+
+- Consensus upgrade (`upgrade_schedule.monetary_integrity`). From its height a block is invalid if
+  it carries a transaction with a fee that is not a finite number ≥ 0, a `slash` transaction, a
+  faucet-flagged transaction on a network without a faucet, or a transaction of a suspended type
+  (shielded, token lock/stake, governance, delegation and the legacy `token_approve` /
+  `token_transfer_from` types; allowances through `approve` / `transfer_from` are unaffected). The suspended features
+  are off until a later release restores them. Below the height nothing changes; mainnet history
+  replays identically.
+- No activation height: stricter verification on the manual bridge-deposit claim route; the gRPC
+  faucet honours the faucet switch; invalid fees are refused at the mempool and by the producer.
+- Active on testnet since block 1390 (2026-10-04): transfers and the faucet finalize as before; a
+  suspended type is refused with `this transaction type is suspended`.
+- Mandatory: [upgrade notice](running-a-node/mandatory-upgrade-2026-10-245.md).
+
 ## Node: contracts can read NFT royalties (CONTRACT_NFT_ROYALTY) — built, activation not scheduled — 2026-10-01
 
 - Consensus upgrade, **not active on any network** (`upgrade_schedule.contract_nft_royalty` is

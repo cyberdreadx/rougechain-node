@@ -45,6 +45,7 @@ import {
   getPrivacySettings,
   getWallets,
   importMessengerIdentity,
+  MessengerKeyMismatchError,
   registerWalletOnNode,
   type Conversation,
   type Wallet,
@@ -69,7 +70,35 @@ import { Sheet } from "./ui";
 import { useMessengerSocket } from "./ws";
 import "./messenger.css";
 
+/** Qwalla's in-app browser (its injected EVM provider carries `isQwalla`). */
+function insideQwalla(): boolean {
+  return typeof window !== "undefined" && !!(window as { ethereum?: { isQwalla?: boolean } }).ethereum?.isQwalla;
+}
+
 export default function MessengerPage() {
+  const { t } = useTranslation("messenger");
+  const { isExtension } = useWallet();
+  const [useHere, setUseHere] = useState(false);
+  // Inside Qwalla the wallet connects without its keys, so the messenger here would be a second,
+  // device-local identity with none of the user's conversations. Their messenger is Qwalla's Chats
+  // tab: say so before creating anything, and let them continue here only if they ask to.
+  if (insideQwalla() && isExtension && !useHere) {
+    return (
+      <main id="main" className="app-main msg-gate">
+        <div className="container">
+          <section className="surface msg-gate-card">
+            <h2>{t("gate.qwallaTitle")}</h2>
+            <p>{t("gate.qwallaHint")}</p>
+            <div className="actions">
+              <button type="button" className="button outline" onClick={() => setUseHere(true)}>
+                {t("gate.qwallaContinue")}
+              </button>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
   return (
     <WalletGate product="messenger">
       {({ wallet, identity, setIdentity }) => <Messenger wallet={wallet} identity={identity} setIdentity={setIdentity} />}
@@ -157,7 +186,14 @@ function Messenger({ wallet, identity, setIdentity }: { wallet: UnifiedWallet; i
   // Register (required for messaging; `discoverable` only controls search), load, and keep fresh.
   useEffect(() => {
     if (wallet.encryptionPublicKey)
-      registerWalletOnNode({ id: wallet.id, displayName: wallet.displayName, signingPublicKey: wallet.signingPublicKey, encryptionPublicKey: wallet.encryptionPublicKey }).catch(() => {});
+      registerWalletOnNode({ id: wallet.id, displayName: wallet.displayName, signingPublicKey: wallet.signingPublicKey, encryptionPublicKey: wallet.encryptionPublicKey }).catch((e) => {
+        // Never silent: an unregistered or foreign-keyed wallet cannot receive messages here.
+        if (e instanceof MessengerKeyMismatchError) {
+          toast.info(t("header.keyMismatch"), { description: t("header.keyMismatchHint") });
+        } else {
+          toast.error(t("header.registerFailed"), { description: e instanceof Error ? e.message : undefined });
+        }
+      });
     if (loadNotificationSettings().enabled) requestNotificationPermission().catch(() => {});
     // Only on identity change: the registration is idempotent.
   }, [identity.signingPublicKey]);
@@ -236,11 +272,18 @@ function Messenger({ wallet, identity, setIdentity }: { wallet: UnifiedWallet; i
     if (!getPrivacySettings().discoverable) return void toast.info(t("header.hidden"));
     setBusy("register");
     try {
-      await registerWalletOnNode(identity, isExtension ? false : undefined);
+      try {
+        await registerWalletOnNode(identity, isExtension ? false : undefined);
+      } catch (e) {
+        // Registered from another app with another key: replace it only if the user says so.
+        if (!(e instanceof MessengerKeyMismatchError) || !window.confirm(t("header.keyMismatchConfirm"))) throw e;
+        await registerWalletOnNode(identity, isExtension ? false : undefined, { replaceKey: true });
+      }
       toast.success(t("header.registered"), { description: t("header.registeredHint") });
       void loadContacts();
     } catch (e) {
-      toast.error(t("header.registerFailed"), { description: e instanceof Error ? e.message : undefined });
+      if (e instanceof MessengerKeyMismatchError) toast.info(t("header.keyMismatch"), { description: t("header.keyMismatchHint") });
+      else toast.error(t("header.registerFailed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       setBusy(null);
     }
@@ -259,7 +302,8 @@ function Messenger({ wallet, identity, setIdentity }: { wallet: UnifiedWallet; i
       const updated: UnifiedWallet = { ...current, encryptionPublicKey: enc.publicKey, encryptionPrivateKey: enc.privateKey };
       saveUnifiedWallet(updated);
       notifyWalletChanged();
-      await registerWalletOnNode({ id: updated.id, displayName: updated.displayName, signingPublicKey: updated.signingPublicKey, encryptionPublicKey: updated.encryptionPublicKey });
+      // Regenerating IS the explicit decision to replace the registered key.
+      await registerWalletOnNode({ id: updated.id, displayName: updated.displayName, signingPublicKey: updated.signingPublicKey, encryptionPublicKey: updated.encryptionPublicKey }, undefined, { replaceKey: true });
       toast.success(t("header.regenDone"));
       void loadContacts();
     } catch (e) {

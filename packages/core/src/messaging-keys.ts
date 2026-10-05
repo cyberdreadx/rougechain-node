@@ -7,8 +7,10 @@
  *   seed     = SHA-512(utf8(`${material}|rougee-gram|kem-v1`))   (64 bytes)
  *   keypair  = ml_kem768.keygen(seed)
  *
- * Only creation / import paths use this. A wallet that is already stored keeps whatever messaging
- * key it has (older website wallets have a random one) — never re-derive those.
+ * Creation / import paths use this. A stored wallet that has a recovery phrase but an older
+ * random messaging key is moved to the derived key at unlock / page load by
+ * `migrateToDerivedMessagingKeys`, which keeps the old keypair as a decrypt-only fallback. A
+ * wallet without a phrase keeps the key it has.
  */
 import { sha512 } from "@noble/hashes/sha2.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
@@ -41,6 +43,9 @@ interface MessagingKeyFields {
   encryptionPublicKey: string;
   encryptionPrivateKey: string;
   mnemonic?: string;
+  /** A previous messaging keypair, kept ONLY to open content encrypted to it. Never re-derived, never dropped. */
+  legacyEncryptionPublicKey?: string;
+  legacyEncryptionPrivateKey?: string;
 }
 
 /** The wallet carries a usable ML-KEM-768 keypair (same check the vault's key validation uses). */
@@ -60,4 +65,25 @@ export function withDerivedMessagingKeys<T extends MessagingKeyFields>(wallet: T
   if (hasMessagingKeys(wallet) || !wallet.signingPrivateKey) return wallet;
   const enc = deriveMessagingKeypair(wallet.mnemonic ?? null, wallet.signingPrivateKey);
   return { ...wallet, encryptionPublicKey: enc.publicKey, encryptionPrivateKey: enc.privateKey };
+}
+
+/**
+ * A stored wallet that has a recovery phrase but still uses a random messaging key (created
+ * before keys were derived from the phrase) moves to the phrase-derived key, the one every client
+ * of the wallet can compute. The old keypair is kept as `legacyEncryption*` so everything already
+ * encrypted to it still opens. Pure and idempotent: a wallet already on the derived key, already
+ * migrated, without a phrase, or without usable keys is returned unchanged (same object).
+ */
+export function migrateToDerivedMessagingKeys<T extends MessagingKeyFields>(wallet: T): T {
+  if (!wallet.mnemonic || !wallet.signingPrivateKey || !hasMessagingKeys(wallet)) return wallet;
+  if (wallet.legacyEncryptionPrivateKey) return wallet;
+  const derived = deriveMessagingKeypair(wallet.mnemonic, wallet.signingPrivateKey);
+  if (derived.publicKey === wallet.encryptionPublicKey) return wallet;
+  return {
+    ...wallet,
+    encryptionPublicKey: derived.publicKey,
+    encryptionPrivateKey: derived.privateKey,
+    legacyEncryptionPublicKey: wallet.encryptionPublicKey,
+    legacyEncryptionPrivateKey: wallet.encryptionPrivateKey,
+  };
 }

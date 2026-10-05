@@ -16,6 +16,7 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Payable contract calls (`attach`) | 190 | 1200 |
 | Mintable custom tokens (TOKEN_MINTING) | 235 | 1360 |
 | Contracts read NFT royalty (CONTRACT_NFT_ROYALTY) | 235 | 1360 |
+| Monetary-integrity rule (MONETARY_INTEGRITY) | 245 | 1390 |
 
 **Testnet validator cleanup (block 1240, testnet only):** 99% of testnet's stake sat on validator
 `4e094d21…`, whose key nobody holds, so it could never sign finality votes. At block 1240 its stake is

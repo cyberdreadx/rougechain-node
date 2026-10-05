@@ -203,6 +203,7 @@
     "insufficientOnBase": "Base上の{{symbol}}残高が不足しています",
     "insufficientBalance": "{{symbol}}残高が不足しています",
     "insufficientFee": "ブリッジ手数料としてRougeChain上に0.1 XRGEが必要です",
+    "evmDepositsPaused": "ETH と USDC の入金はメンテナンスのため一時停止中です。XRGE の入金とすべての出金には影響ありません。",
     "xrgeNotConfigured": "XRGEブリッジの設定が完了していません",
     "notConfigured": "ブリッジが設定されていません",
     "approvalFailed": "XRGEの承認がBase上で失敗またはタイムアウトしました",

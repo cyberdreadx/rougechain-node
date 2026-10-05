@@ -2,18 +2,18 @@
   "schema": 1,
   "network": "mainnet",
   "chain_id": "rougechain-mainnet-1",
-  "version": "1.6.1",
-  "released": "2026-10-02",
-  "source_commit": "03613ef",
-  "public_commit": "e048bf1",
+  "version": "1.6.2",
+  "released": "2026-10-04",
+  "source_commit": "2c96256",
+  "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-mint-royalty-03613ef",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-mint-royalty-03613ef",
+    "name": "quantum-vault-daemon-monetary-integrity-2c96256",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-monetary-integrity-2c96256",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/quantum-vault-daemon-mint-royalty-03613ef"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.2/quantum-vault-daemon-monetary-integrity-2c96256"
     ],
-    "sha256": "673bf7b1a469b7f9937b17228faab1e81ae48fb2a90aa32b2fd1b7fcc9cc2984",
-    "size": 28463856
+    "sha256": "c43773c898fa12897ace7d2dca80f95626da63d3bf5cf3c81fafb7a4a60f86a1",
+    "size": 28441848
   },
   "cli": {
     "name": "rougechain-638637f",
@@ -85,8 +85,12 @@
     {
       "name": "contract_nft_royalty",
       "height": 235
+    },
+    {
+      "name": "monetary_integrity",
+      "height": 245
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-10.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-10-245.html",
   "min_installer_version": "2.0.0"
 }

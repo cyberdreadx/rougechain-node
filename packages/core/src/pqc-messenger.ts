@@ -567,7 +567,61 @@ export function buildSignedRequest(
   };
 }
 
-export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKeys, discoverableOverride?: boolean): Promise<void> {
+/** The unlocked wallet's decrypt-only previous messaging keypair, if any (see messaging-keys.ts). */
+async function legacyMessagingKey(signingPublicKey: string): Promise<{ publicKey: string; privateKey: string } | null> {
+  try {
+    const { getLegacyMessagingKey } = await import("./unified-wallet");
+    return getLegacyMessagingKey(signingPublicKey);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Open content with the wallet's current messaging key and, if that fails, with its previous one
+ * (content encrypted before the wallet moved to the phrase-derived key). Rethrows the first error
+ * when there is no previous key or it does not open the content either.
+ */
+export async function withMessagingKeyFallback<T>(
+  wallet: { signingPublicKey: string; encryptionPublicKey: string; encryptionPrivateKey: string },
+  open: (privateKey: string, publicKey: string) => Promise<T>,
+): Promise<T> {
+  try {
+    return await open(wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
+  } catch (first) {
+    const legacy = await legacyMessagingKey(wallet.signingPublicKey);
+    if (!legacy || legacy.privateKey === wallet.encryptionPrivateKey) throw first;
+    try {
+      return await open(legacy.privateKey, legacy.publicKey);
+    } catch {
+      throw first;
+    }
+  }
+}
+
+/**
+ * The directory already holds an entry for this signing key with a DIFFERENT encryption key —
+ * the same wallet was registered from another app or browser (e.g. Qwalla). Registering would
+ * replace that key, and messages sent to it could no longer be read there.
+ */
+export class MessengerKeyMismatchError extends Error {
+  constructor() {
+    super("This wallet's messenger is registered from another app with a different encryption key");
+    this.name = "MessengerKeyMismatchError";
+  }
+}
+
+/**
+ * Register (or refresh) a wallet in the messenger directory. The node REPLACES the entry for the
+ * signing key, so by default this refuses to overwrite an entry whose encryption key is not ours
+ * (throws `MessengerKeyMismatchError`); pass `replaceKey: true` only on an explicit user decision.
+ * The check is best effort: the directory lists discoverable wallets only.
+ */
+export async function registerWalletOnNode(
+  wallet: Wallet | WalletWithPrivateKeys,
+  discoverableOverride?: boolean,
+  opts?: { replaceKey?: boolean },
+): Promise<void> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return;
   const privacy = getPrivacySettings();
@@ -588,12 +642,23 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
 
   if (!priv) return;
 
+  if (!opts?.replaceKey && wallet.encryptionPublicKey) {
+    const mine = (await getWallets().catch(() => [] as Wallet[])).find((w) => w.signingPublicKey === sigPub);
+    if (mine?.encryptionPublicKey && mine.encryptionPublicKey !== wallet.encryptionPublicKey) {
+      // Our own previous key (replaced by the phrase-derived one) is not a foreign registration.
+      const legacy = await legacyMessagingKey(sigPub);
+      if (mine.encryptionPublicKey !== legacy?.publicKey) throw new MessengerKeyMismatchError();
+    }
+  }
+
   // The node REPLACES the directory entry on every register, so always carry the
   // avatar along — otherwise any routine re-register would wipe it.
   const avatarUrl = await resolveAvatarForRegistration(wallet);
 
   const payload: Record<string, unknown> = {
-    id: wallet.id,
+    // The directory id is the signing public key (as Qwalla registers it), so every client of
+    // the same wallet is one participant; a per-device id made each client a different one.
+    id: sigPub,
     displayName: wallet.displayName,
     signingPublicKey: wallet.signingPublicKey,
     encryptionPublicKey: wallet.encryptionPublicKey,
@@ -947,7 +1012,7 @@ export async function createConversation(
   if (!apiBase) throw new Error("Node API is not configured");
 
   const payload: Record<string, unknown> = {
-    participantIds: [senderWallet.id, recipientWalletId],
+    participantIds: [senderWallet.signingPublicKey, recipientWalletId],
     isGroup: false,
   };
   if (name) payload.name = name;
@@ -1427,7 +1492,7 @@ export async function getMessages(
     } else if (groupPackage) {
       // Group message (Qwalla v2 wrapped-CEK): my encryption key selects my wrapped CEK.
       try {
-        plaintext = await decryptV2Package(msg.encryptedContent, recipientWallet.encryptionPrivateKey, recipientWallet.encryptionPublicKey);
+        plaintext = await withMessagingKeyFallback(recipientWallet, (priv, pub) => decryptV2Package(msg.encryptedContent, priv, pub));
         const signer = isOwnMessage ? recipientWallet.signingPublicKey : senderSigningPublicKey;
         signatureValid = signer ? verifyPackageSignature(msg.encryptedContent, msg.signature, signer) : false;
       } catch {
@@ -1437,13 +1502,13 @@ export async function getMessages(
     } else if (isOwnMessage) {
       if (msg.encryptedContent) {
         try {
-          const decryptData = await decryptMessage(
+          const decryptData = await withMessagingKeyFallback(recipientWallet, (priv) => decryptMessage(
             msg.encryptedContent,
-            recipientWallet.encryptionPrivateKey,
+            priv,
             recipientWallet.signingPublicKey,
             msg.signature,
             true, // my own message: open the sender copy (senderKemCipherText)
-          );
+          ));
           plaintext = decryptData.plaintext;
           signatureValid = decryptData.signatureValid;
         } catch {
@@ -1456,12 +1521,12 @@ export async function getMessages(
       }
     } else if (msg.encryptedContent) {
       try {
-        const decryptData = await decryptMessage(
+        const decryptData = await withMessagingKeyFallback(recipientWallet, (priv) => decryptMessage(
           msg.encryptedContent,
-          recipientWallet.encryptionPrivateKey,
+          priv,
           senderSigningPublicKey || "",
           msg.signature
-        );
+        ));
         plaintext = decryptData.plaintext;
         signatureValid = senderSigningPublicKey ? decryptData.signatureValid : false;
         // Marking read (read receipts + self-destruct timers) is done by the caller via

@@ -3,7 +3,7 @@
  * and signed-payload fields. The "apps/web" expectations below are apps/web's own expressions
  * (src/pages/Bridge.tsx) evaluated on the same inputs.
  */
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateMnemonic, keypairFromMnemonic } from "@rougechain/core/mnemonic";
 import { serializePayload, verifyTransaction, type SignedTransaction } from "@rougechain/core/pqc-signer";
 import { getBtcDepositAddress } from "@rougechain/core/bridge";
@@ -26,6 +26,49 @@ beforeAll(() => {
 beforeEach(() => {
   localStorage.clear();
   Reflect.deleteProperty(window, "rougechain");
+  vi.stubEnv("VITE_EVM_DEPOSIT_ENABLED", "true");
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("ETH / USDC deposits paused (VITE_EVM_DEPOSIT_ENABLED unset)", () => {
+  beforeEach(() => {
+    vi.stubEnv("VITE_EVM_DEPOSIT_ENABLED", "");
+  });
+  for (const asset of ["ETH", "USDC"] as const) {
+    it(`${asset}: refuses before any wallet request, nothing is sent or claimed`, async () => {
+      const api = mockApi({});
+      const w = mockProvider({});
+      await expect(
+        depositFromBase(
+          { asset, provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep(asset, "1"), custodyAddress: CUSTODY, usdcAddress: USDC },
+          { sleep: instant },
+        ),
+      ).rejects.toThrow(/temporarily paused/);
+      expect(w.calls).toEqual([]);
+      expect(api.posts()).toEqual([]);
+    });
+  }
+  it("manual claim of an existing deposit is refused before signing", async () => {
+    const api = mockApi({});
+    const w = mockProvider({});
+    await expect(
+      claimExistingDeposit({ provider: w.provider, evmAddress: EVM, txHash: "0xabc", recipientPubkey: keys.publicKey, token: "ETH", chainId: BASE_SEPOLIA }, { sleep: instant }),
+    ).rejects.toThrow(/temporarily paused/);
+    expect(w.calls).toEqual([]);
+    expect(api.posts()).toEqual([]);
+  });
+  it("XRGE deposits still run while ETH / USDC are paused", async () => {
+    mockApi({ "POST /bridge/xrge/claim": () => ({ success: true, txId: "l1" }) });
+    const w = mockProvider({});
+    const out = await depositFromBase(
+      { asset: "XRGE", provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("XRGE", "5"), usdcAddress: USDC, xrge: { vaultAddress: VAULT, tokenAddress: XRGE_TOKEN } },
+      { sleep: instant },
+    );
+    expect(out.kind).toBe("success");
+    expect(w.sent()).toHaveLength(2);
+  });
 });
 
 function dep(asset: "ETH" | "USDC" | "XRGE", amount: string) {

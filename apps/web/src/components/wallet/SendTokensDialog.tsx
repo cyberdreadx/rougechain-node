@@ -18,6 +18,7 @@ import { parseSendAmount, rawToDisplay, formatBalance } from "@/lib/send-amount"
 import PqcQrScanner from "./PqcQrScanner";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { createShieldedNote, type ShieldedNote } from "@/lib/shielded-crypto";
+import { shieldedEnabled, SHIELDED_PAUSED_NOTICE } from "@/lib/shielded-flag";
 import { saveNote, saveSentNote } from "@/lib/note-store";
 import { isRougeAddress } from "@/lib/address";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
@@ -156,6 +157,7 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
     setSending(true);
     try {
       if (shieldedSend && selectedToken === "XRGE") {
+        if (!shieldedEnabled()) throw new Error(SHIELDED_PAUSED_NOTICE);
         const note = await createShieldedNote(amountToSend, resolvedAddress);
         const result = await secureShield(
           wallet.signingPublicKey,
@@ -464,7 +466,7 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
           </div>
 
           {/* Shielded Send Toggle */}
-          {selectedToken === "XRGE" && (
+          {selectedToken === "XRGE" && shieldedEnabled() && (
             <div
               onClick={() => setShieldedSend(!shieldedSend)}
               className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
