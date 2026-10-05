@@ -59,7 +59,7 @@
   },
   "info": {
     "depositXrge": "Approve + deposit in two Base wallet transactions. 1:1 conversion.",
-    "depositEvm": "Send {{asset}} via your Base wallet → auto-claim {{l1}} on RougeChain. 1:1 conversion.",
+    "depositEvm": "Deposit {{asset}} from your Base wallet. {{l1}} arrives on RougeChain automatically, usually in a few minutes. 1:1 conversion.",
     "withdrawBtc": "Submit withdrawal → the BTC relayer sends Bitcoin to your address. Confirmation time depends on the Bitcoin network.",
     "withdrawEvm": "Submit withdrawal → the relayer releases on Base (typically under 2 minutes)."
   },
@@ -73,8 +73,8 @@
     "network": "Network",
     "fee": "Bridge fee",
     "steps": "Wallet steps",
-    "depositEthSteps": "1 Base transaction (send ETH to the bridge), then 1 signature to claim.",
-    "depositUsdcSteps": "1 Base transaction (USDC transfer to the bridge), then 1 signature to claim.",
+    "depositEthSteps": "1 Base transaction. Your qETH then arrives automatically — nothing to sign or claim.",
+    "depositUsdcSteps": "2 Base transactions: allow the bridge to use your USDC, then deposit. Your qUSDC then arrives automatically.",
     "depositXrgeSteps": "2 Base transactions: approve the vault, then deposit.",
     "withdrawLocal": "Signed in this browser with your ML-DSA-65 key. Your key never leaves this page.",
     "withdrawExtension": "Your RougeChain extension will ask you to approve this withdrawal.",
@@ -170,7 +170,8 @@
     "sendingToBridge": "Sending {{symbol}} to the bridge…",
     "signingClaim": "Signing claim…",
     "signingWithdrawal": "Signing withdrawal…",
-    "submittingWithdrawal": "Submitting withdrawal…"
+    "submittingWithdrawal": "Submitting withdrawal…",
+    "approvingToken": "Approving {{symbol}}…"
   },
   "toasts": {
     "claimed": "Claimed! {{token}} minted to your RougeChain wallet.",
@@ -182,7 +183,8 @@
     "depositSentPending": "Deposit sent — {{token}} arrives once it confirms. If it doesn't, use \"Claim an existing deposit\" with tx {{tx}}…",
     "withdrawQueuedBtc": "Withdrawal queued — the BTC relayer will send BTC to your Bitcoin address.",
     "withdrawSubmittedXrge": "Withdrawal submitted! The relayer will release XRGE on Base.",
-    "withdrawSubmittedEvm": "Withdrawal submitted! The relayer will send {{symbol}} to your Base address."
+    "withdrawSubmittedEvm": "Withdrawal submitted! The relayer will send {{symbol}} to your Base address.",
+    "depositSentAuto": "Deposit sent. Your {{token}} will be credited automatically, usually in a few minutes — you can leave this page."
   },
   "errors": {
     "networkNotConfirmed": "Network not confirmed — bridge disabled to protect your funds",
@@ -216,7 +218,9 @@
     "withdrawFailed": "Withdrawal failed",
     "btcBelowMinimum": "Minimum qBTC withdrawal is {{min}} BTC (the Bitcoin network fee is deducted from the payout).",
     "wrongChain": "Your Base wallet is on the wrong network (chain {{actual}}); switch to {{chain}} ({{expected}}) and try again.",
-    "rejected": "Request rejected in your wallet"
+    "rejected": "Request rejected in your wallet",
+    "approvalFailedToken": "The {{symbol}} approval failed or timed out on Base",
+    "depositReverted": "The deposit transaction failed on Base, so nothing was deposited. You can try again."
   },
   "approve": {
     "txTitle": "Approve {{chain}} transaction",
@@ -238,6 +242,16 @@
     "mainnetWarning": "This is Base mainnet with real funds. Transactions can't be reversed — check the address.",
     "testnetWarning": "Base Sepolia testnet — these tokens have no value.",
     "localSign": "Signed locally in your browser with the key derived from your recovery phrase. Nothing secret leaves this page."
+  },
+  "inflight": {
+    "title": "Your deposits",
+    "waiting": "Sent — waiting for Base confirmations",
+    "credited": "Credited ✓ (+{{amount}} {{symbol}})",
+    "slow": "Taking longer than expected",
+    "slowHelp": "We're still watching for it. If it doesn't arrive, contact support and quote this Base transaction:",
+    "leaveHint": "You can leave this page — deposits are credited automatically, usually in a few minutes.",
+    "dismiss": "Dismiss",
+    "txLabel": "Base transaction hash"
   },
   "networkWord": {
     "mainnet": "mainnet",
