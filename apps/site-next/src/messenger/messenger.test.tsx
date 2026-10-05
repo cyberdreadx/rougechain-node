@@ -369,6 +369,24 @@ describe("wallet states", () => {
     expect(await screen.findByRole("button", { name: /Bob/ }, WAIT)).toBeInTheDocument();
   });
 
+  it("inside Qwalla: points to the Chats tab and creates no second identity until asked", async () => {
+    const ext = makePeer("Ext");
+    saveUnifiedWallet({ id: "ext-1", displayName: "Extension Wallet", createdAt: Date.now(), signingPublicKey: ext.signingPublicKey, signingPrivateKey: "", encryptionPublicKey: "", encryptionPrivateKey: "", version: 2 });
+    Object.assign(window, { ethereum: { isQwalla: true, isMetaMask: true } });
+    try {
+      const node = mockNode({ me: { id: "ext-1", signingPublicKey: ext.signingPublicKey } as UnifiedWallet, directory: directory(), conversations: [] });
+      renderRoute("/messenger");
+      expect(await screen.findByRole("heading", { name: "Your chats are in Qwalla" }, WAIT)).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Set your display name" })).not.toBeInTheDocument();
+      expect(node.postsTo("/v2/messenger/wallets/register")).toHaveLength(0);
+      // the website messenger is still reachable on request
+      await userEvent.click(screen.getByRole("button", { name: "Use the website messenger anyway" }));
+      expect(await screen.findByText(/Extension wallet: messages are signed with a messaging key kept on this device/, {}, WAIT)).toBeInTheDocument();
+    } finally {
+      delete (window as { ethereum?: unknown }).ethereum;
+    }
+  });
+
   it("extension wallet: messages as the device-local key, pays through the extension (core secureTransfer)", async () => {
     const ext = makePeer("Ext");
     const local = makePeer("Alice (device)");

@@ -70,7 +70,35 @@ import { Sheet } from "./ui";
 import { useMessengerSocket } from "./ws";
 import "./messenger.css";
 
+/** Qwalla's in-app browser (its injected EVM provider carries `isQwalla`). */
+function insideQwalla(): boolean {
+  return typeof window !== "undefined" && !!(window as { ethereum?: { isQwalla?: boolean } }).ethereum?.isQwalla;
+}
+
 export default function MessengerPage() {
+  const { t } = useTranslation("messenger");
+  const { isExtension } = useWallet();
+  const [useHere, setUseHere] = useState(false);
+  // Inside Qwalla the wallet connects without its keys, so the messenger here would be a second,
+  // device-local identity with none of the user's conversations. Their messenger is Qwalla's Chats
+  // tab: say so before creating anything, and let them continue here only if they ask to.
+  if (insideQwalla() && isExtension && !useHere) {
+    return (
+      <main id="main" className="app-main msg-gate">
+        <div className="container">
+          <section className="surface msg-gate-card">
+            <h2>{t("gate.qwallaTitle")}</h2>
+            <p>{t("gate.qwallaHint")}</p>
+            <div className="actions">
+              <button type="button" className="button outline" onClick={() => setUseHere(true)}>
+                {t("gate.qwallaContinue")}
+              </button>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
   return (
     <WalletGate product="messenger">
       {({ wallet, identity, setIdentity }) => <Messenger wallet={wallet} identity={identity} setIdentity={setIdentity} />}
