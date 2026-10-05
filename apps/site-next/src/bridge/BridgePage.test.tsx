@@ -171,6 +171,32 @@ describe("gates", () => {
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(await screen.findByText("No bridge activity yet")).toBeInTheDocument();
   });
+
+  it("recent activity lists this wallet's bridge mints and withdrawals as the node returns them", async () => {
+    testnet();
+    const w = await seedAppsWebLockedWallet();
+    const item = (txId: string, tx_type: string, payload: object, blockTime: number) => ({ txId, blockHash: "h", blockHeight: 247, blockTime, direction: "in", tx: { tx_type, payload } });
+    nodeRoutes(w.signingPublicKey, {
+      [`GET /address/${w.signingPublicKey}/transactions`]: () => ({
+        success: true,
+        total: 4,
+        transactions: [
+          item("a".repeat(64), "bridge_mint", { amount: 150000000, to_pub_key_hex: w.signingPublicKey }, Date.now() - 60_000),
+          item("b".repeat(64), "transfer", { amount: 100 }, Date.now() - 120_000),
+          item("c".repeat(64), "bridge_mint", { amount: 2500000, token_symbol: "qUSDC" }, Date.now() - 180_000),
+          item("d".repeat(64), "bridge_withdraw", { amount: 100, token_symbol: "XRGE" }, Date.now() - 240_000),
+        ],
+      }),
+    });
+    renderBridge();
+    const card = within(await screen.findByRole("region", { name: "Recent bridge activity" }));
+    expect(await card.findByText(/150,000,000 XRGE/)).toBeInTheDocument();
+    expect(card.getByText(/2\.50 qUSDC/)).toBeInTheDocument();
+    expect(card.getByText(/100 XRGE/)).toBeInTheDocument();
+    expect(card.getAllByText("Bridged in")).toHaveLength(2);
+    expect(card.getAllByText("Bridged out")).toHaveLength(1);
+    expect(card.queryByText("No bridge activity yet")).not.toBeInTheDocument();
+  });
 });
 
 describe("deposit Base → RougeChain", () => {

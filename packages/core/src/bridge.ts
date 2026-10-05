@@ -11,6 +11,7 @@
  */
 
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
+import { formatTokenAmount } from "./token-decimals";
 
 // ── Chain configs ───────────────────────────────────────────────
 
@@ -520,9 +521,34 @@ export async function getBridgeHistory(pubkey: string): Promise<BridgeHistoryEnt
     if (!res.ok) return [];
     const data = await res.json().catch(() => ({ transactions: [] }));
     const txs: any[] = data.transactions || [];
-    
+
+    // The node answers with `{ txId, blockTime, direction, tx: { tx_type, payload } }` per entry.
+    // Read that shape first; the flat `{ type, symbol, amount }` shape below is the older one.
+    const fromNode: BridgeHistoryEntry[] = [];
+    for (const item of txs) {
+      const inner = item?.tx;
+      const kind: string = inner?.tx_type || "";
+      if (kind !== "bridge_mint" && kind !== "bridge_withdraw") continue;
+      const payload = inner.payload || {};
+      const symbol: string = payload.token_symbol || "XRGE";
+      const units = Number(payload.amount ?? 0);
+      fromNode.push({
+        id: item.txId || `${item.blockHeight}-${fromNode.length}`,
+        type: kind,
+        direction: kind === "bridge_withdraw" ? "withdraw" : "deposit",
+        amount: Number.isFinite(units) ? formatTokenAmount(units, symbol) : "0",
+        symbol,
+        timestamp: Number(item.blockTime) || 0,
+        timeLabel: "",
+        status: "completed",
+        txHash: item.txId,
+      });
+      if (fromNode.length === 10) break;
+    }
+    if (fromNode.length > 0) return fromNode;
+
     const bridgeSymbols = ["qETH", "qUSDC", "XRGE", "qBTC"];
-    
+
     return txs
       .filter((tx: any) => {
         const t = tx.type || "";
