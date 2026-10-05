@@ -53,7 +53,7 @@ async function mailFromBob(subject: string, body: string, id = "mail-1", extra: 
   };
 }
 
-function mailNode(folders: Partial<Record<"inbox" | "sent" | "trash", Raw[]>>, opts: { name?: string | null } = {}) {
+function mailNode(folders: Partial<Record<"inbox" | "sent" | "trash", Raw[]>>, opts: { name?: string | null; bobNameOwner?: { id: string } } = {}) {
   const posts: { url: string; body: ReturnType<typeof signedBody> }[] = [];
   let name = opts.name ?? null;
   const rec = (u: string, i?: RequestInit) => {
@@ -76,7 +76,10 @@ function mailNode(folders: Partial<Record<"inbox" | "sent" | "trash", Raw[]>>, o
       return { success: true };
     },
     "/names/reverse/": () => ({ success: true, name }),
-    "/names/resolve/bob": () => ({ success: true, entry: { name: "bob", wallet_id: bob.id }, wallet: dirEntry(bob) }),
+    "/names/resolve/bob": () =>
+      opts.bobNameOwner
+        ? { success: true, entry: { name: "bob", wallet_id: opts.bobNameOwner.id } }
+        : { success: true, entry: { name: "bob", wallet_id: bob.id }, wallet: dirEntry(bob) },
     "/names/resolve/": () => ({ success: false }),
     "/messenger/wallets": () => ({ wallets: [dirEntry({ ...me, id: me.id }), dirEntry(bob)] }),
   });
@@ -144,6 +147,37 @@ describe("compose", () => {
     await userEvent.click(screen.getByRole("button", { name: /Send mail/ }));
     await waitFor(() => expect(node.postsTo("/v2/mail/send")).toHaveLength(1), WAIT);
     expect(node.postsTo("/v2/mail/send")[0].body.payload).toMatchObject({ replyToId: "mail-1", toWalletIds: [bob.id] });
+  });
+});
+
+describe("reply addressing", () => {
+  it("replies to the sender's wallet even when their display name is someone else's mail name", async () => {
+    me = seedAppsWebWallet({ displayName: "Alice" });
+    const item = await mailFromBob("Invoice", "Please confirm.");
+    // Bob has no mail name; the mail name "bob" belongs to another wallet.
+    const node = mailNode({ inbox: [item] }, { bobNameOwner: { id: "someone-else" } });
+    renderRoute("/mail");
+    await userEvent.click(await screen.findByRole("button", { name: /Invoice/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Reply" }, WAIT));
+    expect(await screen.findByText(/Resolved:/, {}, WAIT)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Send mail/ }));
+    await waitFor(() => expect(node.postsTo("/v2/mail/send")).toHaveLength(1), WAIT);
+    expect(node.postsTo("/v2/mail/send")[0].body.payload).toMatchObject({ replyToId: "mail-1", toWalletIds: [bob.id] });
+  });
+
+  it("an edited To field is looked up as an address again", async () => {
+    me = seedAppsWebWallet({ displayName: "Alice" });
+    const item = await mailFromBob("Invoice", "Please confirm.");
+    const node = mailNode({ inbox: [item] }, { bobNameOwner: { id: "someone-else" } });
+    renderRoute("/mail");
+    await userEvent.click(await screen.findByRole("button", { name: /Invoice/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Reply" }, WAIT));
+    const to = screen.getByLabelText("To");
+    await userEvent.clear(to);
+    await userEvent.type(to, "bob@rouge.quant");
+    // the typed address resolves through the name registry, not to the original sender
+    await waitFor(() => expect(screen.getByText(/Resolved: someone-else/)).toBeInTheDocument(), WAIT);
+    expect(node.postsTo("/v2/mail/send")).toHaveLength(0);
   });
 });
 
