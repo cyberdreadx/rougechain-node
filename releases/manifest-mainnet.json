@@ -2,18 +2,18 @@
   "schema": 1,
   "network": "mainnet",
   "chain_id": "rougechain-mainnet-1",
-  "version": "1.6.2",
-  "released": "2026-10-04",
-  "source_commit": "2c96256",
+  "version": "1.6.3",
+  "released": "2026-10-05",
+  "source_commit": "8eacc0d",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-monetary-integrity-2c96256",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-monetary-integrity-2c96256",
+    "name": "quantum-vault-daemon-directory-hardening-8eacc0d",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-directory-hardening-8eacc0d",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.2/quantum-vault-daemon-monetary-integrity-2c96256"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.3/quantum-vault-daemon-directory-hardening-8eacc0d"
     ],
-    "sha256": "c43773c898fa12897ace7d2dca80f95626da63d3bf5cf3c81fafb7a4a60f86a1",
-    "size": 28441848
+    "sha256": "58c0288fc0137f35f4b986be24b010589ff4783c58239bde229f6a7014ab6171",
+    "size": 28441912
   },
   "cli": {
     "name": "rougechain-638637f",
@@ -43,8 +43,8 @@
     "sha256": "280e02a935554e843666dfc768fb79ee2b207af716a48735b0e174ac1765a2d0",
     "size": 106826
   },
-  "mandatory": true,
-  "upgrade_before_height": 235,
+  "mandatory": false,
+  "upgrade_before_height": null,
   "activations": [
     {
       "name": "canonical_ledger_fork",
@@ -91,6 +91,6 @@
       "height": 245
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-10-245.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.3.html",
   "min_installer_version": "2.0.0"
 }
