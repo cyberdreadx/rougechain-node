@@ -4,6 +4,16 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.3: messenger and mail hardening — 2026-10-05
+
+- Not a consensus change (no activation height). A messenger directory entry can only be replaced
+  by the wallet that owns it (signing key); an encryption key registered to another wallet is
+  refused; mail names and folders follow the owning wallet only.
+- The unauthenticated legacy read routes for mail and messenger return `410 Gone`; clients use the
+  signed `/api/v2` routes.
+- The shielded API routes refuse a suspended transaction type before processing request data.
+- [Release notes](running-a-node/release-1.6.3.md).
+
 ## Node release 1.6.2: monetary-integrity rule — mainnet 245, testnet 1390 — 2026-10-04
 
 - Consensus upgrade (`upgrade_schedule.monetary_integrity`). From its height a block is invalid if
