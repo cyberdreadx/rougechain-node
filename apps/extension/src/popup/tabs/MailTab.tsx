@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import {
     ArrowLeft, Send, Inbox, SendHorizonal, Trash2, Loader2,
     Mail, Plus, RefreshCw, CheckCircle2, XCircle, AtSign, Reply,
-    MailOpen, Settings, ToggleLeft, ToggleRight, Type,
+    MailOpen, Settings, ToggleLeft, ToggleRight, Type, Paperclip,
 } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import { toMessengerWallet } from "../../lib/unified-wallet";
@@ -11,7 +11,7 @@ import {
     getInbox, getSent, getTrash,
     sendMail, moveMail, deleteMail, markMailRead,
     registerName, reverseLookup, resolveRecipient,
-    MAIL_DOMAIN,
+    MAIL_DOMAIN, safeAttachmentTarget,
     type MailItem,
 } from "../../lib/pqc-mail";
 
@@ -93,6 +93,7 @@ export default function MailTab({ wallet }: Props) {
     const [nameRegistering, setNameRegistering] = useState(false);
     const [threadItems, setThreadItems] = useState<MailItem[]>([]);
     const [mailSettings, setMailSettings] = useState<MailSettings>(loadMailSettings);
+    const [replyTo, setReplyTo] = useState<MailItem | null>(null);
 
     const messengerWallet = toMessengerWallet(wallet) as WalletWithPrivateKeys;
 
@@ -176,7 +177,8 @@ export default function MailTab({ wallet }: Props) {
             <ComposeView
                 wallet={messengerWallet}
                 myName={myName}
-                onBack={() => { setView("list"); loadFolder(); }}
+                replyTo={replyTo}
+                onBack={() => { setReplyTo(null); setView("list"); loadFolder(); }}
                 mailSettings={mailSettings}
             />
         );
@@ -191,7 +193,7 @@ export default function MailTab({ wallet }: Props) {
                 folder={folder}
                 thread={threadItems}
                 onBack={() => { setView("list"); setThreadItems([]); loadFolder(); }}
-                onReply={() => setView("compose")}
+                onReply={(target) => { setReplyTo(target); setView("compose"); }}
             />
         );
     }
@@ -224,7 +226,7 @@ export default function MailTab({ wallet }: Props) {
                         </button>
                     )}
                     <button
-                        onClick={() => setView("compose")}
+                        onClick={() => { setReplyTo(null); setView("compose"); }}
                         className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center text-primary hover:bg-primary/30 transition-colors"
                     >
                         <Plus className="w-3.5 h-3.5" />
@@ -355,19 +357,28 @@ export default function MailTab({ wallet }: Props) {
 function ComposeView({
     wallet,
     myName,
+    replyTo,
     onBack,
     mailSettings,
 }: {
     wallet: WalletWithPrivateKeys;
     myName: string | null;
+    replyTo: MailItem | null;
     onBack: () => void;
     mailSettings: MailSettings;
 }) {
     const sigBlock = mailSettings.signatureEnabled && mailSettings.signature.trim()
         ? `\n\n--\n${mailSettings.signature.trim()}`
         : "";
-    const [to, setTo] = useState("");
-    const [subject, setSubject] = useState("");
+    // A reply goes to the wallet that sent the mail; its label (mail name, or a display name /
+    // shortened id) is looked up as an address only if the user edits the field.
+    const replyLabel = replyTo?.message.senderName || replyTo?.message.fromWalletId || "";
+    const replyWalletId = replyTo?.message.fromWalletId || null;
+    const resolveTo = (input: string): Promise<string | null> =>
+        replyWalletId && input.trim() === replyLabel.trim() ? Promise.resolve(replyWalletId) : resolveRecipient(input);
+    const replySubject = replyTo ? (/^re:/i.test(replyTo.message.subject || "") ? replyTo.message.subject || "" : `Re: ${replyTo.message.subject || ""}`) : "";
+    const [to, setTo] = useState(replyLabel);
+    const [subject, setSubject] = useState(replySubject);
     const [body, setBody] = useState(sigBlock);
     const [isSending, setIsSending] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -379,7 +390,7 @@ function ComposeView({
             return;
         }
         const timeout = setTimeout(async () => {
-            const id = await resolveRecipient(to);
+            const id = await resolveTo(to);
             setResolvedTo(id);
         }, 500);
         return () => clearTimeout(timeout);
@@ -391,14 +402,14 @@ function ComposeView({
         setIsSending(true);
 
         try {
-            const recipientId = await resolveRecipient(to);
+            const recipientId = await resolveTo(to);
             if (!recipientId) {
                 setError(`Could not resolve "${to}". Use a @${MAIL_DOMAIN} address or wallet ID.`);
                 setIsSending(false);
                 return;
             }
 
-            await sendMail(wallet, [recipientId], subject, body || "(empty)");
+            await sendMail(wallet, [recipientId], subject, body || "(empty)", replyTo?.message.id);
             onBack();
         } catch (err: any) {
             setError(err.message || "Failed to send");
@@ -414,7 +425,7 @@ function ComposeView({
                     <ArrowLeft className="w-4 h-4" />
                 </button>
                 <Mail className="w-3.5 h-3.5 text-primary" />
-                <span className="text-xs font-medium">Compose</span>
+                <span className="text-xs font-medium">{replyTo ? "Reply" : "Compose"}</span>
                 {myName && (
                     <span className="text-[10px] text-muted-foreground ml-auto">
                         from: {myName}@{MAIL_DOMAIN}
@@ -642,6 +653,21 @@ function ThreadMessageExt({
                 }`}>
                     {message.body}
                 </div>
+                {message.hasAttachment && (
+                    message.attachmentData ? (
+                        <a
+                            href={`data:${safeAttachmentTarget(message.attachmentData).type};base64,${message.attachmentData.data}`}
+                            download={safeAttachmentTarget(message.attachmentData).name}
+                            className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-border text-[10px] text-foreground hover:bg-secondary/30"
+                        >
+                            <Paperclip className="w-3 h-3" />
+                            <span className="truncate max-w-[180px]">{safeAttachmentTarget(message.attachmentData).name}</span>
+                            <span className="text-muted-foreground">{Math.max(1, Math.round((message.attachmentData.size || 0) / 1024))} KB</span>
+                        </a>
+                    ) : (
+                        <p className="mt-2 text-[10px] italic text-muted-foreground">Attachment could not be opened</p>
+                    )
+                )}
             </div>
         </div>
     );
@@ -662,7 +688,7 @@ function ReadView({
     folder: Folder;
     thread: MailItem[];
     onBack: () => void;
-    onReply: () => void;
+    onReply: (target: MailItem) => void;
 }) {
     const { message } = item;
 
@@ -780,7 +806,7 @@ function ReadView({
             {folder !== "trash" && (
                 <div className="px-3 py-2 border-t border-border">
                     <button
-                        onClick={onReply}
+                        onClick={() => onReply(item)}
                         className="w-full py-2 rounded-lg bg-secondary text-foreground text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-secondary/80 transition-colors"
                     >
                         <Reply className="w-3.5 h-3.5" />

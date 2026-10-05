@@ -21,11 +21,35 @@ export interface MailMessage {
     replyToId?: string;
     hasAttachment: boolean;
     attachmentHash?: string;
+    /** Encrypted attachment envelope as stored by the node (same v2 format as subject / body). */
+    attachmentEncrypted?: string;
     // Decrypted client-side fields
     subject?: string;
     body?: string;
+    attachmentData?: MailAttachment;
     signatureValid?: boolean;
     senderName?: string;
+}
+
+export interface MailAttachment {
+    name: string;
+    type: string; // MIME type, chosen by the sender — never trust it for rendering
+    data: string; // base64
+    size: number;
+}
+
+/** MIME types a received attachment may be saved as; anything else is saved as a plain download. */
+const SAFE_ATTACHMENT_TYPES = new Set([
+    "image/png", "image/jpeg", "image/gif", "image/webp",
+    "application/pdf", "text/plain", "application/json", "application/zip",
+]);
+
+/** File name and type to use when saving a received attachment (both are sender-controlled). */
+export function safeAttachmentTarget(a: Pick<MailAttachment, "name" | "type">): { name: string; type: string } {
+    const base = (a.name || "").split(/[\\/]/).pop() || "";
+    const name = base.replace(/[^\w.\- ()]/g, "_").replace(/^\.+/, "").slice(0, 100) || "attachment";
+    const type = SAFE_ATTACHMENT_TYPES.has((a.type || "").toLowerCase()) ? a.type.toLowerCase() : "application/octet-stream";
+    return { name, type };
 }
 
 export interface MailLabel {
@@ -367,11 +391,21 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string, cacheCat
                 body = await decryptMailContent(msg.bodyEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
             } catch { /* */ }
 
-            // Verify unified signature
+            let attachmentData: MailAttachment | undefined;
+            if (msg.hasAttachment && msg.attachmentEncrypted) {
+                try {
+                    const plain = await decryptMailContent(msg.attachmentEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
+                    const parsed = JSON.parse(plain) as MailAttachment;
+                    if (parsed && typeof parsed.data === "string") attachmentData = parsed;
+                } catch { /* shown as "attachment could not be opened" */ }
+            }
+
+            // Verify unified signature over all encrypted parts (subject | body [| attachment]),
+            // as the website and the SDK sign it.
             if (msg.signature && senderSigningKey) {
                 try {
                     const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
-                    const sigPayload = msg.subjectEncrypted + "|" + msg.bodyEncrypted;
+                    const sigPayload = msg.subjectEncrypted + "|" + msg.bodyEncrypted + (msg.attachmentEncrypted ? "|" + msg.attachmentEncrypted : "");
                     signatureValid = ml_dsa65.verify(hexToBytes(msg.signature), new TextEncoder().encode(sigPayload), hexToBytes(senderSigningKey));
                 } catch { /* */ }
             }
@@ -379,7 +413,7 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string, cacheCat
             const senderName = await getSenderDisplayName(msg.fromWalletId, allWallets);
 
             items.push({
-                message: { ...msg, subject, body, signatureValid, senderName },
+                message: { ...msg, subject, body, attachmentData, signatureValid, senderName },
                 label,
             });
         }
@@ -503,6 +537,7 @@ function normalizeMailMessage(raw: any): MailMessage {
         replyToId: raw.reply_to_id || raw.replyToId,
         hasAttachment: raw.has_attachment || raw.hasAttachment || false,
         attachmentHash: raw.attachment_hash || raw.attachmentHash,
+        attachmentEncrypted: raw.attachment_encrypted || raw.attachmentEncrypted || undefined,
     };
 }
 
