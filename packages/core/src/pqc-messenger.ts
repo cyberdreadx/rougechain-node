@@ -567,7 +567,29 @@ export function buildSignedRequest(
   };
 }
 
-export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKeys, discoverableOverride?: boolean): Promise<void> {
+/**
+ * The directory already holds an entry for this signing key with a DIFFERENT encryption key —
+ * the same wallet was registered from another app or browser (e.g. Qwalla). Registering would
+ * replace that key, and messages sent to it could no longer be read there.
+ */
+export class MessengerKeyMismatchError extends Error {
+  constructor() {
+    super("This wallet's messenger is registered from another app with a different encryption key");
+    this.name = "MessengerKeyMismatchError";
+  }
+}
+
+/**
+ * Register (or refresh) a wallet in the messenger directory. The node REPLACES the entry for the
+ * signing key, so by default this refuses to overwrite an entry whose encryption key is not ours
+ * (throws `MessengerKeyMismatchError`); pass `replaceKey: true` only on an explicit user decision.
+ * The check is best effort: the directory lists discoverable wallets only.
+ */
+export async function registerWalletOnNode(
+  wallet: Wallet | WalletWithPrivateKeys,
+  discoverableOverride?: boolean,
+  opts?: { replaceKey?: boolean },
+): Promise<void> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return;
   const privacy = getPrivacySettings();
@@ -588,12 +610,21 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
 
   if (!priv) return;
 
+  if (!opts?.replaceKey && wallet.encryptionPublicKey) {
+    const mine = (await getWallets().catch(() => [] as Wallet[])).find((w) => w.signingPublicKey === sigPub);
+    if (mine?.encryptionPublicKey && mine.encryptionPublicKey !== wallet.encryptionPublicKey) {
+      throw new MessengerKeyMismatchError();
+    }
+  }
+
   // The node REPLACES the directory entry on every register, so always carry the
   // avatar along — otherwise any routine re-register would wipe it.
   const avatarUrl = await resolveAvatarForRegistration(wallet);
 
   const payload: Record<string, unknown> = {
-    id: wallet.id,
+    // The directory id is the signing public key (as Qwalla registers it), so every client of
+    // the same wallet is one participant; a per-device id made each client a different one.
+    id: sigPub,
     displayName: wallet.displayName,
     signingPublicKey: wallet.signingPublicKey,
     encryptionPublicKey: wallet.encryptionPublicKey,
@@ -947,7 +978,7 @@ export async function createConversation(
   if (!apiBase) throw new Error("Node API is not configured");
 
   const payload: Record<string, unknown> = {
-    participantIds: [senderWallet.id, recipientWalletId],
+    participantIds: [senderWallet.signingPublicKey, recipientWalletId],
     isGroup: false,
   };
   if (name) payload.name = name;
