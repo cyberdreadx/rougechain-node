@@ -12,6 +12,9 @@
 
 [build.environment]
   NODE_VERSION = "20.19.0"
+  # ETH / USDC bridge deposits (site form + manual claim). Reopened 2026-10-05 after node 1.6.2/1.6.3
+  # shipped the verified claim path; remove this line (or set "false") to pause them again.
+  VITE_EVM_DEPOSIT_ENABLED = "true"
 
 [[headers]]
   for = "/assets/*"
