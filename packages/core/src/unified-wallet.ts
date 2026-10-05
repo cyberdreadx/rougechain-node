@@ -7,6 +7,7 @@ import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { generateMnemonic, keypairFromMnemonic } from "./mnemonic";
 import { overlayStoredProfile } from "./avatar";
+import { migrateToDerivedMessagingKeys } from "./messaging-keys";
 
 // Expected key sizes (bytes) for FIPS 204 / FIPS 203
 const ML_DSA65_SECRET_KEY_BYTES = 4032;
@@ -86,6 +87,11 @@ export interface UnifiedWallet {
   // Encryption keys (ML-KEM-768) - used for messenger E2EE
   encryptionPublicKey: string;
   encryptionPrivateKey: string;
+
+  // A previous messaging keypair (see messaging-keys.ts `migrateToDerivedMessagingKeys`):
+  // decrypt-only, never advertised, and never to be dropped — old messages need it.
+  legacyEncryptionPublicKey?: string;
+  legacyEncryptionPrivateKey?: string;
   
   // Metadata
   version: number;
@@ -362,7 +368,10 @@ export async function unlockUnifiedWallet(password: string): Promise<UnifiedWall
   const rawWallet = await decryptWallet(encrypted, password);
   // The blob is only re-encrypted when a password is set; renames / photo changes
   // made since then live in the per-key profile store — apply them.
-  const wallet = ensureCorrectKeys(overlayStoredProfile(rawWallet));
+  // Move a phrase wallet that still has a random messaging key to the phrase-derived one (the
+  // old key stays as a decrypt-only fallback). The vault blob itself is untouched here, so the
+  // original key always remains recoverable from it.
+  const wallet = migrateToDerivedMessagingKeys(ensureCorrectKeys(overlayStoredProfile(rawWallet)));
   saveUnifiedWallet(wallet);
   localStorage.setItem(getScopedKey(WALLET_LOCKED_KEY), "false");
   return wallet;
@@ -650,6 +659,17 @@ export function getBlockchainWallet(): { publicKey: string; privateKey: string }
 // Get wallet for messenger operations
 export function getMessengerWallet(): UnifiedWallet | null {
   return loadUnifiedWallet();
+}
+
+/**
+ * The decrypt-only previous messaging keypair of the unlocked wallet with this signing key, if
+ * it has one. Used as a fallback when content does not open with the current key.
+ */
+export function getLegacyMessagingKey(signingPublicKey: string): { publicKey: string; privateKey: string } | null {
+  const w = loadUnifiedWallet();
+  if (!w || w.signingPublicKey !== signingPublicKey) return null;
+  if (!w.legacyEncryptionPublicKey || !w.legacyEncryptionPrivateKey) return null;
+  return { publicKey: w.legacyEncryptionPublicKey, privateKey: w.legacyEncryptionPrivateKey };
 }
 
 // Convert UnifiedWallet to WalletWithPrivateKeys format (for messenger compatibility)

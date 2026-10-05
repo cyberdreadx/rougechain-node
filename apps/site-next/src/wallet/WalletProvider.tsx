@@ -31,7 +31,7 @@ import {
 } from "@rougechain/core/unified-wallet";
 import { generateMnemonic, keypairFromMnemonic, validateMnemonic } from "@rougechain/core/mnemonic";
 import { registerWalletOnNode } from "@rougechain/core/pqc-messenger";
-import { deriveMessagingKeypair, withDerivedMessagingKeys } from "@rougechain/core/messaging-keys";
+import { deriveMessagingKeypair, migrateToDerivedMessagingKeys, withDerivedMessagingKeys } from "@rougechain/core/messaging-keys";
 import { getRougeChainProvider, signViaExtension } from "@rougechain/core/extension-bridge";
 import { signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
 import { useChain } from "../explorer/chain";
@@ -125,7 +125,17 @@ export function useWalletAutoRegister(enabled: boolean): void {
   useEffect(() => {
     if (!enabled || done.current || isWalletLocked()) return;
     done.current = true;
-    const w = loadUnifiedWallet();
+    let w = loadUnifiedWallet();
+    // A wallet restored from this tab's session did not go through unlock: move it to the
+    // phrase-derived messaging key here (old key kept as a decrypt-only fallback).
+    if (w) {
+      const migrated = migrateToDerivedMessagingKeys(w);
+      if (migrated !== w) {
+        saveUnifiedWallet(migrated);
+        notifyWalletChanged();
+        w = migrated;
+      }
+    }
     if (w?.signingPublicKey && w.encryptionPublicKey && w.signingPrivateKey) {
       registerWalletOnNode({
         id: w.id,
