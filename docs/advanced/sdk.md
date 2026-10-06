@@ -327,6 +327,57 @@ await rc.get('/token/allowance');
 > `/api/v2/token/freeze` (payload `{ tokenSymbol, frozen }`). There is no dedicated
 > SDK helper — sign it with the generic `signRequest(wallet, payload)` and post it.
 
+### Message Signing and Sign-In (SDK 1.13.0)
+
+Prove control of a wallet to a website without a transaction. Full guide, including the exact
+signed bytes and a token-gating server: [Wallet Authentication](wallet-authentication.md).
+
+```typescript
+import {
+  signMessage, verifyMessage,
+  createSignInMessage, parseSignInMessage, verifySignIn,
+  pubkeyToAddress,
+} from "@rougechain/sdk";
+
+// Any message (string or Uint8Array)
+const signature = signMessage(wallet.privateKey, "hello");
+verifyMessage(wallet.publicKey, "hello", signature);   // true; false on anything else, never throws
+
+// Sign-in message
+const message = createSignInMessage({
+  domain: "tickets.example.com",
+  address: await pubkeyToAddress(wallet.publicKey),
+  uri: "https://tickets.example.com/login",
+  statement: "Sign in to see your tickets.",          // optional
+  nonce,                                               // server-issued, single use, >= 16 characters
+  issuedAt: new Date().toISOString(),
+  expirationTime: new Date(Date.now() + 10 * 60_000).toISOString(),   // optional
+  chainId: "rougechain-mainnet-1",
+  resources: ["https://tickets.example.com/events/42"],               // optional
+});
+
+const result = await verifySignIn({
+  message, signature: signMessage(wallet.privateKey, message), publicKey: wallet.publicKey,
+  expectedDomain: "tickets.example.com",
+  expectedNonce: nonce,
+  expectedChainId: "rougechain-mainnet-1",
+});
+// { valid: true, address, publicKey, fields }  or  { valid: false, error }
+```
+
+| Function | Description |
+|----------|-------------|
+| `signMessage(privateKeyHex, message)` | ML-DSA-65 signature (hex) over `"\x19RougeChain Signed Message:\n" + decimal(byte length) + "\n" + message bytes`. |
+| `verifyMessage(publicKeyHex, message, signatureHex)` | `boolean`. Never throws. |
+| `messageSigningBytes(message)` | The exact signed bytes. |
+| `createSignInMessage(fields)` / `parseSignInMessage(text)` | Build / strictly parse the canonical sign-in text. |
+| `verifySignIn(params)` | Signature, address-of-key, domain, nonce, chain id, issued-at and expiry checks. Resolves to a result object, never rejects. |
+
+In a browser the private key stays in the wallet: call `window.rougechain.signMessage({ message })`
+(extension 1.8.0+, Qwalla after its next update) and verify the result on your server. A message
+signature is never a transaction signature and `signTransaction` / `verifyTransaction` /
+`signRequest` are unchanged.
+
 ### Multi-Sig Wallets
 
 Multi-sig **queries** are available today:

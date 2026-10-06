@@ -114,9 +114,34 @@ const address = await pubkeyToAddress(publicKey); // rouge1...
 | `connect()` | `→ { publicKey, displayName?, encryptionPublicKey? }` | Prompt the user to connect. Returns their public key. This replaces `getAddress()`. |
 | `getBalance()` | `→ { balance, tokens }` | Get the connected wallet's XRGE balance and token balances. |
 | `signTransaction(payload)` | `→ { signature, signedPayload, publicKey, payload }` | Sign a transaction payload with ML-DSA-65 (key never leaves the wallet). `signedPayload` is the exact JSON signed. |
+| `signMessage({ message })` | `→ { signature, publicKey, address }` | **Extension 1.8.0+; Qwalla after its next update.** Sign a text message (at most 4,096 bytes) to prove control of the wallet: logins and token gating. Never a transaction. The user approves every request. See [Wallet Authentication](wallet-authentication.md). |
 | `sendTransaction(payload)` | `→ { txId, fee?, address?, preview? }` | Sign **and** broadcast. A transfer by default; `contract_call` / `contract_deploy` payloads go to the contract endpoints. |
 | `on(event, cb)` | `void` | Subscribe to events (e.g. account/connection changes). |
 | `removeListener(event, cb)` | `void` | Remove an event listener. |
+
+#### Signing a message (v1.8.0+)
+
+`signMessage` proves that the visitor controls the connected wallet without sending anything to
+the chain. Feature-detect it, because older extension versions and Qwalla builds do not have it:
+
+```javascript
+if (typeof window.rougechain.signMessage !== "function") {
+  throw new Error("Update your RougeChain wallet to sign in.");
+}
+const { signature, publicKey, address } = await window.rougechain.signMessage({
+  message: "I agree to the rules of this raffle.",
+});
+// Server: verifyMessage(publicKey, message, signature) from @rougechain/sdk 1.13.0+
+```
+
+The site must be connected, and the wallet asks every time, showing your site and the whole
+message. The signature is over `"\x19RougeChain Signed Message:\n" + byte length + "\n" + message`,
+which a node never accepts as a transaction; a message that looks like a transaction payload
+(JSON with a `type` / `tx_type` field) is refused, so keep using `signTransaction` for those.
+For logins use the sign-in message format, which lets the wallet show the domain, nonce and
+expiry and warn when the domain is not your site:
+[Wallet Authentication](wallet-authentication.md) has the format and a complete token-gating
+server.
 
 #### Smart contract transactions (v1.4.0+)
 

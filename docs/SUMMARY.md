@@ -107,6 +107,7 @@
 - [Multi-Sig Wallets](advanced/multi-sig.md)
 - [MCP Server (AI Agents)](advanced/mcp-server.md)
 - [Browser Extensions](advanced/browser-extensions.md)
+- [Wallet Authentication (Sign a Message)](advanced/wallet-authentication.md)
 - [SDK](advanced/sdk.md)
 
 ---
