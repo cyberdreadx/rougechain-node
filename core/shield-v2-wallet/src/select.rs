@@ -36,7 +36,7 @@ pub struct MergePlan {
 
 /// The notes coin selection may use: unspent, non-zero, with a Merkle path, **not locked by a
 /// pending transaction** (REVIEW_WALLET_1 F-7) and — unless `allow_unverified` — **confirmed**
-/// by `WalletState::confirm_roots` (F-1).
+/// by `WalletState::confirm_state` (F-1).
 fn spendable(state: &WalletState, allow_unverified: bool) -> Vec<&OwnedNote> {
     let mut v: Vec<&OwnedNote> = state
         .unspent()
@@ -62,7 +62,7 @@ pub fn select_inputs(state: &WalletState, amount: u64, fee: u64) -> Result<Selec
     select_inputs_with(state, amount, fee, false)
 }
 
-/// [`select_inputs`]; with `allow_unverified` it also uses notes that `confirm_roots` has not
+/// [`select_inputs`]; with `allow_unverified` it also uses notes that `confirm_state` has not
 /// confirmed. Locked notes are never used.
 pub fn select_inputs_with(state: &WalletState, amount: u64, fee: u64, allow_unverified: bool) -> Result<Selection, WalletError> {
     let need = amount as u128 + fee as u128;

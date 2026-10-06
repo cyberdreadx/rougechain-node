@@ -90,7 +90,7 @@ fn shared_secrets(keys: &ShieldedKeys, body: &[u8]) -> [[u8; 32]; 2] {
 fn rw1_f5_a_repeating_generator_no_longer_reuses_the_note_key_or_r() {
     let keys = ShieldedKeys::from_seed(&[0x31; 64]).unwrap();
     let (state, ctx) = funded(&keys);
-    let inputs: Vec<SpendInput> = state.notes().iter().map(|n| state.spend_input(n.position).unwrap()).collect();
+    let inputs: Vec<SpendInput> = state.notes().iter().map(|n| state.spend_input_with(n.position, true).unwrap()).collect();
     let own = keys.address();
     let (amount, fee) = (4 * Q, Q);
     let req = TransferRequest { ctx, keys: &keys, inputs: &inputs, recipient: &own, amount, fee, max_fee: None };
@@ -144,7 +144,7 @@ fn rw1_f5_a_repeating_generator_no_longer_reuses_the_note_key_or_r() {
 fn rw1_f5_a_repeating_generator_no_longer_gives_the_payee_the_r_of_the_change_note() {
     let (alice, bob) = (ShieldedKeys::from_seed(&[0x31; 64]).unwrap(), ShieldedKeys::from_seed(&[0x32; 64]).unwrap());
     let (state, ctx) = funded(&alice);
-    let inputs: Vec<SpendInput> = state.notes().iter().map(|n| state.spend_input(n.position).unwrap()).collect();
+    let inputs: Vec<SpendInput> = state.notes().iter().map(|n| state.spend_input_with(n.position, true).unwrap()).collect();
     let to = bob.address();
     let req = TransferRequest { ctx: ctx.clone(), keys: &alice, inputs: &inputs, recipient: &to, amount: 4 * Q, fee: Q, max_fee: None };
     let tx = assemble_transfer(&req, Source::Hedged(&mut Stuck(0x2a))).unwrap();
@@ -164,7 +164,7 @@ fn rw1_f5_a_repeating_generator_no_longer_gives_the_payee_the_r_of_the_change_no
 
     // one input and a dummy: the dummy's nullifier, the dummy output's key and the slot order are
     // hedged draws too — two transactions under the stuck generator share no nullifier
-    let one = [state.spend_input(state.notes()[0].position).unwrap()];
+    let one = [state.spend_input_with(state.notes()[0].position, true).unwrap()];
     let account: Vec<u8> = (0..1_952u32).map(|i| i as u8).collect();
     let mut nullifiers = std::collections::BTreeSet::new();
     let mut orders = std::collections::BTreeSet::new();
@@ -194,7 +194,7 @@ fn rw1_f5_a_repeating_generator_no_longer_gives_the_payee_the_r_of_the_change_no
 fn rw1_sound_working_entropy_never_repeats_r_or_encapsulations() {
     let keys = ShieldedKeys::from_seed(&[0x31; 64]).unwrap();
     let (state, ctx) = funded(&keys);
-    let inputs: Vec<SpendInput> = state.notes().iter().map(|n| state.spend_input(n.position).unwrap()).collect();
+    let inputs: Vec<SpendInput> = state.notes().iter().map(|n| state.spend_input_with(n.position, true).unwrap()).collect();
     let own = keys.address();
     let req = TransferRequest { ctx, keys: &keys, inputs: &inputs, recipient: &own, amount: 4 * Q, fee: Q, max_fee: None };
     let mut seen_r = std::collections::BTreeSet::new();

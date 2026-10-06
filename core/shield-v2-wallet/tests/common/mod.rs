@@ -6,7 +6,7 @@
 
 use quantum_vault_shield_v2::pool::{MemoryPoolStore, Pool, PoolState, PoolTx, TxKind as PoolKind};
 use quantum_vault_shield_v2_wallet::body::{Body, TxKind, OFF_KEM, OFF_NOTE};
-use quantum_vault_shield_v2_wallet::{ListingPage, RootReport, ShieldedKeys, TxContext, WalletState, DEFAULT_CONFIRM_QUORUM};
+use quantum_vault_shield_v2_wallet::{ListingPage, ShieldedKeys, StateReport, TxContext, WalletState};
 use sha2::{Digest as _, Sha256};
 
 pub const Q: u64 = 1_000_000_000;
@@ -44,6 +44,25 @@ pub fn pool_tx(body: &[u8]) -> PoolTx {
     }
 }
 
+/// One transaction as the node lists it: at `height`, `index` in its block, its outputs at the
+/// leaf positions `first_leaf` and `first_leaf + 1`.
+pub fn listing_entry(body: &[u8], height: u64, index: u64, first_leaf: u64) -> serde_json::Value {
+    let out = |j: usize| {
+        serde_json::json!({
+            "cm_out": hex::encode(&body[138 + 32 * j..170 + 32 * j]),
+            "leaf": first_leaf + j as u64,
+            "kem_ct": hex::encode(&body[OFF_KEM[j]..OFF_KEM[j] + 1088]),
+            "note_ct": hex::encode(&body[OFF_NOTE[j]..OFF_NOTE[j] + 56]),
+        })
+    };
+    serde_json::json!({
+        "height": height, "index": index, "tx_hash": hex::encode(Sha256::digest(body)),
+        "tx_type": Body::decode(body).unwrap().kind.tx_type(),
+        "nf1": hex::encode(&body[74..106]), "nf2": hex::encode(&body[106..138]),
+        "outputs": [out(0), out(1)],
+    })
+}
+
 /// The stand-in chain: the pool, and one listing entry per accepted transaction.
 pub struct Chain {
     pub pool: Pool<MemoryPoolStore>,
@@ -66,9 +85,23 @@ impl Chain {
         TxContext { chain_id: CHAIN.to_string(), anchor: self.state().tree_root, anchor_height: self.height, expiry_height: self.height + 100 }
     }
 
-    /// What two independent nodes report for the tip: `(node, height, root)` each.
-    pub fn root_reports(&self) -> Vec<RootReport> {
-        ["node-a", "node-b"].iter().map(|id| RootReport { node_id: id.to_string(), height: self.height, root: self.state().tree_root }).collect()
+    /// What the node `node_id` reports for its tip (`report` of `/api/shield-v2/stats`): the
+    /// height and BOTH halves of the pool state, from the stage-1 `Pool` itself.
+    pub fn report(&self, node_id: &str) -> StateReport {
+        let s = self.state();
+        StateReport {
+            node_id: node_id.to_string(),
+            height: self.height,
+            tree_root: s.tree_root,
+            nullifier_acc: s.nullifier_acc,
+            note_count: s.note_count,
+            nullifier_count: s.nullifier_count,
+        }
+    }
+
+    /// What two independent nodes report for the tip.
+    pub fn state_reports(&self) -> Vec<StateReport> {
+        vec![self.report("node-a"), self.report("node-b")]
     }
 
     /// Empty blocks until the chain's height is `height`.
@@ -85,21 +118,7 @@ impl Chain {
         let first = self.state().note_count;
         self.pool.apply_block(h, &txs).map_err(|e| format!("{e:?}"))?;
         for (i, body) in bodies.iter().enumerate() {
-            let leaf = first + 2 * i as u64;
-            let out = |j: usize| {
-                serde_json::json!({
-                    "cm_out": hex::encode(&body[138 + 32 * j..170 + 32 * j]),
-                    "leaf": leaf + j as u64,
-                    "kem_ct": hex::encode(&body[OFF_KEM[j]..OFF_KEM[j] + 1088]),
-                    "note_ct": hex::encode(&body[OFF_NOTE[j]..OFF_NOTE[j] + 56]),
-                })
-            };
-            self.listed.push(serde_json::json!({
-                "height": h, "index": i, "tx_hash": hex::encode(Sha256::digest(body)),
-                "tx_type": Body::decode(body).unwrap().kind.tx_type(),
-                "nf1": hex::encode(&body[74..106]), "nf2": hex::encode(&body[106..138]),
-                "outputs": [out(0), out(1)],
-            }));
+            self.listed.push(listing_entry(body, h, i as u64, first + 2 * i as u64));
         }
         self.height = h;
         Ok(())
@@ -107,21 +126,34 @@ impl Chain {
 
     /// The listing page a node answers for `since` (all blocks up to the tip).
     pub fn page(&self, since: u64) -> ListingPage {
+        ListingPage::from_json(&self.page_value(since, self.height).to_string()).unwrap()
+    }
+
+    /// The JSON of the page for `since` as a node whose tip is `until` answers it (the chain as
+    /// it was at that height): what a test edits to make a node lie, and what gives the true
+    /// state of a wallet at an earlier height.
+    pub fn page_value(&self, since: u64, until: u64) -> serde_json::Value {
         let start = since.max(A);
-        let txs: Vec<&serde_json::Value> = self.listed.iter().filter(|t| t["height"].as_u64().unwrap() >= start).collect();
-        let json = serde_json::json!({
-            "active": true, "tip_height": self.height, "from_height": start,
-            "next_height": (self.height + 1).max(start), "txs": txs,
-        });
-        ListingPage::from_json(&json.to_string()).unwrap()
+        let until = until.min(self.height);
+        let txs: Vec<&serde_json::Value> = self.listed.iter().filter(|t| (start..=until).contains(&t["height"].as_u64().unwrap())).collect();
+        serde_json::json!({
+            "active": true, "tip_height": until, "from_height": start,
+            "next_height": (until + 1).max(start), "txs": txs,
+        })
+    }
+
+    /// `true` when this nullifier is in the pool's nullifier set.
+    pub fn is_spent(&self, nf: &[u8; 32]) -> bool {
+        self.pool.is_spent(nf).unwrap()
     }
 }
 
-/// The root check of a wallet that has scanned to the tip against two nodes that agree
-/// (`WalletState::confirm_roots`, default quorum): every note of the state becomes confirmed.
+/// The state check of a wallet that has scanned to the tip against two nodes that agree
+/// (`WalletState::confirm_state`, default quorum): every note of the state becomes confirmed.
 pub fn confirm(chain: &Chain, state: &mut WalletState) {
     assert_eq!(state.next_height(), chain.height + 1, "confirm() is for a state scanned to the tip");
-    let report = state.confirm_roots(&chain.root_reports(), DEFAULT_CONFIRM_QUORUM).unwrap();
+    let report = state.confirm_state(&chain.state_reports(), None).unwrap();
     assert_eq!(report.matched_height, Some(chain.height));
     assert!(!report.diverged);
+    assert_eq!(state.nullifier_acc(), chain.state().nullifier_acc, "the wallet's nullifier hash is the pool's");
 }

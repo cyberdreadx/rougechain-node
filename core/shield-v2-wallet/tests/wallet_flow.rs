@@ -86,7 +86,8 @@ fn shield_transfer_unshield_with_real_proofs() {
     assert!(t.signed_envelope("ab").is_err());
     // the pending record: both nullifiers, both inputs, the change, the expiry
     let pending = t.pending().expect("a transfer has a pending record");
-    assert_eq!((pending.inputs.clone(), pending.input_total, pending.expiry_height), (sel.positions.clone(), 12 * Q, Some(t.expiry_height)));
+    assert_eq!((pending.inputs.clone(), pending.input_total, pending.expiry_height), (sel.positions.clone(), 12 * Q, t.expiry_height));
+    assert_eq!(pending.outputs.iter().map(|c| c.0).collect::<Vec<_>>(), t.output_commitments().to_vec(), "and both output commitments");
     assert_eq!(pending.change.as_ref().map(|c| c.value), Some(Q));
     assert!(s1.pending().is_none(), "a shield spends no note");
     a.mark_pending(pending).unwrap();
@@ -105,9 +106,14 @@ fn shield_transfer_unshield_with_real_proofs() {
     chain.block(&[&t.body]).unwrap();
 
     let r = a.scan(&chain.page(a.next_height()), &alice.scan_key()).unwrap();
-    assert_eq!((r.spent.len(), r.received.len(), r.pending_mined), (2, 1, 1));
-    let settled = a.resolve(ReleasePolicy::Scanned);
-    assert_eq!((settled.mined.len(), settled.expired.len(), settled.still_pending), (1, 0, 0));
+    assert_eq!((r.spent.len(), r.received.len(), r.pending_seen_mined), (2, 1, 1));
+    // seen in one node's listing: not settled, the change not confirmed
+    assert_eq!(a.resolve().still_pending, 1);
+    assert_eq!((a.balances().confirmed, a.balances().unverified), (0, Q as u128));
+    confirm(&chain, &mut a);
+    let settled = a.resolve();
+    assert_eq!((settled.mined.len(), settled.superseded.len(), settled.expired.len(), settled.still_pending), (1, 0, 0, 0));
+    assert_eq!(a.balances().confirmed, Q as u128, "the change is credited when the transaction settles as mined");
     assert_eq!(a.balance(), Q as u128);
     assert_eq!(a.anchor(), chain.state().tree_root);
     let mut b = synced(&chain, &bob);
@@ -119,6 +125,8 @@ fn shield_transfer_unshield_with_real_proofs() {
 
     // Bob unshields 6 to a public account; change 3
     let to = account_from_address(&address_from_account(&[0x42; 32])).unwrap();
+    assert!(matches!(b.spend_input(b.notes()[0].position), Err(WalletError::NoteUnverified)), "an unverified note is not handed to a builder");
+    confirm(&chain, &mut b);
     let inputs = [b.spend_input(b.notes()[0].position).unwrap()];
     let u = build_unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &bob, inputs: &inputs, to_account: to, v_out: 6 * Q, fee: Q, max_fee: None }).unwrap();
     check(&u);
@@ -137,8 +145,11 @@ fn shield_transfer_unshield_with_real_proofs() {
     a.scan(&chain.page(a.next_height()), &alice.scan_key()).unwrap();
     confirm(&chain, &mut restored_a);
     confirm(&chain, &mut a);
-    assert_eq!(restored_a, a);
-    assert_eq!(synced(&chain, &bob), b);
+    assert!(restored_a.content_eq(&a));
+    let mut restored_b = synced(&chain, &bob);
+    confirm(&chain, &mut restored_b);
+    confirm(&chain, &mut b);
+    assert!(restored_b.content_eq(&b));
 }
 
 /// Spec §5.4: a wallet restored from its keys and the chain recovers every unspent note, the
@@ -175,7 +186,7 @@ fn restore_recovers_notes_and_balance_but_no_outgoing_history() {
     assert_eq!(restored.notes().iter().filter(|n| n.spent).count(), 2);
     assert!(restored.notes().iter().filter(|n| n.spent).all(|n| n.spent_height == Some(chain.height - 1)));
     // the unspent note's path leads to the chain's root: it can be spent right away
-    let input = restored.spend_input(unspent_position(&restored, 4 * Q)).unwrap();
+    let input = restored.spend_input_with(unspent_position(&restored, 4 * Q), true).unwrap();
     let again = deterministic::unshield(
         &UnshieldRequest { ctx: chain.ctx(), keys: &alice, inputs: &[input], to_account: [9; 32], v_out: Q, fee: Q, max_fee: None },
         "restore-unshield",
@@ -253,7 +264,7 @@ fn scan_pages_must_continue_the_state() {
 
     // the right page
     paged.scan(&chain.page(first_next), &alice.scan_key()).unwrap();
-    assert_eq!(paged, synced(&chain, &alice));
+    assert!(paged.content_eq(&synced(&chain, &alice)));
     assert_eq!(paged.balance(), 9 * Q as u128);
     // an inactive listing is a no-op
     let idle = ListingPage::from_json(r#"{"active":false,"tip_height":1,"from_height":0,"next_height":0,"txs":[]}"#).unwrap();
@@ -329,15 +340,16 @@ fn selection_and_merge() {
     assert!(matches!(a.spend_input(plan.positions[0]), Err(WalletError::NoteLocked)));
     assert!(a.mark_pending(merge.pending().unwrap()).is_err());
     assert!(matches!(plan_merge(&a, Q), Ok(p) if p.positions.iter().all(|x| !plan.positions.contains(x))), "a merge plan uses the other notes");
-    assert_eq!(a.resolve(ReleasePolicy::Scanned).still_pending, 1, "nothing to settle yet");
+    assert_eq!(a.resolve().still_pending, 1, "nothing to settle yet");
     chain.block(&[&merge.body]).unwrap();
     a.scan(&chain.page(a.next_height()), &alice.scan_key()).unwrap();
-    assert_eq!(a.resolve(ReleasePolicy::Scanned).mined.len(), 1);
+    assert_eq!(a.resolve().still_pending, 1, "listed by one node: not settled");
     assert_eq!(a.balance(), 17 * Q as u128);
-    // the merged note is unverified until the root is confirmed again
+    // the merged note is unverified until the state is confirmed again
     assert!(matches!(select_inputs(&a, 13 * Q, Q), Err(WalletError::InsufficientFunds { .. })));
     assert_eq!(select_inputs_with(&a, 13 * Q, Q, true).unwrap().total, 14 * Q);
     confirm(&chain, &mut a);
+    assert_eq!(a.resolve().mined.len(), 1);
     // the notes are now 12, 3 and 2: 12 + 2 covers 13 + 1 exactly
     let s = select_inputs(&a, 13 * Q, Q).unwrap();
     assert_eq!((s.positions.len(), s.total, s.change), (2, 14 * Q, 0));
@@ -365,7 +377,7 @@ fn builder_refusals() {
     let a = synced(&chain, &alice);
     let key = fake_account_key(1);
     let addr = alice.address();
-    let inputs: Vec<SpendInput> = a.unspent().map(|n| a.spend_input(n.position).unwrap()).collect();
+    let inputs: Vec<SpendInput> = a.unspent().map(|n| a.spend_input_with(n.position, true).unwrap()).collect();
     let min = SHIELD_V2_MIN_FEE_QUANTA;
 
     // shield

@@ -44,9 +44,12 @@ use crate::store::{PendingChange, PendingStatus, PendingTx, SpendInput, B32};
 /// ([`TxContext::new`]): 64 blocks. Every client SHOULD use exactly this offset (a fixed offset
 /// makes clients indistinguishable by their expiry — spec §5.8).
 pub const DEFAULT_EXPIRY_OFFSET: u64 = 64;
-/// The largest distance the builders accept: the anchor window (128 blocks). A transaction whose
-/// `expiry_height` is further away is refused, so that the notes a pending transaction locks are
-/// released in bounded time (REVIEW_WALLET_1 F-7).
+/// The largest distance the builders accept: 128 blocks (the number is the anchor window's, and
+/// nothing else is: the anchor window does NOT bound a transaction's life — it is a list of root
+/// values, and in a pool without V2 transactions a root stays in it indefinitely; REVIEW_WALLET_2
+/// I-1). **`expiry_height` is the only bound on how long a signer-less transaction stays valid**,
+/// which is why the builders and `mark_pending` enforce this distance: the notes a pending
+/// transaction locks are released in bounded time (REVIEW_WALLET_1 F-7).
 pub const MAX_EXPIRY_OFFSET: u64 = SHIELD_V2_ANCHOR_WINDOW as u64;
 /// The fee ceiling a builder applies when the caller sets none: 10 × the consensus minimum fee
 /// (10 XRGE). A fee above the ceiling is refused, so that a unit mistake in a caller cannot burn
@@ -166,30 +169,49 @@ fn nullifiers_of(body: &[u8]) -> [[u8; 32]; 2] {
     nf
 }
 
-/// The record [`crate::WalletState::mark_pending`] takes: the two nullifiers, the input notes,
-/// the change the wallet expects and the expiry height. `None` for a shield (it spends no note).
+/// `cm_out1`, `cm_out2` of a body (spec §3.2: bytes 138..202).
+fn output_commitments_of(body: &[u8]) -> [[u8; 32]; 2] {
+    let mut cm = [[0u8; 32]; 2];
+    cm[0].copy_from_slice(&body[138..170]);
+    cm[1].copy_from_slice(&body[170..202]);
+    cm
+}
+
+/// The record [`crate::WalletState::mark_pending`] takes: the two nullifiers and the two output
+/// commitments (together they identify the transaction in a listing), the input notes, the change
+/// the wallet expects and the expiry height. `None` for a shield (it spends no note).
 fn pending_of(kind: TxKind, body: &[u8], outputs: &[OutputRecord; 2], inputs: &[u64], input_total: u64, expiry_height: u64) -> Option<PendingTx> {
     if kind == TxKind::Shield || inputs.is_empty() {
         return None;
     }
     let nf = nullifiers_of(body);
+    let cm = output_commitments_of(body);
     let change = outputs.iter().find(|o| o.role == OutputRole::Change).map(|o| PendingChange { cm: B32(o.cm), value: o.value });
     Some(PendingTx {
         tx_type: kind.tx_type().to_string(),
         nullifiers: vec![B32(nf[0]), B32(nf[1])],
+        outputs: vec![B32(cm[0]), B32(cm[1])],
         inputs: inputs.to_vec(),
+        // filled in by `mark_pending` from the notes of the state
+        input_cms: Vec::new(),
         input_total,
         change,
-        expiry_height: Some(expiry_height),
+        expiry_height,
         status: PendingStatus::Pending,
-        mined_height: None,
+        seen_height: None,
         rejected_hint: false,
+        legacy: false,
     })
 }
 
 impl BuiltTx {
     pub fn nullifiers(&self) -> [[u8; 32]; 2] {
         nullifiers_of(&self.body)
+    }
+
+    /// `cm_out1`, `cm_out2`.
+    pub fn output_commitments(&self) -> [[u8; 32]; 2] {
+        output_commitments_of(&self.body)
     }
 
     /// What to hand to [`crate::WalletState::mark_pending`] BEFORE submitting a transfer or an

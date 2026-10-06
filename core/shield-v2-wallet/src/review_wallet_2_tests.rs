@@ -73,7 +73,7 @@ fn rw2_child_assembles_one_transaction_under_a_stuck_generator() {
     let (alice, bob) = (ShieldedKeys::from_seed(&[0x31; 64]).unwrap(), ShieldedKeys::from_seed(&[0x32; 64]).unwrap());
     let state = funded(&alice);
     let ctx = |expiry: u64| TxContext { chain_id: "rw2".into(), anchor: state.anchor(), anchor_height: 50, expiry_height: expiry };
-    let one = [state.spend_input(state.notes()[0].position).unwrap()];
+    let one = [state.spend_input_with(state.notes()[0].position, true).unwrap()];
     let to = bob.address();
     let transfer = |expiry: u64, amount: u64| {
         assemble_transfer(

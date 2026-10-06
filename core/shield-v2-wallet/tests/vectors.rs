@@ -253,12 +253,13 @@ fn tx_and_state_vectors() -> (Value, Value) {
     txs.push(t);
     states.push(json!({ "after": "shield", "height": chain.height, "state": state_json(&pool.state().unwrap(), &root_before) }));
 
-    let mut s1 = WalletState::new(w1.address().pk);
+    // (the vectors hold a change note of 0.5 XRGE: these states store every non-zero note)
+    let mut s1 = WalletState::with_min_note_value(w1.address().pk, 1).unwrap();
     s1.scan(&chain.page(0), &w1.scan_key()).unwrap();
     assert_eq!((s1.balance(), s1.anchor()), (9 * Q as u128, chain.state().tree_root));
 
     // 2. transfer: wallet-1 pays wallet-2 5 XRGE, fee 1, change 3
-    let inputs = [s1.spend_input(s1.notes()[0].position).unwrap()];
+    let inputs = [s1.spend_input_with(s1.notes()[0].position, true).unwrap()];
     let transfer = deterministic::transfer(
         &TransferRequest { ctx: chain.ctx(), keys: &w1, inputs: &inputs, recipient: &w2.address(), amount: 5 * Q, fee: Q, max_fee: None },
         "spec-8.4/transfer",
@@ -275,7 +276,7 @@ fn tx_and_state_vectors() -> (Value, Value) {
 
     // 3. unshield: wallet-1 pays 1.5 XRGE out of its 3 XRGE change, fee 1, change 0.5
     let change = s1.unspent().find(|n| n.value == 3 * Q).unwrap().position;
-    let inputs = [s1.spend_input(change).unwrap()];
+    let inputs = [s1.spend_input_with(change, true).unwrap()];
     let unshield = deterministic::unshield(
         &UnshieldRequest { ctx: chain.ctx(), keys: &w1, inputs: &inputs, to_account: recipient_account, v_out: 3 * Q / 2, fee: Q, max_fee: None },
         "spec-8.4/unshield",

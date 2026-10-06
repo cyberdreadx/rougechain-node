@@ -23,9 +23,15 @@ pub enum WalletError {
     FeeBelowMinimum { fee: u64, min: u64 },
     /// The fee is above the caller's ceiling (`max_fee`; default 10 × the minimum fee).
     FeeAboveMaximum { fee: u64, max: u64 },
-    /// The note is an input of a transaction that is still pending: it stays locked until the
-    /// scan sees that transaction mined or its expiry height passed.
+    /// The note is an input of a transaction that is still pending: it stays locked until
+    /// `resolve` settles that transaction on confirmed data (mined, superseded or expired).
     NoteLocked,
+    /// The note is known from one node's listing only (`confirm_state` has not confirmed its
+    /// height): it is handed to a builder only on the caller's explicit `allow_unverified`.
+    NoteUnverified,
+    /// The state in hand does not have the revision the caller expects: another writer has
+    /// changed the stored state since this copy was loaded. Reload and repeat.
+    StaleState,
     /// The state holds notes found without `nk` and cannot tell which of them were spent since:
     /// rebuild it by scanning from an empty state with the full scan key.
     RescanRequired,
@@ -57,7 +63,9 @@ impl fmt::Display for WalletError {
             WalletError::Request(e) => write!(f, "request: {e}"),
             WalletError::FeeBelowMinimum { min, .. } => write!(f, "the fee is below the minimum of {min} quanta"),
             WalletError::FeeAboveMaximum { .. } => f.write_str("the fee is above the caller's ceiling (max_fee; default 10 x the minimum fee)"),
-            WalletError::NoteLocked => f.write_str("the note is an input of a pending transaction (locked until it is mined or expired)"),
+            WalletError::NoteLocked => f.write_str("the note is an input of a pending transaction (locked until it is settled on confirmed data)"),
+            WalletError::NoteUnverified => f.write_str("the note is unverified (known from one node's listing only): confirm the state first, or allow unverified inputs explicitly"),
+            WalletError::StaleState => f.write_str("the state is not at the expected revision: another writer changed it; reload the stored state and repeat"),
             WalletError::RescanRequired => f.write_str(
                 "the state was scanned without nk and spends may have been missed: rescan from an empty state with the full scan key",
             ),

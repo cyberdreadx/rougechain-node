@@ -8,9 +8,10 @@
 //! * [`tx`] — [`build_shield`], [`build_transfer`], [`build_unshield`]: body, binding, public
 //!   inputs, proof and the envelope of spec §3.1 (the witness never leaves the module);
 //! * [`store`] — what a wallet persists per note, the incremental note tree,
-//!   [`WalletState::scan`] over the node's `/api/shield-v2/notes` listing (spec §5.4), the
-//!   pending transactions (`mark_pending` / `pending` / `resolve`) and the root check against a
-//!   quorum of nodes (`confirm_roots`);
+//!   [`WalletState::scan`] over the node's `/api/shield-v2/notes` listing (spec §5.4), the check
+//!   of the wallet's tree root AND nullifier hash against a quorum of nodes (`confirm_state`),
+//!   and the pending transactions (`mark_pending` / `pending` / `resolve`), which settle on
+//!   confirmed data only (spec §5.5);
 //! * [`select`] — coin selection for two inputs, and the self-merge plan when a payment needs
 //!   more.
 //!
@@ -38,8 +39,9 @@ pub use error::{json_error, WalletError};
 pub use keys::{account_from_address, address_from_account, bip39_seed, ScanKey, ShieldedAddress, ShieldedKeys};
 pub use select::{plan_merge, plan_merge_with, select_inputs, select_inputs_with, MergePlan, Selection};
 pub use store::{
-    Balances, ConfirmReport, ListingPage, OwnedNote, PendingChange, PendingStatus, PendingTx, ReleasePolicy, Resolution,
-    RootReport, ScanReport, SpendInput, TreeTracker, WalletState, DEFAULT_CONFIRM_QUORUM, STATE_VERSION,
+    Balances, ConfirmReport, ListingPage, OwnedNote, PendingChange, PendingStatus, PendingTx, PoolView, Resolution,
+    ScanReport, SpendInput, StateReport, Tally, TreeTracker, WalletState, DEFAULT_CONFIRM_QUORUM, DEFAULT_MIN_NOTE_VALUE,
+    MAX_STORED_NOTES, PRUNE_RETENTION_BLOCKS, STATE_VERSION,
 };
 pub use tx::{
     build_shield, build_transfer, build_unshield, BuiltTx, OutputRecord, OutputRole, ShieldRequest, TransferRequest,
