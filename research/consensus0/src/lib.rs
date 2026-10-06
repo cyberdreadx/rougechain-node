@@ -26,3 +26,6 @@ pub mod props;
 pub mod schedule;
 pub mod sim;
 pub mod types;
+
+#[cfg(test)]
+mod tests;
