@@ -1517,6 +1517,8 @@ addition between epoch boundaries.
 
 **2. How long must a validator be offline before it is jailed? (F7)**
 
+*DECIDED by the owner 2026-10-07: adopt the time-based window recommended below (last 24 hours of chain time, at least 12 certificates concerning the validator, absent from more than half, absences under at least 3 different proposers), replacing "100 of the last 200 certificates". It must be added to the simulator and tested before it is relied on.*
+
 *What was found.* The decision counts blocks: "absent from more than 100 of the last 200 certificates". On a
 quiet chain there is one block an hour, so 101 missed certificates is **more than four days offline**. On a
 busy chain the same rule could act within minutes. The number means something different every day. Also,
