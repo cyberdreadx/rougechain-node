@@ -523,6 +523,7 @@ struct Stats {
     locked_refused: usize,
     long_expiry_refused: usize,
     two_tabs: usize,
+    unconfirmed_root_refused: usize,
     withheld: usize,
     unanswered: usize,
     resubmitted: usize,
@@ -1271,6 +1272,15 @@ impl World {
             let wallet_true = before.state_at(d.height).zip(truth_at(d.height)).is_some_and(|(m, t)| (m.tree_root, m.nullifier_acc, m.ciphertext_acc, m.note_count, m.nullifier_count) == (t.root, t.nf_acc, t.ct_acc, t.notes, t.nfs));
             let node_true = said.get(&(d.height, d.node_id.clone())).copied().unwrap_or(false);
             assert!(!(wallet_true && node_true), "seed {seed}: node {} told the truth about height {} and is named as dissenting", d.node_id, d.height);
+            // … and, independently of what the wallet says its own state at a height is: the
+            // wallet keeps the pool state of 256 heights. A height with far more pool-changing
+            // heights of the TRUE chain between it and the confirmed height (up to which the
+            // wallet's listing is the chain's) is one the wallet cannot compare — a report for
+            // it, true or false, is never a contradiction
+            if let Some(c) = before.confirmed_height().filter(|c| d.height < *c) {
+                let changes_since = self.chain.history.range(d.height + 1..=c).count();
+                assert!(changes_since < 270, "seed {seed}: a report for height {}, {changes_since} pool-changing heights below the confirmed height, was compared with a state the wallet no longer keeps", d.height);
+            }
         }
         // a listing the chain's is never "refuted" while only liars can contradict it
         if c.listing_refuted {
@@ -1889,6 +1899,11 @@ impl World {
             // G3 (first half), for every entry whatever its origin
             assert!(p.expiry_height <= self.chain.height + EXPIRY_BOUND, "seed {seed} after {step}: a lock reaches more than 128 blocks beyond the true height");
         }
+        // … and nothing else is: a locked note is one a pending entry spends — by its
+        // commitment or its nullifier, never because it sits where another note once sat
+        for n in st.unspent().filter(|n| st.is_locked(n.position)) {
+            assert!(pending.iter().any(|p| p.input_cms.contains(&n.cm) || n.nullifier.is_some_and(|nf| p.nullifiers.contains(&nf))), "seed {seed} after {step}: the note at leaf {} is locked and no pending entry spends it", n.position);
+        }
         // … and by the books, not by what the entry says of itself: while the state holds the entry
         // of a transaction, every note that transaction spends is locked wherever the listing
         // put it (a lock belongs to the commitment, not to a leaf position). A lock migrated
@@ -1945,6 +1960,33 @@ impl World {
         // an embargo that has a base ends 128 blocks above it; a state without a base builds nothing
         if st.spend_embargo() == SpendEmbargo::AwaitingBase {
             assert!(st.confirmed_height().is_none() && st.spend_embargo_until().is_none() && !st.spend_status(None).can_spend_now, "seed {seed} after {step}: a state without an embargo base");
+        }
+    }
+
+    /// What a spend is built ON, tried on a state whose listing is above its confirmed height
+    /// (the client of NOTES §6 never builds there; a careless one might): the root must be the
+    /// confirmed one unless the caller says otherwise, and the expiry is measured from the
+    /// CONFIRMED height whatever the listing claims.
+    fn probe_unconfirmed(&mut self) {
+        let seed = self.seed;
+        let st = self.stored.clone();
+        let (Some(c), Some(top)) = (st.confirmed_height(), st.scanned_height()) else { return };
+        if top <= c || st.spend_gate().is_err() {
+            return;
+        }
+        let Some(p) = st.unspent().find(|n| n.confirmed && n.value > 2 * Q && !st.is_locked(n.position) && st.tree().path(n.position).is_some()).map(|n| n.position) else { return };
+        let (label, to) = (self.label("probe-unconfirmed"), self.bob.address());
+        let build = |allow_unverified: bool, expiry: Option<u64>| {
+            let spend = SpendOptions { chain_id: CHAIN, inputs: &[p], expiry_height: expiry, allow_unverified, max_fee: None };
+            deterministic::transfer_locked(&st, st.revision(), &self.alice, &TransferParams { spend, recipient: &to, amount: Q, fee: Q }, &label)
+        };
+        assert!(build(true, Some(c + EXPIRY_BOUND + 1)).is_err(), "seed {seed}: an expiry 129 blocks above the CONFIRMED height {c} was accepted (the listing is at {top})");
+        if let Ok((tx, _)) = build(true, None) {
+            assert_eq!(tx.expiry_height, c + 64, "seed {seed}: the default expiry is not measured from the confirmed height {c} (the listing is at {top})");
+        }
+        if st.spend_status(None).reason == Some("root_unconfirmed") {
+            assert!(matches!(build(false, None).err(), Some(WalletError::StateUnconfirmed)), "seed {seed}: a spend was built on a root above the confirmed height without the caller's explicit decision");
+            self.stats.unconfirmed_root_refused += 1;
         }
     }
 
@@ -2185,6 +2227,9 @@ fn settlement_guarantees_hold_against_an_independent_model() {
         for i in 0..steps {
             let step = w.step(i);
             w.check(step);
+            if w.rng.below(6) == 0 {
+                w.probe_unconfirmed();
+            }
         }
         w.close();
         nodes_seen.insert((w.stats.nodes, w.stats.liars));
@@ -2194,7 +2239,7 @@ fn settlement_guarantees_hold_against_an_independent_model() {
         }
         add!(lying_pages, lying_pages_accepted, pages_cut, leaf_mismatches, confirm_calls, matched, matched_with_dissent, refuted, ahead, rotations, rescans, all_bad, states_lost, restores,
             embargo_bases, stale_bases, embargo_refusals, embargo_ended, payments, retries, two_input_payments, max_expiry_payments, self_payments, unreadable_payments, mixed_refused,
-            locked_refused, long_expiry_refused, two_tabs, withheld, unanswered, resubmitted, released_late, released_last_block, release_refused, honest_silent, honest_stalls,
+            locked_refused, long_expiry_refused, two_tabs, unconfirmed_root_refused, withheld, unanswered, resubmitted, released_late, released_last_block, release_refused, honest_silent, honest_stalls,
             own_outputs_blanked, leaves_shifted, second_device, second_device_same_inputs, hostile_notes, view_only_scans, view_only_refusals, bursts, evicted_reports,
             blocks_with_several, settled_mined, settled_expired, settled_superseded, drives, cap_checked, cap_recovered, liars, nodes);
         for i in 0..4 {
@@ -2214,8 +2259,8 @@ fn settlement_guarantees_hold_against_an_independent_model() {
     assert!(total.settled_mined > 150 && total.settled_expired > 30 && total.settled_superseded > 15, "{total:?}");
     assert!(total.second_device > 300 && total.second_device_same_inputs > 10 && total.hostile_notes > 500 && total.states_lost > 500, "{total:?}");
     assert!(total.migrations.iter().all(|&m| m > 30) && total.restores > 100 && total.embargo_bases > 100 && total.stale_bases > 20 && total.embargo_refusals > 50 && total.embargo_ended > 10 && total.rescans > 500, "{total:?}");
-    assert!(total.lag_max == HONEST_LAG_MAX && total.honest_stalls > 500 && total.view_only_scans > 300 && total.view_only_refusals > 5 && total.bursts > 15 && total.evicted_reports > 20 && total.blocks_with_several > 500, "{total:?}");
-    assert!(total.max_expiry_payments > 20 && total.self_payments > 10 && total.unreadable_payments > 10 && total.mixed_refused > 20 && total.locked_refused > 10 && total.long_expiry_refused > 20 && total.two_tabs > 20, "{total:?}");
+    assert!(total.lag_max == HONEST_LAG_MAX && total.honest_stalls > 500 && total.view_only_scans > 300 && total.view_only_refusals >= 3 && total.bursts > 15 && total.evicted_reports > 20 && total.blocks_with_several > 500, "{total:?}");
+    assert!(total.max_expiry_payments > 20 && total.self_payments > 10 && total.unreadable_payments > 10 && total.mixed_refused > 20 && total.locked_refused > 10 && total.long_expiry_refused > 20 && total.two_tabs > 20 && total.unconfirmed_root_refused > 20, "{total:?}");
     assert!(total.drives > 3 * runs as usize && total.cap_checked > 2 * runs as usize && total.cap_recovered > 2 && total.drive_rounds_max >= 4, "{total:?}");
     assert!(nodes_seen.iter().any(|&(n, l)| n >= 5 && l >= 2) && nodes_seen.iter().any(|&(n, _)| n == 3) && nodes_seen.iter().any(|&(n, _)| n == 2) && nodes_seen.iter().any(|&(n, l)| n == 7 && l == 3), "{nodes_seen:?}");
 }

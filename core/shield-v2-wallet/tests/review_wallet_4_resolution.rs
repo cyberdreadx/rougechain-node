@@ -125,6 +125,11 @@ fn rw4r_f5_fuzz_rescans_with_forged_entries_and_random_page_cuts_never_leave_a_s
                     assert!(s.is_locked(n.position), "{what}: a note of a pending entry is not locked");
                 }
             }
+            // … and no other note is: a lock is held by a commitment, not by the position a note
+            // of the entry had on another listing
+            for n in s.unspent().filter(|n| s.is_locked(n.position)) {
+                assert!(s.pending().iter().any(|p| p.input_cms.contains(&n.cm)), "{what}: the note at leaf {} is locked and no pending entry spends it", n.position);
+            }
         };
         for attempt in 0..12u64 {
             cases += 1;
