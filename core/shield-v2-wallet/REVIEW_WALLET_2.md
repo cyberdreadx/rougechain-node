@@ -401,3 +401,180 @@ time (`cargo tree` has neither `--release` nor `-j`):
   GitHub.
 * Timing side channels and the zero-knowledge of the proof library: outside this review, as in
   the first.
+
+---
+
+## Resolution (2026-10-06)
+
+Written by the author of the fixes, not by the reviewer. Everything above is the review as it was
+delivered and describes `60d1e2b`; where it says a test "fails", "passes: documented limit" or
+names a line of `store.rs`, that is the state it found. Branch `fix/shield-v2-wallet-settlement`
+(local, from `review/shield-v2-wallet-2` @ `5a6e7c4`). **The redesign below has not been reviewed
+by a second person.** Nothing was deployed, pushed or run against a network node.
+
+The settlement of pending transactions was redesigned, not patched. The principle: *the wallet
+believes nothing about a transaction's fate that it cannot tie to data a quorum of nodes vouches
+for.*
+
+### Settlement rules as implemented (`WalletState::resolve`; spec §5.5, W-15)
+
+`C` is the confirmed height: the highest height at which `confirm_state` found a quorum of
+distinct nodes reporting exactly the wallet's tree root, nullifier hash, note count and nullifier
+count, with no conflicting report in the call.
+
+| Outcome | Condition | Effect on the inputs |
+|---|---|---|
+| `mined` | a listed transaction at a height ≤ `C` has BOTH nullifiers and BOTH output commitments of the entry | spent; the change is a confirmed note |
+| `superseded` | a different listed transaction at a height ≤ `C` has one of its nullifiers | only those whose own nullifier appeared are spent; the others are released |
+| `expired` | `C ≥ expiry_height` and none of its nullifiers appeared up to `C` | all released |
+| stays pending | anything else — seen above `C`, a "rejected" answer, a scanned height nobody confirmed, no `C` | locked |
+
+### Findings
+
+| Finding | Resolution | Commit | Test now |
+|---|---|---|---|
+| RW2-1 (High) | `scan` no longer settles anything: it records `seen_mined` / `seen_superseded` with the height. `resolve` settles only at a height ≤ the confirmed height and never drops an entry seen above it. `fresh_for_rescan` carries every entry over as `pending` and locked (locks are held by note commitment, so they apply as soon as the rescan finds the note). `ReleasePolicy` is removed | `3c59c05` (core), `b11d073` (wasm) | `rw2_f1_a_listing_that_shows_the_pending_tx_mined_never_unlocks_and_bob_is_paid_exactly_once`: both recovery orders × both ends (never released → `expired` after the confirmed expiry, funds intact, one retry; released at the last valid height → `mined`, no retry offered); Bob holds 4 XRGE in all four |
+| RW2-2 (High) | The wallet rebuilds the pool's running nullifier hash from the listing (the pool's own `nullifier_acc_step`) and keeps it per height; `confirm_state` requires root AND hash AND both counts. "Mined" is decided by the entry's own two nullifiers together with its own two output commitments. The wrong spec sentence is withdrawn | `769da1b`, `3c59c05`; spec `3e0ddae` | `rw2_f2_swapped_nullifiers_are_not_confirmed_and_a_mined_tx_is_never_called_expired`, `rw2_f2_a_hidden_spend_cannot_be_confirmed`; against a real node: `node::shield_v2_wallet_interop_tests` (hash equality after every block; a report with the right root and another hash is a conflict) |
+| RW2-3 (Medium) | A note is marked spent only when its own nullifier appears (for a pending input: the entry's nullifier of that input slot). An entry one of whose nullifiers appears in another transaction is `superseded`; its other input is released | `3c59c05` | `rw2_f3_another_transaction_spending_one_input_supersedes_the_pending_tx_and_frees_the_other_input`, `rw2_f3_the_same_two_inputs_on_two_devices_are_told_apart_by_the_outputs` |
+| RW2-4 (Low) | Any report that differs from the wallet's state at a comparable height (or one node reporting two things) ⇒ nothing is confirmed by that call, at any height, and `diverged` is returned with `conflicts`. The quorum is `max(asked, strict majority of the distinct node ids in the call)`, default 2. Documented: the caller chooses the nodes; a node id is the configured endpoint, never a string a node returned | `3c59c05`, `b11d073`; spec `3e0ddae` | `rw2_f4_a_conflict_confirms_nothing_and_the_quorum_is_a_majority_of_the_nodes_asked` |
+| RW2-5 (Low) | `ReleasePolicy::Scanned` no longer exists, in the core or in the wasm surface (`resolve_pending(state, expected_revision)` has no flag); it was not kept under `cfg(test)` — no test needs it. The fresh-state jump is unchanged and is harmless now: a page that skips history gives a state no honest node confirms | `3c59c05`, `b11d073` | `rw2_f5_one_empty_page_that_lies_about_the_height_releases_nothing` (was `rw2_demo_…`) |
+| RW2-6 (Low) | `/api/shield-v2/stats` returns `report: { height, tree_root, nullifier_acc, note_count, nullifier_count }` from ONE read of the pool record; `height` is the record's `next_height − 1`. Existing fields unchanged. API only | `f71cd8e` | `node::shield_v2_daemon_tests` (the report against the pool), interop tests (wallets confirm from it) |
+| RW2-7 (Low) | Notes are stored as one array of ten values (no recomputable flags); Merkle paths share one node map; spent notes are pruned 256 blocks below the confirmed height into a tally; incoming notes below `min_note_value` (default: the minimum fee) or beyond 65,536 stored notes are counted, not stored; `to_json` checks the size `from_json` accepts and cannot reach it | `3c59c05`, `b11d073` | `rw2_f7_dust_is_counted_not_stored_and_a_stored_note_costs_a_quarter_of_what_it_did`, `rw2_f7_pruning_spent_notes_keeps_every_balance_exact`, `store::tests::tracker_*` |
+| RW2-8 (Low) | CI: the shield-v2 step runs with `--features test-prover` (plus a default-feature run); the daemon's four proof-making modules run in `--release` by name filter and are skipped by name in the debug step. **The choice:** split, not "whole daemon in release" — 272 of 296 daemon tests never touch a proof | `11787e9` | not run on GitHub; see "CI" below |
+
+Figures for RW2-7 (measured by the test, 241 notes of exactly the minimum note value, one per
+transaction): **598 bytes of state JSON per stored note** (3.1 shared tree nodes each; was 2,718
+bytes). A note below the minimum costs the state two counters. With the default minimum a stored
+note costs its sender at least 1 XRGE of value, which the victim receives, plus half a fee:
+**1 MB of victim state = 1,672 notes = 836 XRGE in fees + 1,672 XRGE handed to the victim**
+(before: 368 one-quantum notes for 184 XRGE in fees). The cap of 65,536 stored notes is ≈ 39 MB.
+
+### Info items
+
+| # | Status | What was done, or why not | Commit |
+|---|---|---|---|
+| I-1 | fixed (documentation) | Spec §4.3 item 8 annotated and §5.5 rewritten: the anchor window does not bound a transaction's life, `expiry_height` does; the false clause in REVIEW_WALLET_1 §3 is annotated in place; the doc comment of `MAX_EXPIRY_OFFSET` says it. The native builders still take `anchor_height` on the caller's word — `mark_pending` re-checks against the scanned height, as before | `3e0ddae`, `3c59c05` |
+| I-2 | fixed | A migrated lock without an expiry gets `expiry_height` = the old state's scanned height + 128 and settles by the confirmed rules. Residual, stated: format 1 did not bound the expiry it accepted; no client was released on it | `3c59c05` |
+| I-3 | fixed in the core, half of it left to the client | The state has a `revision`; every changing wasm call takes `expected_revision` and returns `revision`; a stale copy is refused with `stale_state:`. The compare-and-swap at the moment of storing is the client's storage transaction and is documented, not built. Two devices cannot share locks: that is `superseded` | `3c59c05`, `b11d073` |
+| I-4 | fixed | `spend_input` refuses an unconfirmed note (`NoteUnverified`); `spend_input_with(.., true)` and the wasm parameter `allow_unverified: true` are the explicit decision | `3c59c05`, `b11d073` |
+| I-5 | fixed | Locks are held by the input note's commitment (`input_cms`) and follow the note to whatever position a rescan finds it at. Exception, stated: a format-2 state that was itself in the middle of a rescan is migrated with position locks, as it held them | `3c59c05` |
+| I-6 | left, documented | A shield has no spending key to hedge with; `NOTES.md` §9 states the limit. Changing it would change what a shield's randomness is derived from (spec §5.6) — out of scope here | — |
+| I-7 | left | A cost, not an error; the bound and the `rescan_required` answer are unchanged | — |
+| I-8 | left | The proof library's own error text; no path found by which it holds witness data. Not changed: that enum is shared with the node-side crate | — |
+| I-9 | documented | One line next to the `--workspace` remark in `docs/running-a-node/upgrade-schedule.md` | `3e0ddae` |
+| I-10 | left, now detected | The node's listing still skips a height whose block is missing (node code, outside "API-only changes where stated"). A wallet no longer has to wait for the next leaf mismatch: the skipped transactions make its state one no honest node confirms (`diverged`) | — |
+| I-11 | fixed for the part that was not acceptable | "Refuse and rescan" is safe now (RW2-1). The 8-byte fingerprint, the same address on every network and no replacement of a pending transaction are left, as the review allows | `3c59c05` |
+
+### State format 3
+
+`revision`; `min_note_value`; the tree as `tracked` + one shared `nodes` map; `nullifier_acc` and
+`nullifier_count`; notes as ten-value arrays; pending entries with `outputs`, `input_cms`,
+`status` (`pending` / `seen_mined` / `seen_superseded`), `seen_height`, `legacy`; checkpoints with
+root, nullifier hash and both counts; three tallies (`below_minimum`, `over_capacity`, `pruned`).
+Full table: `NOTES.md` §11.
+
+**Migration.** Formats 1 and 2 have no nullifier hash and it cannot be computed afterwards, so
+both migrate to an EMPTY format-3 state that keeps the locks, to be scanned from the activation
+height. From 2: every pending entry stays, as pending and locked — also one called `mined`; it
+settles as mined on its nullifier pair plus its change commitment. From 1: every locally marked
+note becomes a `legacy` lock with the synthetic expiry above. Tests:
+`rw1_f7_a_format_1_state_is_migrated_with_its_local_marks_kept_as_locks` (1 → 3),
+`rw2_a_format_2_state_is_migrated_with_every_pending_entry_locked` (2 → 3), and both inside the
+property test.
+
+### Tests added or converted
+
+* `tests/review_wallet_2.rs`: 14 tests, all passing — the four `rw2_f*` that failed on purpose
+  are converted to the safe outcome end to end; `rw2_demo_…` became `rw2_f5_…`; added
+  `rw2_f2_a_hidden_spend…`, `rw2_f3_the_same_two_inputs…`, `rw2_f7_pruning…`, `rw2_i3_…` (revision
+  conflict), `rw2_i4_i5_…`, `rw2_a_format_2_state_is_migrated…`.
+* `tests/settlement_properties.rs` (new): 40 runs of 260 random steps over {honest page, five
+  kinds of lying page, state checks with honest / lying / conflicting reports, `mark_pending`
+  with the transaction mined, withheld or released late, `resolve`, `fresh_for_rescan`, JSON
+  round-trip, migration from 1 or 2, a second device spending}, against the true chain. Invariants
+  after every step: no note is an input of two transactions that are unsettled or mined; the
+  confirmed balance never exceeds the true balance at the confirmed height; every settlement is
+  the truth. One run of it: 563 lying pages accepted, 622 diverged checks, 490 payments (253
+  withheld, 38 released late), 315 second-device payments, 173 migrations, settled 158 mined /
+  204 expired / 141 superseded. Three deliberate mutations of the core (settle on the scanned
+  height; confirm on the root alone; call any nullifier match mined) were each caught by it and
+  by the `rw2_f*` tests, then reverted.
+* `tests/review_wallet_1.rs`: all 14 still pass, adapted to confirmed settlement, state reports
+  and format 3. One assertion there (`rw1_sound_every_byte_…`) failed whenever the dummy output
+  drew slot 0 — it searched the `Debug` text for the value "0" — and is fixed.
+* Daemon: `shield_v2_stats` report checked against the pool; the interop harness reads the report
+  through the stats handler and compares the wallet's nullifier hash with the node's
+  `nullifier_acc` after every block.
+
+### Commands run after the fixes
+
+Each as `systemd-run --user --scope -q -p MemoryMax=2500M -p MemorySwapMax=0 -p CPUWeight=10 nice
+-n 19 cargo … --release --locked --offline -j 1`, in the foreground, one at a time (`cargo tree`
+has neither `--release` nor `-j`):
+
+| Command | Result |
+|---|---|
+| `cargo test -p quantum-vault-shield-v2-wallet --features test-vectors -p quantum-vault-shield-v2-wasm --no-fail-fast -- --test-threads=1` (the CI step's form) | **65 passed, 0 failed, 0 ignored**: wallet 59 (unit 21; `review_wallet_1` 14; `review_wallet_2` 14; `settlement_properties` 1; `vectors` 3; `wallet_flow` 6), wasm 6 (`api` 2; `review_wallet_1` 4) |
+| `cargo build -p quantum-vault-shield-v2-wasm --target wasm32-unknown-unknown` | builds; 2,525,521 bytes |
+| `cargo test -p quantum-vault-shield-v2 -- --test-threads=1` | 35 passed, 0 failed, 0 ignored |
+| `cargo test -p quantum-vault-shield-v2 --features test-prover …`, in five invocations that together are the whole suite — one invocation does not fit the 10-minute limit of a foreground command on this host: `--lib --test prover --test forgery --test negative` (stopped by that limit inside `negative`, after the unit tests and `forgery` had passed); `--test negative -- n0`; `--test negative -- n1`; `--test prover`; `--test pool --test review2_wrapper --test review_node_1 --test review_verifier --test vectors` | 71 passed, 0 failed, 1 ignored (the timing measurement, as before): lib 6, `forgery` 10, `negative` 9 + 8, `prover` 4 (+1 ignored), `pool` 17, `review2_wrapper` 5, `review_node_1` 3, `review_verifier` 3, `vectors` 6 |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_wallet_interop_tests --test-threads=1` | 4 passed |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_daemon_tests --test-threads=1` | 9 passed |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_review_node_1_tests --test-threads=1` | 5 passed |
+| `cargo test -p quantum-vault-daemon -- shield_v2::tests --test-threads=1` | 6 passed |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_wallet_interop_tests node::shield_v2_daemon_tests node::shield_v2_review_node_1_tests shield_v2::tests --test-threads=1` (the new CI step's form) | 24 passed, 272 filtered out |
+| `cargo test -p quantum-vault-daemon -- --skip node::shield_v2_wallet_interop_tests --skip node::shield_v2_daemon_tests --skip node::shield_v2_review_node_1_tests --skip shield_v2::tests --list` | 272 tests listed (the debug CI step's selection; not run) |
+| `cargo build -p quantum-vault-daemon` | builds (the node, default features) |
+| `cargo tree -p quantum-vault-daemon -e normal,build,features -i quantum-vault-shield-v2` | `default` only |
+| the same with `-e normal,build,dev,features` | `default`, `prover`, `test-prover` |
+| `cargo tree -e normal,build,features -i quantum-vault-shield-v2` (default members) | `default` only |
+| `cargo tree -p quantum-vault-shield-v2 --features test-prover -e normal,build,dev,features` | the daemon is not in the graph |
+| `cargo tree -p …-wallet --features test-vectors -p …-wasm -e normal,build,dev,features` | the daemon is not in the graph |
+| `NOBLE_ROOT=… node core/shield-v2-wallet/tests/noble_crosscheck.mjs` | 53 of 53 |
+
+The daemon and shield-v2 runs were made before the documentation commits; no Rust source changed
+after them. The wallet and wasm suites were run last.
+
+### CI (RW2-8), by reasoning — GitHub Actions was not run
+
+| Step | Packages / features | What it now does |
+|---|---|---|
+| Build (default members) | shield-v2 `default`; dev-dependencies not built | unchanged; the guard holds |
+| Test (node crates) | none depends on shield-v2 | unchanged |
+| Test (daemon, without the proof-making modules) | `-p quantum-vault-daemon`, debug; shield-v2 = `default` + `prover` + `test-prover` through dev-dependencies; test harness only, no node binary | 272 tests; the four modules skipped by name make no proof here |
+| Test (daemon, shielded pool V2 modules) | the same package and features, `--release` | 24 tests by name filter; run here in this form |
+| Test (shield-v2, `--features test-prover`) | `-p quantum-vault-shield-v2` only; the feature is this package's; the daemon is not selected | the prover unit tests and `prover`, `forgery`, `negative` now run, the source scan for a public seed parameter among them (`no_public_function_takes_a_seed_outside_the_test_configuration`: passes) |
+| Test (shield-v2, default features) | `-p quantum-vault-shield-v2`, `default` | the verifier as the node links it; what the step ran before |
+| Test (wallet core) | unchanged form | run here in this form |
+
+Cost on a runner, not measured: the test-prover suite took about 20 minutes here under
+`nice -n 19 -j 1`, the default-feature run about 8.
+
+### What remains trust in nodes
+
+* **Everything "confirmed" is the word of the nodes the client asked.** A strict majority of them
+  lying together is believed: a forged incoming note becomes confirmed, a transaction can be
+  settled as expired while it can still be mined, or as mined when it was not. One operator behind
+  most of the configured endpoints is such a majority. There is no light-client proof anywhere.
+* **The confirmed balance is exact as of the confirmed height, not of the tip.** A spend above it
+  that the listing node hides is unknown until a later height is confirmed — and with that node's
+  listing none will be (`diverged`).
+* **Liveness is the node's to take.** A node that withholds a transaction, or a client that cannot
+  reach an agreeing quorum at one height, keeps notes locked: there is no fallback to one node.
+  With the default expiry the lock lasts until a height 64 blocks after the build is confirmed.
+* **The pending record is the client's.** `mark_pending` checks it against the state (inputs,
+  nullifiers per input, total, expiry bound, change among the outputs) but not against the
+  transaction body, which it never sees: a client that records another transaction's outputs
+  would see its own payment as `superseded`.
+* **A second payment from other notes** while the first is pending is the user's; the core
+  refuses only to call the first one dead before it is.
+
+### Not done
+
+* No second review of this redesign.
+* GitHub Actions not run; nothing run as WebAssembly (no `wasm-bindgen-cli` here) — the wasm
+  surface was tested natively and the `wasm32` release artifact was built.
+* The debug-profile daemon CI step was not run (its selection was listed).
+* I-6, I-7, I-8 and I-10 are left as the table says. No client (site, extension, Qwalla) was
+  touched; the storage-side compare-and-swap of I-3 is theirs to build.
+* Not pushed; no pull request.
