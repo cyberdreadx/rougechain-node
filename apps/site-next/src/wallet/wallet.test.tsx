@@ -8,7 +8,7 @@ import { MemoryRouter, Link, Routes, Route, useLocation } from "react-router-dom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, it, expect, vi } from "vitest";
 import { pubkeyToAddress, formatAddress } from "@rougechain/core/address";
-import { lockUnifiedWallet, unlockUnifiedWallet } from "@rougechain/core/unified-wallet";
+import { loadUnifiedWallet, lockUnifiedWallet, unlockUnifiedWallet } from "@rougechain/core/unified-wallet";
 import { WalletProvider } from "./WalletProvider";
 import { WalletControl } from "./WalletControl";
 import { WalletPreview } from "../explore/Previews";
@@ -192,4 +192,39 @@ it("never prompts the extension on page load — it connects only when the user 
   expect(await screen.findByRole("button", { name: `Wallet ${address}` })).toBeInTheDocument();
   expect(connect).toHaveBeenCalledTimes(1);
   delete (window as { rougechain?: unknown }).rougechain;
+});
+
+it("lets a provider wallet be disconnected from the wallet dialog; a local wallet gets no such button", async () => {
+  delete (window as { rougechain?: unknown }).rougechain;
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+      <WalletProvider autoRegister={false}>
+        <MemoryRouter>
+          <WalletControl />
+        </MemoryRouter>
+      </WalletProvider>
+    </QueryClientProvider>,
+  );
+  injectExtensionLater();
+  await userEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+  await userEvent.click(screen.getByRole("button", { name: /RougeChain Wallet/ }));
+  const address = await pubkeyToAddress("ab".repeat(1952));
+  await userEvent.click(await screen.findByRole("button", { name: `Wallet ${address}` }));
+  const dialog = screen.getByRole("dialog", { name: "Your wallet" });
+  // no "set a password" prompt for a wallet whose keys are not in this browser
+  expect(within(dialog).queryByText("Set a password to enable lock")).not.toBeInTheDocument();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+  expect(await screen.findByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+  expect(loadUnifiedWallet()).toBeNull();
+  delete (window as { rougechain?: unknown }).rougechain;
+});
+
+it("offers no Disconnect for a wallet whose keys live in this browser", async () => {
+  delete (window as { rougechain?: unknown }).rougechain;
+  const seeded = seedAppsWebWallet();
+  wrap(<WalletControl />);
+  const address = await pubkeyToAddress(seeded.signingPublicKey);
+  await userEvent.click(await screen.findByRole("button", { name: `Wallet ${address}` }));
+  const dialog = screen.getByRole("dialog", { name: "Your wallet" });
+  expect(within(dialog).queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
 });
