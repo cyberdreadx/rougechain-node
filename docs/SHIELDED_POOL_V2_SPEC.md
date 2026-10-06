@@ -5,6 +5,12 @@
 **Status: SPEC v1, frozen for implementation and audit. Nothing in this document is active on any
 network.** It is documentation only: it changes no code and sets no activation height.
 
+*Amended 2026-10-06 after the node implementation review (`core/shield-v2/REVIEW_NODE_1.md`):* the
+pre-activation paragraph of §3 (what happens to a V2 transaction below A — the previous release's
+treatment, mirrored exactly — plus the activation runbook note it used to defer), the `version`
+pin of the signer-less envelope (§3.1, §3.6 check 2; R1-4), and the mempool / producer SHOULDs of
+§4.6 (R1-2, R1-3, R1-5). No frozen constant, encoding or consensus rule from A changed.
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -464,10 +470,43 @@ Every item of `SPEC_DRAFT.md` §12, in its numbering:
 ## 3. Transaction types
 
 Three new transaction types exist from height A: `shield_v2`, `shielded_transfer_v2`,
-`unshield_v2`. Before A, and while A is `None`, a block that carries a transaction of one of these
-types, or any transaction with one of the two payload fields of §3.1, is invalid. (How that rule is
-rolled out so that upgraded and not-yet-upgraded nodes agree below A belongs to the activation
-runbook, as for earlier upgrades that added payload fields.)
+`unshield_v2`.
+
+**Before A, and while A is `None`, a V2 transaction is treated exactly as the previous release
+(1.6.3, the build without this upgrade) treats it — no more and no less** (REVIEW_NODE_1, R1-1).
+That release has no rule for these transactions, so the treatment is:
+
+* a transaction whose `tx_type` is one of the three names is an *unknown type*: it is subject to
+  the ordinary rules of every account transaction (a valid account signature over its bytes,
+  fee and type sanity, MONETARY_INTEGRITY, the signed-payload binding) and, when its block is
+  accepted, it is applied as a **no-op** — the sender's nonce is written and the sender indexed,
+  no fee is charged, no balance moves, and it counts as one transaction of the block; a
+  signer-less envelope (empty `from_pub_key`, empty `sig`) fails the signature rule and
+  invalidates its block, like any unsigned transaction;
+* the two payload fields of §3.1 **do not exist** for that release: its deserialisation drops them
+  silently, so the signature, the transaction identity, the transaction hash and the stored block
+  are those of the field-less transaction. An upgraded node MUST do the same to every transaction
+  of a block below A before any rule reads it, and MUST compare a signed envelope's payload with
+  the fields dropped.
+
+Consequently a block below A that carries a V2-typed transaction or the fields is valid or invalid
+for an upgraded node exactly when it is for a non-upgraded one, with the same state root, and the
+upgrade can be installed on validators in any order before A without a split. Wallets MUST NOT
+submit a V2 transaction before A (it would be a no-op that costs a nonce, or an unsigned
+transaction that invalidates its block), and a node MUST NOT admit one to its mempool, relay one
+or produce one before A — a node-local refusal that is not a consensus rule. From A the three
+types and both fields are consensus-validated by §3.6 and §4.
+
+*Activation runbook note (operators).* Schedule A in the node's upgrade schedule for the network
+and release the build; every validator and every node installs it before A, in any order — below
+A the build is consensus-identical to the previous release, so a partially upgraded validator set
+cannot split, and a node that has not upgraded by A simply stops following the chain at A (it
+cannot verify the state root from A on). Nothing is written to the pool store before A. Before A
+no wallet, SDK or client may offer V2 transactions; the node-local refusal above is the safety
+net, not the plan. After A, confirm on every node that `GET /api/shield-v2/stats` reports
+`active: true` and the same `tree_root`, `nullifier_acc` and `pool_total_quanta`, and that
+`state_root` agrees across nodes at the same height. Rollback before A is reinstalling the
+previous binary; after A there is none.
 
 All three share one body layout and one proof statement. They differ in the `kind` byte, in which
 public amounts may be non-zero, in the meaning of the `account` field, and in whether an account
@@ -521,11 +560,13 @@ Additional rules for `shield_v2`:
 
 Additional rules for `shielded_transfer_v2` and `unshield_v2` (no public sender):
 
-* `from_pub_key` MUST be the empty string, `sig` MUST be the empty string, `nonce` MUST be 0, and
-  `signed_payload` MUST be absent.
+* `from_pub_key` MUST be the empty string, `sig` MUST be the empty string, `nonce` MUST be 0,
+  `signed_payload` MUST be absent, and the envelope `version` MUST be 1. (Nobody signs this
+  envelope, so every field of it that enters the transaction identity or hash must be pinned by
+  rule; `version` is such a field — REVIEW_NODE_1, R1-4.)
 * The node MUST NOT run account-signature verification for these two types, MUST NOT read or write
   an account nonce for them, and MUST NOT index a sender address. These exemptions apply to these
-  two types and to no other.
+  two types and to no other, and only from A (§3, first paragraph).
 * Replay protection and uniqueness come from the nullifiers (§4.2) and the expiry height, not
   from a nonce.
 
@@ -626,8 +667,8 @@ the proof system; checks 15–19 are state lookups; check 20 is the only expensi
 
 | # | Check | Cost |
 |---|---|---|
-| 1 | H ≥ A (and A is set) | constant |
-| 2 | Envelope shape (§3.1): both fields present, every other payload field absent, envelope `fee` is `0.0`; for the two signer-less types `from_pub_key`, `sig` empty, `nonce` 0, no `signed_payload` | constant |
+| 1 | H ≥ A (and A is set). Below A there is no V2 check at all: the transaction is judged by the previous release's rules (§3, first paragraph), and the mempool / producer refuse it node-locally | constant |
+| 2 | Envelope shape (§3.1): both fields present, every other payload field absent, envelope `fee` is `0.0`; for the two signer-less types `from_pub_key`, `sig` empty, `nonce` 0, no `signed_payload`, `version` 1 | constant |
 | 3 | **Length of `shield_v2_proof`: even, ≥ 2 and ≤ 400,000 characters — i.e. the proof is at most 200,000 bytes. Checked on the string length, before the proof is decoded from hexadecimal or parsed in any way** | constant |
 | 4 | Length of `shield_v2_body` is exactly 5,092 characters | constant |
 | 5 | Both strings are lowercase hexadecimal; decode them to bytes | linear |
@@ -799,7 +840,17 @@ Consequences:
 Mempool (node-local, not consensus): a node SHOULD admit a V2 transaction only after all checks of
 §3.6 pass against its current tip, SHOULD refuse a transaction that shares a nullifier with one
 already in its mempool, and SHOULD drop a transaction once `expiry_height` has passed or its
-anchor has left the window.
+anchor has left the window. It SHOULD make every cheap refusal — replay, already mined, duplicate,
+mempool full, the stateless checks, the pool checks, the nullifier conflict — before check 20,
+and MAY remember refused proofs so that the same bytes are not verified twice (REVIEW_NODE_1,
+R1-2). It SHOULD count the `v_in` of the shields it already holds from an account against that
+account's balance when admitting another, and SHOULD cap the number of V2 transactions it holds
+(each is about 400 KB; R1-5). A producer that holds more valid V2 transactions than the per-block
+limit MUST keep the rest for a later block, not drop them (R1-3).
+
+Before A (§3, first paragraph) none of this applies: the mempool and the producer refuse every V2
+type and every transaction carrying either field, node-locally, while a block carrying one is
+judged by the previous release's rules.
 
 ### 4.7 Resource bounds per block
 
