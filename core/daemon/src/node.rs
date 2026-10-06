@@ -15205,3 +15205,161 @@ mod shield_v2_daemon_tests {
         set_test_shield_v2(None);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// SHIELD_V2 — REVIEW_NODE_1 (core/shield-v2/REVIEW_NODE_1.md): regression tests next to the
+// findings they belong to. No proof is made here: where a finding is about what happens AROUND
+// check 20, `shield_v2_verified` is primed with the transaction hash so that `verify_proof` is a
+// cache hit, exactly as it is for a transaction this node admitted earlier. Tests named
+// `review_r1_*` that FAIL do so on purpose: they assert the behaviour the finding asks for.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod shield_v2_review_node_1_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, signed};
+    use crate::shield_v2::{set_test_shield_v2, SHIELD_TX_TYPE};
+    use quantum_vault_shield_v2::pool::{empty_tree_root, SHIELD_V2_MIN_FEE_QUANTA};
+    use quantum_vault_types::encode_tx_for_signing;
+
+    /// Activation at height 1: a freshly initialised node (tip 0) is active for its next block.
+    const A: u64 = 1;
+    const Q: u64 = 1_000_000_000;
+
+    /// A spec §3.2 body: canonical digests (every word small and distinct per `tag`), anchor
+    /// `E_32`, expiry 1,000, the given amounts and account.
+    fn body(kind: u8, tag: u32, v_in: u64, v_out: u64, fee: u64, account: [u8; 32]) -> Vec<u8> {
+        let mut b = vec![0u8; shield_v2::SHIELD_V2_BODY_BYTES];
+        b[0] = 1;
+        b[1] = kind;
+        b[2..34].copy_from_slice(&shield_v2::chain_tag("test"));
+        b[34..42].copy_from_slice(&1_000u64.to_le_bytes());
+        b[42..74].copy_from_slice(&empty_tree_root());
+        for (i, off) in [74usize, 106, 138, 170].into_iter().enumerate() {
+            for w in 0..8 {
+                let word: u32 = 1 + tag * 64 + i as u32 * 8 + w as u32;
+                b[off + 4 * w..off + 4 * w + 4].copy_from_slice(&word.to_le_bytes());
+            }
+        }
+        b[202..210].copy_from_slice(&v_in.to_le_bytes());
+        b[210..218].copy_from_slice(&v_out.to_le_bytes());
+        b[218..226].copy_from_slice(&fee.to_le_bytes());
+        b[226..258].copy_from_slice(&account);
+        for (i, x) in b[258..].iter_mut().enumerate() { *x = (i % 251) as u8; }
+        b
+    }
+
+    /// A signed `shield_v2` of `v_in` from `user` with a 32-byte garbage proof.
+    fn shield_tx(user: &PQKeypair, tag: u32, v_in: u64, nonce: u64) -> TxV1 {
+        let acct: [u8; 32] = sha256(&hex::decode(&user.public_key_hex).unwrap()).try_into().unwrap();
+        let b = body(1, tag, v_in, 0, SHIELD_V2_MIN_FEE_QUANTA, acct);
+        let t = TxV1 { version: 1, tx_type: SHIELD_TX_TYPE.into(), from_pub_key: user.public_key_hex.clone(), nonce,
+            payload: TxPayload { shield_v2_body: Some(hex::encode(&b)), shield_v2_proof: Some("ab".repeat(32)), ..Default::default() },
+            fee: 0.0, sig: String::new(), signed_payload: None };
+        signed(t, &user.secret_key_hex)
+    }
+
+    /// Pretend this node verified the transaction's proof earlier (mempool / an earlier attempt).
+    fn prime(node: &L1Node, tx: &TxV1) {
+        node.shield_v2_verified.insert(compute_single_tx_hash(tx));
+    }
+
+    /// R1-1 (Medium; documenting test, passes). A transaction whose TYPE NAME is one of the three
+    /// V2 names but that carries neither payload field passes every rule a pre-stage-2 node
+    /// applies — signature, fee/type sanity, MONETARY_INTEGRITY (the V2 names are not suspended),
+    /// GAME_READY, TOKEN_MINTING, the royalty cap, the signed-payload binding — and
+    /// `apply_balance_tx_inner` has no arm for it (`_ => {}`): such a block is VALID today and is
+    /// applied as a no-op. The stage-2 rule refuses the block at every height while activation is
+    /// `None`. Until every validator runs stage 2, one validly signed bare-type transaction in a
+    /// block splits upgraded from non-upgraded nodes. (The payload FIELDS do not have this
+    /// problem in the same way: see the report.)
+    #[test]
+    fn review_r1_1_bare_v2_type_names_pass_every_pre_stage_2_rule() {
+        let user = pqc_keygen();
+        for ty in shield_v2::SHIELD_V2_TX_TYPES {
+            let t = signed(TxV1 { version: 1, tx_type: ty.to_string(), from_pub_key: user.public_key_hex.clone(), nonce: 1,
+                payload: TxPayload::default(), fee: 0.1, sig: String::new(), signed_payload: None }, &user.secret_key_hex);
+            assert!(pqc_verify(&t.from_pub_key, &encode_tx_for_signing(&t), &t.sig).unwrap(), "{ty}: signed like any account tx");
+            assert!(fee_and_type_sanity(&t).is_ok(), "{ty}");
+            assert!(monetary_integrity_check(&t, false).is_ok(), "{ty}: not a suspended type");
+            assert!(game_ready_tx_rule(&t, u64::MAX).is_ok() && token_minting_tx_rule(&t, u64::MAX).is_ok() && nft_royalty_cap_tx_rule(&t, u64::MAX).is_ok(), "{ty}");
+            assert!(crate::v2_binding::verify_v2_binding_at(&t, u64::MAX).is_ok(), "{ty}");
+            assert!(!SUSPENDED_TX_TYPES.contains(ty));
+            // only the stage-2 rule refuses it — and it refuses the whole block
+            assert_eq!(shield_v2_tx_rule(&t, 0, "test").unwrap_err(), shield_v2::NOT_ACTIVE_ERROR, "{ty}");
+            assert_eq!(shield_v2_tx_rule(&t, u64::MAX, "test").unwrap_err(), shield_v2::NOT_ACTIVE_ERROR, "{ty}");
+        }
+    }
+
+    /// R1-2 (Medium). `insert_tx_to_mempool` runs `shield_v2_admission_checks` — which ends with
+    /// the proof verification (≤ 14 ms, up to 4.5 MiB) — BEFORE the replay check, the mined-hash
+    /// check, the mempool dedup and the mempool-full check. A V2 transaction has envelope fee 0.0
+    /// and can never enter a full mempool (`tx.fee <= min_fee`), so with a full mempool every
+    /// garbage-proof V2 transaction an unauthenticated peer sends costs a verification for
+    /// nothing. Expected: the cheap refusals first. This test FAILS until they are.
+    #[test]
+    fn review_r1_2_mempool_full_is_judged_only_after_the_proof_was_verified() {
+        set_test_shield_v2(Some(A));
+        let (_d, node, _) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        {
+            let mut mp = node.mempool.lock().unwrap();
+            for i in 0..MAX_MEMPOOL {
+                let t = TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: format!("f{i}"), nonce: 1,
+                    payload: TxPayload { to_pub_key_hex: Some("aa".into()), amount: Some(1), ..Default::default() }, fee: 0.1, sig: String::new(), signed_payload: None };
+                mp.insert(format!("id{i}"), t);
+            }
+        }
+        // a funded, well-formed shield whose 32-byte proof is garbage; NOT primed: check 20 runs
+        let t = shield_tx(&user, 1, 10 * Q, 1);
+        let e = node.add_tx_to_mempool(t).unwrap_err();
+        set_test_shield_v2(None);
+        assert!(e.contains("Mempool full"), "R1-2: a V2 transaction cannot enter a full mempool (envelope fee 0.0), so it must be refused before its proof is verified; the node reported instead: {e}");
+    }
+
+    /// R1-3 (Low). The producer drains the whole mempool; `shield_v2_select_for_block` keeps at
+    /// most 8 V2 transactions and the rest are neither sealed nor requeued — valid, admitted
+    /// transactions (each ~400 KB and 3–7 s of wallet proving) silently disappear from this node.
+    /// Expected: the ninth is requeued for the next block. This test FAILS until it is.
+    #[test]
+    fn review_r1_3_producer_drops_valid_v2_transactions_beyond_the_block_limit() {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_shield_v2(Some(A));
+        let (_d, node, _) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        let txs: Vec<TxV1> = (1..=9u64).map(|i| shield_tx(&user, i as u32, 10 * Q, i)).collect();
+        for t in &txs {
+            prime(&node, t);
+            node.add_tx_to_mempool(t.clone()).expect("a funded shield with a (cached) accepted proof is admitted");
+        }
+        assert_eq!(node.mempool.lock().unwrap().len(), 9);
+        let b = node.mine_pending().unwrap().expect("a block is produced");
+        assert_eq!(b.txs.len(), 8, "the per-block limit holds");
+        let left = node.mempool.lock().unwrap().len();
+        set_test_shield_v2(None);
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(None));
+        assert_eq!(left, 1, "R1-3: the ninth valid, admitted V2 transaction must be requeued for the next block, not dropped");
+    }
+
+    /// R1-5 (Low; documenting test, passes). Admission check 19 is made against the tip's balance
+    /// without a shadow for shields already queued from the same account: an account holding 10
+    /// XRGE gets any number of 10-XRGE shields admitted (each ~400 KB in the mempool and on every
+    /// peer's), although at most one can ever be mined. The producer's shadow and block apply
+    /// are correct; the cost is mempool and relay bytes.
+    #[test]
+    fn review_r1_5_mempool_admits_shields_beyond_the_funding_balance() {
+        set_test_shield_v2(Some(A));
+        let (_d, node, _) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 10.0);
+        let mut admitted = 0;
+        for i in 1..=3u64 {
+            let t = shield_tx(&user, i as u32, 10 * Q, i);
+            prime(&node, &t);
+            if node.add_tx_to_mempool(t).is_ok() { admitted += 1; }
+        }
+        set_test_shield_v2(None);
+        assert_eq!(admitted, 3, "documents today's behaviour: three 10-XRGE shields admitted against a 10-XRGE balance");
+    }
+}

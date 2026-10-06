@@ -767,6 +767,33 @@ mod tests {
         set_test_shield_v2(None);
     }
 
+    /// REVIEW_NODE_1 finding R1-4 (Low): the signer-less envelope fixes `from_pub_key`, `sig`,
+    /// `nonce`, `fee`, `signed_payload` and the payload, but NOT `version`. A relay can therefore
+    /// bump `version` on a `shielded_transfer_v2` / `unshield_v2` in flight: the body and proof
+    /// are untouched (so every consensus rule still accepts it) while `tx_identity` and
+    /// `compute_single_tx_hash` — the uniqueness index, the mempool key, the receipt key, the
+    /// verify-cache key — all change. Expected: the stateless rule pins `version` for the
+    /// signer-less types (or the identity ignores it). This test FAILS until that is done.
+    #[test]
+    fn review_r1_4_signerless_envelope_version_is_not_pinned() {
+        set_test_shield_v2(Some(10));
+        let ok = tx(TRANSFER_TX_TYPE, &transfer_body(), "ab");
+        let parsed = shield_v2_tx_rule(&ok, 10, CHAIN).unwrap().unwrap();
+        let mut relayed = ok.clone();
+        relayed.version = 2;
+        // same body, same proof, same nullifiers: the chain would apply exactly the same effects ...
+        let parsed2 = shield_v2_tx_rule(&relayed, 10, CHAIN).map(|p| p.unwrap());
+        if let Ok(p2) = &parsed2 {
+            assert_eq!(p2.body, parsed.body);
+            assert_eq!(p2.proof, parsed.proof);
+            // ... under a different identity and hash
+            assert_ne!(quantum_vault_types::tx_identity(&relayed), quantum_vault_types::tx_identity(&ok));
+            assert_ne!(quantum_vault_types::compute_single_tx_hash(&relayed), quantum_vault_types::compute_single_tx_hash(&ok));
+        }
+        set_test_shield_v2(None);
+        assert!(parsed2.is_err(), "R1-4: a signer-less envelope with version != 1 must be refused (version is otherwise a free, identity-changing field)");
+    }
+
     #[test]
     fn stored_pool_encoding_round_trips() {
         let mut st = PoolState::genesis();
