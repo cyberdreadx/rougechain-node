@@ -54,6 +54,31 @@ export {
 } from "./signer.js";
 export type { TokenCreationOptions } from "./signer.js";
 
+export {
+  signMessage,
+  verifyMessage,
+  messageSigningBytes,
+  createSignInMessage,
+  parseSignInMessage,
+  verifySignIn,
+  claimedSignInDomain,
+  looksLikeTransactionPayload,
+  visibleMessageText,
+  reviewSignMessageRequest,
+  SIGNED_MESSAGE_PREFIX,
+  MAX_SIGN_MESSAGE_BYTES,
+  SIGN_IN_MIN_NONCE_LENGTH,
+  ML_DSA_65_PUBLIC_KEY_BYTES,
+  ML_DSA_65_SIGNATURE_BYTES,
+} from "./message-signing.js";
+export type {
+  SignInFields,
+  SignInFailure,
+  VerifySignInParams,
+  VerifySignInResult,
+  SignMessageReview,
+} from "./message-signing.js";
+
 export { generateNonce, hexToBytes, bytesToHex } from "./utils.js";
 
 export {

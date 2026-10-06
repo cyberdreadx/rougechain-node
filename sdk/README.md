@@ -631,6 +631,41 @@ const signedTx = signTransaction(payload, wallet.privateKey, wallet.publicKey);
 const valid = verifyTransaction(signedTx); // true
 ```
 
+## Message Signing & Sign-In (1.13.0)
+
+Prove control of a wallet to a website (login, token gating) without sending a transaction.
+
+```typescript
+import { signMessage, verifyMessage, createSignInMessage, verifySignIn, pubkeyToAddress } from "@rougechain/sdk";
+
+// Arbitrary message
+const signature = signMessage(wallet.privateKey, "hello");
+verifyMessage(wallet.publicKey, "hello", signature); // true — false on anything else, never throws
+
+// Sign-in message (canonical multi-line text, modelled on Sign-In with Ethereum)
+const message = createSignInMessage({
+  domain: "tickets.example.com",
+  address: await pubkeyToAddress(wallet.publicKey),
+  uri: "https://tickets.example.com/login",
+  statement: "Sign in to see your tickets.",
+  nonce,                                   // from your server, single use, >= 16 characters
+  issuedAt: new Date().toISOString(),
+  expirationTime: new Date(Date.now() + 10 * 60_000).toISOString(),
+  chainId: "rougechain-mainnet-1",
+});
+
+// Server side
+const result = await verifySignIn({
+  message, signature, publicKey,
+  expectedDomain: "tickets.example.com",
+  expectedNonce: nonce,
+  expectedChainId: "rougechain-mainnet-1",
+});
+// { valid: true, address, publicKey, fields } | { valid: false, error }
+```
+
+The signature is ML-DSA-65 over `"\x19RougeChain Signed Message:\n" + decimal(byte length) + "\n" + message bytes`. A transaction's signed bytes are always a JSON document starting with `{`, so a message signature can never be replayed as a transaction and a transaction signature never verifies as a message. In a browser, ask the wallet with `window.rougechain.signMessage({ message })` (extension 1.8.0+; feature-detect). Full guide with a token-gating server: [Wallet authentication](https://docs.rougechain.io/advanced/wallet-authentication).
+
 ## Address Resolution
 
 Resolve between compact `rouge1…` addresses and full hex public keys using the on-chain persistent index.
