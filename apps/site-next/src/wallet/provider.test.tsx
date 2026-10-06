@@ -9,6 +9,7 @@ import { verifyTransaction, generateNonce } from "@rougechain/core/pqc-signer";
 import {
   hasEncryptedWallet,
   isWalletLocked,
+  loadUnifiedWallet,
   lockUnifiedWallet,
   saveUnifiedWallet,
   saveVaultSettings,
@@ -308,6 +309,79 @@ describe("provider state machine", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(connected).toBe(0);
     expect(status()).toBe("none");
+  });
+
+  /** A provider stub with the `on` / `removeListener` event API Qwalla and the extension expose. */
+  function eventedProvider(accounts: () => string) {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const provider = {
+      isRougeChain: true,
+      connect: vi.fn(async () => ({ publicKey: accounts(), displayName: `Acct ${accounts().slice(0, 4)}` })),
+      on: (ev: string, cb: (...args: unknown[]) => void) => {
+        if (!listeners.has(ev)) listeners.set(ev, new Set());
+        listeners.get(ev)!.add(cb);
+      },
+      removeListener: (ev: string, cb: (...args: unknown[]) => void) => listeners.get(ev)?.delete(cb),
+      emit: (ev: string, ...args: unknown[]) => listeners.get(ev)?.forEach((cb) => cb(...args)),
+    };
+    Object.defineProperty(window, "rougechain", { configurable: true, value: provider });
+    return provider;
+  }
+
+  it("follows the provider when the user switches accounts in Qwalla / the extension", async () => {
+    const a = "aa".repeat(1952);
+    const b = "bb".repeat(1952);
+    let active = a;
+    const provider = eventedProvider(() => active);
+    mount();
+    await act(() => ctx.connectExtension());
+    expect(ctx.publicKey).toBe(a);
+    expect(provider.connect).toHaveBeenCalledTimes(1);
+
+    active = b;
+    await act(async () => {
+      provider.emit("accountsChanged", [b]);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(ctx.publicKey).toBe(b);
+    expect(ctx.displayName).toBe("Acct bbbb");
+    expect(ctx.isExtension).toBe(true);
+    // re-read uses connect() (no prompt on an approved site); same account again is a no-op
+    expect(provider.connect).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      provider.emit("accountsChanged", [b]);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(provider.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops the provider wallet when the provider disconnects or reports no account", async () => {
+    const provider = eventedProvider(() => "cc".repeat(1952));
+    mount();
+    await act(() => ctx.connectExtension());
+    expect(status()).toBe("unlocked");
+    await act(async () => {
+      provider.emit("accountsChanged", []);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(status()).toBe("none");
+    expect(loadUnifiedWallet()).toBeNull();
+  });
+
+  it("never lets a provider event touch a local wallet", async () => {
+    seedAppsWebWallet();
+    const provider = eventedProvider(() => "dd".repeat(1952));
+    mount();
+    await waitFor(() => expect(status()).toBe("unlocked"));
+    const before = ctx.publicKey;
+    await act(async () => {
+      provider.emit("accountsChanged", ["dd".repeat(1952)]);
+      provider.emit("disconnect");
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(ctx.publicKey).toBe(before);
+    expect(status()).toBe("unlocked");
+    expect(provider.connect).not.toHaveBeenCalled();
   });
 
   it("re-registers an unlocked local wallet in the messenger directory on load", async () => {
