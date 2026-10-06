@@ -363,9 +363,8 @@ does not prove the visitor is a person, or that one person has only one wallet.
 
 A wallet that implements `signMessage` must:
 
-- sign exactly the bytes above, and never sign caller-supplied bytes through `signTransaction`
-  without checking they are a transaction's JSON (otherwise a site could obtain a message
-  signature through the transaction path);
+- sign exactly the bytes above, and in `signTransaction` only sign bytes that are the canonical
+  JSON of the payload it shows;
 - ask the user on every request and show the origin and the complete message;
 - warn when a sign-in message names another domain than the requesting origin.
 

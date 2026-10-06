@@ -47,8 +47,8 @@
  *
  * In the other direction, wallets only produce a transaction signature over the canonical JSON
  * of an object (`serializePayload`), so a transaction signature never verifies as a message.
- * A wallet that signs caller-supplied bytes for `signTransaction` must check they are that JSON
- * (the extension does) — otherwise a dApp could obtain a message signature through it.
+ * A wallet that accepts caller-supplied bytes for `signTransaction` must check they are that
+ * JSON for the payload it shows (the extension and Qwalla do).
  */
 
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
