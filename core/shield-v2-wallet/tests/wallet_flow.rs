@@ -78,9 +78,15 @@ fn shield_transfer_unshield_with_real_proofs() {
     // Alice pays Bob 10 with both notes; change 1
     let sel = select_inputs(&a, 10 * Q, Q).unwrap();
     assert_eq!((sel.positions.len(), sel.total, sel.change), (2, 12 * Q, Q));
-    let inputs: Vec<SpendInput> = sel.positions.iter().map(|&p| a.spend_input(p).unwrap()).collect();
-    let t = build_transfer(&TransferRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, recipient: &bob.address(), amount: 10 * Q, fee: Q, max_fee: None }).unwrap();
+    // build AND lock, one call (REVIEW_WALLET_3 RW3-5): the anchor is the confirmed root, the
+    // expiry the confirmed height + 64, and the returned state already holds the pending entry
+    let spend = SpendOptions { chain_id: CHAIN, inputs: &sel.positions, expiry_height: None, allow_unverified: false, max_fee: None };
+    let stale = build_transfer(&a, a.revision() + 1, &alice, &TransferParams { spend: spend.clone(), recipient: &bob.address(), amount: 10 * Q, fee: Q });
+    assert!(matches!(stale.map(|_| ()), Err(WalletError::StaleState)), "the state must be at the revision the caller read from its storage");
+    let locked = build_transfer(&a, a.revision(), &alice, &TransferParams { spend, recipient: &bob.address(), amount: 10 * Q, fee: Q }).unwrap();
+    let t = locked.tx;
     check(&t);
+    assert_eq!(t.expiry_height, a.confirmed_height().unwrap() + DEFAULT_EXPIRY_OFFSET);
     assert_eq!((t.envelope.tx_type.as_str(), t.envelope.from_pub_key.as_str(), t.envelope.sig.as_str(), t.envelope.nonce), ("shielded_transfer_v2", "", "", 0));
     assert!(t.signing_bytes.is_none() && t.envelope.signed_payload.is_none());
     assert!(t.signed_envelope("ab").is_err());
@@ -89,8 +95,15 @@ fn shield_transfer_unshield_with_real_proofs() {
     assert_eq!((pending.inputs.clone(), pending.input_total, pending.expiry_height), (sel.positions.clone(), 12 * Q, t.expiry_height));
     assert_eq!(pending.outputs.iter().map(|c| c.0).collect::<Vec<_>>(), t.output_commitments().to_vec(), "and both output commitments");
     assert_eq!(pending.change.as_ref().map(|c| c.value), Some(Q));
+    assert!(pending.change.as_ref().unwrap().r.is_some() && pending.own_payment.is_none(), "the change record opens its commitment by itself");
     assert!(s1.pending().is_none(), "a shield spends no note");
-    a.mark_pending(pending).unwrap();
+    // … and it is ALREADY in the state that came back with the transaction; the caller's own state is untouched
+    assert!(a.pending().is_empty() && !a.is_locked(sel.positions[0]));
+    let recorded = &locked.state.pending()[0];
+    assert_eq!((&recorded.nullifiers, &recorded.outputs, &recorded.change, recorded.expiry_height), (&pending.nullifiers, &pending.outputs, &pending.change, pending.expiry_height));
+    assert!(sel.positions.iter().all(|&p| locked.state.is_locked(p)) && locked.state.revision() == a.revision() + 1);
+    assert!(a.mark_pending(pending.clone()).is_ok() && a.content_eq(&locked.state), "the same record, the same state");
+    a = locked.state;
     assert_eq!(t.body[226..258], [0u8; 32]);
     let json: serde_json::Value = serde_json::from_str(&t.envelope_json().unwrap()).unwrap();
     assert_eq!(json["fee"].to_string(), "0.0");
@@ -127,8 +140,11 @@ fn shield_transfer_unshield_with_real_proofs() {
     let to = account_from_address(&address_from_account(&[0x42; 32])).unwrap();
     assert!(matches!(b.spend_input(b.notes()[0].position), Err(WalletError::NoteUnverified)), "an unverified note is not handed to a builder");
     confirm(&chain, &mut b);
-    let inputs = [b.spend_input(b.notes()[0].position).unwrap()];
-    let u = build_unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &bob, inputs: &inputs, to_account: to, v_out: 6 * Q, fee: Q, max_fee: None }).unwrap();
+    let positions = [b.notes()[0].position];
+    let spend = SpendOptions { chain_id: CHAIN, inputs: &positions, expiry_height: None, allow_unverified: false, max_fee: None };
+    let locked = build_unshield(&b, b.revision(), &bob, &UnshieldParams { spend, to_account: to, v_out: 6 * Q, fee: Q }).unwrap();
+    let u = locked.tx;
+    b = locked.state;
     check(&u);
     assert_eq!(u.envelope.tx_type, "unshield_v2");
     assert_eq!(u.body[226..258], [0x42; 32]);
@@ -149,6 +165,7 @@ fn shield_transfer_unshield_with_real_proofs() {
     let mut restored_b = synced(&chain, &bob);
     confirm(&chain, &mut restored_b);
     confirm(&chain, &mut b);
+    assert_eq!(b.resolve().mined.len(), 1, "the unshield, which the builder recorded in the state it returned");
     assert!(restored_b.content_eq(&b));
 }
 
@@ -420,7 +437,7 @@ fn builder_refusals() {
 
     // transfer
     let t = |inputs: &[SpendInput], amount: u64, fee: u64, ctx: TxContext| {
-        build_transfer(&TransferRequest { ctx, keys: &alice, inputs, recipient: &bob.address(), amount, fee, max_fee: None }).map(|_| ())
+        deterministic::transfer(&TransferRequest { ctx, keys: &alice, inputs, recipient: &bob.address(), amount, fee, max_fee: None }, "refused").map(|_| ())
     };
     assert!(matches!(t(&inputs, Q, min - 1, chain.ctx()), Err(WalletError::FeeBelowMinimum { .. })));
     assert!(matches!(t(&inputs, Q, 11 * min, chain.ctx()), Err(WalletError::FeeAboveMaximum { .. })));
@@ -438,7 +455,7 @@ fn builder_refusals() {
     assert!(matches!(t(&inputs, Q, min, ctx), Err(WalletError::AnchorMismatch)));
     // another wallet's key cannot spend Alice's notes: its pk gives another commitment
     assert!(matches!(
-        build_transfer(&TransferRequest { ctx: chain.ctx(), keys: &bob, inputs: &inputs, recipient: &addr, amount: Q, fee: min, max_fee: None }).map(|_| ()),
+        deterministic::transfer(&TransferRequest { ctx: chain.ctx(), keys: &bob, inputs: &inputs, recipient: &addr, amount: Q, fee: min, max_fee: None }, "refused").map(|_| ()),
         Err(WalletError::AnchorMismatch)
     ));
     // a damaged path
@@ -451,7 +468,7 @@ fn builder_refusals() {
 
     // unshield
     let u = |v_out: u64, fee: u64| {
-        build_unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, to_account: [1; 32], v_out, fee, max_fee: None }).map(|_| ())
+        deterministic::unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, to_account: [1; 32], v_out, fee, max_fee: None }, "refused").map(|_| ())
     };
     assert!(matches!(u(0, min), Err(WalletError::Request(_))));
     assert!(matches!(u(Q, 0), Err(WalletError::FeeBelowMinimum { .. })));

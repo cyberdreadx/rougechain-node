@@ -111,42 +111,59 @@ fn rw1_f1_a_forged_incoming_note_stays_unverified_and_is_not_spent_by_default() 
     };
     unverified_only(&wallet);
 
-    // the liar vouches for its own state — once, twice, at every height: one node is no quorum
+    // the liar vouches for its own state — once, twice, at every height: one node is no quorum.
+    // The wallet is configured with three nodes (REVIEW_WALLET_3 RW3-1): the quorum is two of THEM
+    configure(&mut wallet, &["the-lying-node", "an-honest-node", "another-honest-node"]);
     let lying = wallet.state_at(10).unwrap();
     assert!((5..=10).all(|h| wallet.state_at(h) == Some(lying)) && wallet.state_at(11).is_none());
     let report = |id: &str, height: u64, v: PoolView| StateReport {
-        node_id: id.into(),
+        node_id: node(id),
         height,
         tree_root: v.tree_root,
         nullifier_acc: v.nullifier_acc,
         note_count: v.note_count,
         nullifier_count: v.nullifier_count,
+        ciphertext_acc: v.ciphertext_acc,
     };
     let lie = |height: u64| report("the-lying-node", height, lying);
-    let c = wallet.confirm_state(&[lie(10)], None).unwrap();
-    assert_eq!((c.matched_height, c.agreeing, c.newly_confirmed.len(), c.quorum), (None, 1, 0, 2));
-    wallet.confirm_state(&[lie(10), lie(10), lie(5), lie(7)], None).unwrap();
+    let c = wallet.confirm_state(&[lie(10)]).unwrap();
+    assert_eq!((c.matched_height, c.agreeing, c.newly_confirmed.len(), c.quorum, c.configured), (None, 1, 0, 2, 3));
+    wallet.confirm_state(&[lie(10), lie(10), lie(5), lie(7)]).unwrap();
     unverified_only(&wallet);
-    // an honest second node has never seen the transaction: its pool is empty. One against one
-    // is a conflict (REVIEW_WALLET_2 RW2-4): nothing is confirmed and the caller is told
-    let empty = PoolView { tree_root: WalletState::new(address.pk).anchor(), nullifier_acc: [0u8; 32], note_count: 0, nullifier_count: 0 };
+    // an honest second node has never seen the transaction: its pool is empty. One against one:
+    // nothing is confirmed and the caller is told WHO disagrees (RW3-1)
+    let empty = PoolView { tree_root: WalletState::new(address.pk).anchor(), nullifier_acc: [0u8; 32], note_count: 0, nullifier_count: 0, ciphertext_acc: [0u8; 32] };
     let honest = report("an-honest-node", 10, empty);
-    let c = wallet.confirm_state(&[lie(10), honest.clone()], None).unwrap();
-    assert_eq!((c.matched_height, c.agreeing, c.diverged, c.conflicts.clone()), (None, 1, true, vec![10]));
+    let c = wallet.confirm_state(&[lie(10), honest.clone()]).unwrap();
+    assert_eq!((c.matched_height, c.agreeing, c.diverged, c.conflicts.clone(), c.listing_refuted), (None, 1, true, vec![10], false));
+    assert_eq!(c.dissenting, vec![Dissent { node_id: node("an-honest-node"), height: 10 }]);
     unverified_only(&wallet);
-    // two honest nodes against the liar: the wallet learns that its listing is not the chain's
-    let honest2 = StateReport { node_id: "another-honest-node".into(), ..honest.clone() };
-    let c = wallet.confirm_state(&[lie(10), honest.clone(), honest2], None).unwrap();
-    assert!(c.diverged && c.matched_height.is_none());
-    // a node that says two things about one height is a conflict; heights not scanned; a zero quorum
-    let c = wallet.confirm_state(&[lie(10), StateReport { tree_root: digest_bytes(9), ..lie(10) }, StateReport { node_id: "n2".into(), ..lie(10) }], Some(2)).unwrap();
+    // two honest nodes against the liar: more dissent than a lying minority of three can be — the
+    // wallet learns that its listing is not the chain's
+    let honest2 = StateReport { node_id: node("another-honest-node"), ..honest.clone() };
+    let c = wallet.confirm_state(&[lie(10), honest.clone(), honest2]).unwrap();
+    assert!(c.diverged && c.matched_height.is_none() && c.listing_refuted && c.dissenting.len() == 2);
+    // a node that says two things about one height dissents there, whatever else it says
+    let c = wallet
+        .confirm_state(&[lie(10), StateReport { tree_root: digest_bytes(9), ..lie(10) }, StateReport { node_id: node("another-honest-node"), ..lie(10) }])
+        .unwrap();
     assert_eq!((c.matched_height, c.agreeing, c.diverged), (None, 1, true), "an equivocating node confirms nothing");
-    let c = wallet.confirm_state(&[report("a", 11, lying), report("b", 11, lying)], Some(2)).unwrap();
+    assert_eq!(c.dissenting, vec![Dissent { node_id: node("the-lying-node"), height: 10 }]);
+    // heights not scanned; ids that are not configured or not an origin are not counted at all
+    let c = wallet.confirm_state(&[report("the-lying-node", 11, lying), report("an-honest-node", 11, lying)]).unwrap();
     assert_eq!((c.matched_height, c.not_comparable), (None, 2), "a height the wallet has not scanned proves nothing");
-    assert!(wallet.confirm_state(&[lie(10)], Some(0)).is_err());
-    // the right root with another nullifier hash, or another count, is not the wallet's state
-    for wrong in [StateReport { nullifier_acc: digest_bytes(8), ..lie(10) }, StateReport { nullifier_count: 4, ..lie(10) }, StateReport { note_count: 4, ..lie(10) }] {
-        let c = wallet.confirm_state(&[wrong.clone(), StateReport { node_id: "n2".into(), ..wrong }], None).unwrap();
+    let stranger = |id: &str| StateReport { node_id: id.into(), ..lie(10) };
+    let c = wallet.confirm_state(&[stranger("https://a.example"), stranger("https://b.example"), stranger("b"), stranger("")]).unwrap();
+    assert_eq!((c.matched_height, c.not_configured, c.nodes), (None, 4, 0), "two strangers that agree with the wallet are nobody");
+    // the right root with another nullifier hash, another ciphertext hash, or another count, is
+    // not the wallet's state
+    for wrong in [
+        StateReport { nullifier_acc: digest_bytes(8), ..lie(10) },
+        StateReport { ciphertext_acc: digest_bytes(8), ..lie(10) },
+        StateReport { nullifier_count: 4, ..lie(10) },
+        StateReport { note_count: 4, ..lie(10) },
+    ] {
+        let c = wallet.confirm_state(&[wrong.clone(), StateReport { node_id: node("an-honest-node"), ..wrong }]).unwrap();
         assert!(c.diverged && c.matched_height.is_none(), "the tree root alone confirms nothing");
     }
     unverified_only(&wallet);
@@ -172,22 +189,25 @@ fn rw1_f1_two_agreeing_nodes_confirm_notes_up_to_the_matched_height_only() {
     fund(&mut chain, &alice.address(), &[3 * Q]);
     let mut a = synced(&chain, &alice);
     assert_eq!((a.confirmed_balance(), a.unverified_balance()), (0, 8 * Q as u128));
+    configure(&mut a, &[NODE_A, NODE_B]);
     // one node: nothing
-    let c = a.confirm_state(&reports_then[..1], None).unwrap();
+    let c = a.confirm_state(&reports_then[..1]).unwrap();
     assert_eq!((c.matched_height, a.confirmed_balance()), (None, 0));
     // two nodes at the earlier height: the first note only
-    let c = a.confirm_state(&reports_then, None).unwrap();
+    let c = a.confirm_state(&reports_then).unwrap();
     assert_eq!((c.matched_height, c.newly_confirmed.len()), (Some(chain.height - 1), 1));
     assert_eq!((a.confirmed_balance(), a.unverified_balance()), (5 * Q as u128, 3 * Q as u128));
     assert_eq!(select_inputs(&a, 3 * Q, Q).unwrap().total, 5 * Q, "selection uses the confirmed note, not the smaller unverified one");
-    // the tip: everything; a caller that trusts its own node sets the quorum to 1
-    let mut own = a.clone();
-    assert_eq!(own.confirm_state(&chain.state_reports()[..1], Some(1)).unwrap().matched_height, Some(chain.height));
-    // quorum 1 with two nodes asked is still a majority of two
-    assert_eq!(a.clone().confirm_state(&[chain.report("node-a"), reports_then[1].clone()], Some(1)).unwrap().quorum, 2);
+    // a wallet configured with ONE node — its own — confirms nothing, whatever that node says
+    // (REVIEW_WALLET_3: a single-node wallet shows everything as unverified)
+    let mut own = synced(&chain, &alice);
+    configure(&mut own, &[NODE_A]);
+    let c = own.confirm_state(&chain.state_reports()).unwrap();
+    assert_eq!((c.matched_height, c.configured, c.quorum, c.not_configured, own.confirmed_balance()), (None, 1, 2, 1, 0));
+    // the two nodes at two different heights: no height has the quorum
+    assert_eq!(a.clone().confirm_state(&[chain.report(NODE_A), reports_then[1].clone()]).unwrap().matched_height, None);
     confirm(&chain, &mut a);
     assert_eq!((a.confirmed_balance(), a.unverified_balance(), a.confirmed_height()), (8 * Q as u128, 0, Some(chain.height)));
-    assert_eq!(own.balances(), a.balances());
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -372,7 +392,7 @@ fn rw1_f7_a_format_1_state_is_migrated_with_its_local_marks_kept_as_locks() {
     let p = migrated.pending()[0].clone();
     assert_eq!((p.inputs.clone(), p.input_cms.clone(), p.expiry_height, p.status, p.legacy), (vec![five.position], vec![five.cm], synthetic, PendingStatus::Pending, true));
     assert_eq!(p.nullifiers, vec![five.nullifier.unwrap()]);
-    assert!(migrated.to_json().unwrap().contains("\"version\":3"));
+    assert!(migrated.to_json().unwrap().contains("\"version\":4"));
 
     // the rescan finds the notes again; the 5 note is locked from the moment it is found
     migrated.scan(&chain.page(0), &alice.scan_key()).unwrap();
@@ -646,9 +666,14 @@ fn rw1_sound_every_byte_of_the_body_is_bound_by_the_proof() {
     let alice = keys(PHRASE_1);
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[9 * Q]);
-    let a = synced(&chain, &alice);
-    let inputs = [a.spend_input_with(a.notes()[0].position, true).unwrap()];
-    let u = build_unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, to_account: [0x42; 32], v_out: 6 * Q, fee: Q, max_fee: None }).unwrap();
+    let mut a = synced(&chain, &alice);
+    confirm(&chain, &mut a);
+    let positions = [a.notes()[0].position];
+    let spend = SpendOptions { chain_id: CHAIN, inputs: &positions, expiry_height: None, allow_unverified: false, max_fee: None };
+    let locked = build_unshield(&a, a.revision(), &alice, &UnshieldParams { spend, to_account: [0x42; 32], v_out: 6 * Q, fee: Q }).unwrap();
+    // the transaction comes with the state it is locked in (REVIEW_WALLET_3 RW3-5)
+    assert!(locked.state.is_locked(positions[0]) && locked.state.pending().len() == 1 && locked.state.revision() == a.revision() + 1);
+    let u = locked.tx;
     verify_spend(&public_inputs_of(&u.body).unwrap(), &u.proof).expect("the untouched transaction verifies");
     assert_eq!(u.body.len(), BODY_BYTES);
     let mut unbound = Vec::new();
@@ -918,12 +943,12 @@ fn rw1_sound_a_tampered_state_blob_never_panics() {
             }
             let _ = s.clone().mark_pending(p_tx.pending().unwrap());
             let _ = s.clone().resolve();
-            let _ = s.clone().confirm_state(&reports, Some(1));
+            let _ = s.clone().confirm_state(&reports);
             let _ = (s.state_at(0), s.nullifier_acc(), s.revision(), s.below_minimum(), s.pruned(), s.tree().stored_nodes());
             let _ = s.fresh_for_rescan().to_json();
             let _ = s.clone().scan(&next_page, &alice.incoming_viewing_key());
             let _ = s.scan(&next_page, &alice.scan_key());
-            let _ = (s.confirm_state(&reports, None), s.resolve(), s.to_json());
+            let _ = (s.confirm_state(&reports), s.resolve(), s.to_json());
             true
         }));
         match outcome {

@@ -6,7 +6,10 @@
 
 use quantum_vault_shield_v2::pool::{MemoryPoolStore, Pool, PoolState, PoolTx, TxKind as PoolKind};
 use quantum_vault_shield_v2_wallet::body::{Body, TxKind, OFF_KEM, OFF_NOTE};
-use quantum_vault_shield_v2_wallet::{ListingPage, ShieldedKeys, StateReport, TxContext, WalletState};
+use quantum_vault_shield_v2_wallet::tx::{deterministic, UnprovenTx};
+use quantum_vault_shield_v2_wallet::{
+    ciphertext_acc_step, ListingPage, ShieldedAddress, ShieldedKeys, SpendOptions, StateReport, TransferParams, TxContext, WalletState,
+};
 use sha2::{Digest as _, Sha256};
 
 pub const Q: u64 = 1_000_000_000;
@@ -16,6 +19,26 @@ pub const A: u64 = 3;
 
 pub const PHRASE_1: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 pub const PHRASE_2: &str = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+/// The id of a test node: a bare name becomes the http(s) origin `https://<name>.example` (a
+/// node id is an origin since REVIEW_WALLET_3 RW3-8); anything with a scheme is taken as it is.
+pub fn node(id: &str) -> String {
+    if id.contains("://") {
+        id.to_string()
+    } else {
+        format!("https://{id}.example")
+    }
+}
+
+/// The two nodes `Chain::state_reports` answers for.
+pub const NODE_A: &str = "node-a";
+pub const NODE_B: &str = "node-b";
+
+/// Configures `state` with these test nodes (bare names, see [`node`]).
+pub fn configure(state: &mut WalletState, ids: &[&str]) {
+    let ids: Vec<String> = ids.iter().map(|id| node(id)).collect();
+    state.set_nodes(&ids).unwrap();
+}
 
 pub fn keys(phrase: &str) -> ShieldedKeys {
     ShieldedKeys::from_phrase(phrase, "").unwrap()
@@ -68,11 +91,13 @@ pub struct Chain {
     pub pool: Pool<MemoryPoolStore>,
     pub height: u64,
     listed: Vec<serde_json::Value>,
+    /// The node-local running hash over every accepted output's `(cm_out, kem_ct, note_ct)`.
+    pub ciphertext_acc: [u8; 32],
 }
 
 impl Chain {
     pub fn new() -> Self {
-        Self { pool: Pool::open_or_init(MemoryPoolStore::new(), A).unwrap(), height: A - 1, listed: Vec::new() }
+        Self { pool: Pool::open_or_init(MemoryPoolStore::new(), A).unwrap(), height: A - 1, listed: Vec::new(), ciphertext_acc: [0u8; 32] }
     }
 
     pub fn state(&self) -> PoolState {
@@ -86,11 +111,13 @@ impl Chain {
     }
 
     /// What the node `node_id` reports for its tip (`report` of `/api/shield-v2/stats`): the
-    /// height and BOTH halves of the pool state, from the stage-1 `Pool` itself.
+    /// height and BOTH halves of the pool state, from the stage-1 `Pool` itself, and the
+    /// node-local ciphertext hash.
     pub fn report(&self, node_id: &str) -> StateReport {
         let s = self.state();
         StateReport {
-            node_id: node_id.to_string(),
+            ciphertext_acc: self.ciphertext_acc,
+            node_id: node(node_id),
             height: self.height,
             tree_root: s.tree_root,
             nullifier_acc: s.nullifier_acc,
@@ -101,7 +128,7 @@ impl Chain {
 
     /// What two independent nodes report for the tip.
     pub fn state_reports(&self) -> Vec<StateReport> {
-        vec![self.report("node-a"), self.report("node-b")]
+        vec![self.report(NODE_A), self.report(NODE_B)]
     }
 
     /// Empty blocks until the chain's height is `height`.
@@ -119,6 +146,12 @@ impl Chain {
         self.pool.apply_block(h, &txs).map_err(|e| format!("{e:?}"))?;
         for (i, body) in bodies.iter().enumerate() {
             self.listed.push(listing_entry(body, h, i as u64, first + 2 * i as u64));
+            for j in 0..2 {
+                let cm: [u8; 32] = body[138 + 32 * j..170 + 32 * j].try_into().unwrap();
+                let kem: [u8; 1088] = body[OFF_KEM[j]..OFF_KEM[j] + 1088].try_into().unwrap();
+                let note: [u8; 56] = body[OFF_NOTE[j]..OFF_NOTE[j] + 56].try_into().unwrap();
+                self.ciphertext_acc = ciphertext_acc_step(&self.ciphertext_acc, &cm, &kem, &note);
+            }
         }
         self.height = h;
         Ok(())
@@ -148,12 +181,28 @@ impl Chain {
     }
 }
 
-/// The state check of a wallet that has scanned to the tip against two nodes that agree
-/// (`WalletState::confirm_state`, default quorum): every note of the state becomes confirmed.
+/// The state check of a wallet that has scanned to the tip against its two configured nodes,
+/// which agree (`WalletState::confirm_state`): every note of the state becomes confirmed. A state
+/// that is configured with no node yet is configured with `NODE_A` and `NODE_B`.
 pub fn confirm(chain: &Chain, state: &mut WalletState) {
     assert_eq!(state.next_height(), chain.height + 1, "confirm() is for a state scanned to the tip");
-    let report = state.confirm_state(&chain.state_reports(), None).unwrap();
+    if state.nodes().is_empty() {
+        configure(state, &[NODE_A, NODE_B]);
+    }
+    let reports: Vec<StateReport> = state.nodes().to_vec().iter().map(|id| chain.report(id)).collect();
+    let report = state.confirm_state(&reports).unwrap();
     assert_eq!(report.matched_height, Some(chain.height));
-    assert!(!report.diverged);
+    assert!(!report.diverged && report.dissenting.is_empty());
     assert_eq!(state.nullifier_acc(), chain.state().nullifier_acc, "the wallet's nullifier hash is the pool's");
+    assert_eq!(state.ciphertext_acc(), chain.ciphertext_acc, "the wallet's ciphertext hash is the node's");
+}
+
+/// A transfer built AND locked the way a client does it (`build_transfer` without the proof): the
+/// anchor and the expiry come from the state's confirmed height, and the returned state holds the
+/// pending entry. `state` is replaced by that state.
+pub fn pay(state: &mut WalletState, keys: &ShieldedKeys, positions: &[u64], to: &ShieldedAddress, amount: u64, label: &str) -> UnprovenTx {
+    let spend = SpendOptions { chain_id: CHAIN, inputs: positions, expiry_height: None, allow_unverified: false, max_fee: None };
+    let (tx, next) = deterministic::transfer_locked(state, state.revision(), keys, &TransferParams { spend, recipient: to, amount, fee: Q }, label).unwrap();
+    *state = next;
+    tx
 }

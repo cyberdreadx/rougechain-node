@@ -35,8 +35,12 @@ fn base(to: &ShieldedAddress, values: &[u64]) -> Chain {
     c
 }
 
+/// A wallet scanned to the tip and configured with three nodes: the two that
+/// `Chain::state_reports` answers for, and `the-node` — the one that lies in these tests. The
+/// quorum is two of the three (REVIEW_WALLET_3 RW3-1).
 fn synced(chain: &Chain, keys: &ShieldedKeys) -> WalletState {
     let mut s = WalletState::new(keys.address().pk);
+    configure(&mut s, &[NODE_A, NODE_B, "the-node"]);
     s.scan(&chain.page(s.next_height()), &keys.scan_key()).unwrap();
     assert_eq!(s.anchor(), chain.state().tree_root);
     s
@@ -58,7 +62,15 @@ fn parse(page: &serde_json::Value) -> ListingPage {
 fn echo(w: &WalletState, id: &str) -> StateReport {
     let h = w.scanned_height().unwrap();
     let v = w.state_at(h).unwrap();
-    StateReport { node_id: id.into(), height: h, tree_root: v.tree_root, nullifier_acc: v.nullifier_acc, note_count: v.note_count, nullifier_count: v.nullifier_count }
+    StateReport {
+        node_id: node(id),
+        height: h,
+        tree_root: v.tree_root,
+        nullifier_acc: v.nullifier_acc,
+        note_count: v.note_count,
+        nullifier_count: v.nullifier_count,
+        ciphertext_acc: v.ciphertext_acc,
+    }
 }
 
 /// The pending entry of this transaction, if the state still holds it.
@@ -127,18 +139,18 @@ fn rw2_f1_a_listing_that_shows_the_pending_tx_mined_never_unlocks_and_bob_is_pai
     assert!(entry(&a, &record).is_some());
     assert_eq!(a.balances().confirmed, 0, "and the change it lists is not credited");
     // the liar vouching for its own listing is one node: no quorum
-    assert!(a.confirm_state(&[echo(&a, "the-node")], None).unwrap().matched_height.is_none());
+    assert!(a.confirm_state(&[echo(&a, "the-node")]).unwrap().matched_height.is_none());
 
     // the real chain: the same height, t1 is in no block
     let mut honest = base(&alice.address(), &[10 * Q]);
     honest.advance_to(liar.height);
-    let c = a.confirm_state(&honest.state_reports(), None).unwrap();
+    let c = a.confirm_state(&honest.state_reports()).unwrap();
     assert!(c.diverged && c.matched_height.is_none(), "two honest nodes say: this listing is not the chain");
     assert!(a.confirmed_height().unwrap() < liar.height, "nobody confirmed the height at which t1 is 'mined'");
     // … and the liar among them changes nothing
     let mut three = honest.state_reports();
     three.push(echo(&a, "the-node"));
-    assert!(a.clone().confirm_state(&three, None).unwrap().diverged);
+    assert!(a.clone().confirm_state(&three).unwrap().diverged);
     a = WalletState::from_json(&a.to_json().unwrap()).unwrap();
 
     // the two orders in which a client can run the documented recovery
@@ -250,7 +262,7 @@ fn rw2_f2_swapped_nullifiers_are_not_confirmed_and_a_mined_tx_is_never_called_ex
 
     // two honest nodes at the tip — past the expiry height: the root matches, the state does not
     assert!(chain.height >= expiry);
-    let c = a.confirm_state(&chain.state_reports(), None).unwrap();
+    let c = a.confirm_state(&chain.state_reports()).unwrap();
     assert!(c.diverged && c.matched_height.is_none() && c.newly_confirmed.is_empty(), "a matching root is not a matching state");
     assert_eq!(a.confirmed_height(), confirmed_before);
     let r = a.resolve();
@@ -260,7 +272,7 @@ fn rw2_f2_swapped_nullifiers_are_not_confirmed_and_a_mined_tx_is_never_called_ex
     // the confirmed figure is the one of the last confirmed height, where Alice did hold 10
     assert_eq!(a.balances().confirmed, 10 * Q as u128);
     // the same lie, vouched for by the liar itself: one node
-    assert!(a.confirm_state(&[echo(&a, "the-node")], None).unwrap().matched_height.is_none());
+    assert!(a.confirm_state(&[echo(&a, "the-node")]).unwrap().matched_height.is_none());
 
     // the documented way out: rebuild against a node that does not lie
     let mut w = a.fresh_for_rescan();
@@ -294,7 +306,7 @@ fn rw2_f2_a_hidden_spend_cannot_be_confirmed() {
     page["txs"][0]["nf2"] = serde_json::json!(hex::encode(digest_bytes(0x62)));
     here.scan(&parse(&page), &alice.scan_key()).unwrap();
     assert_eq!(here.balance(), 10 * Q as u128, "the listing hides the spend");
-    let c = here.confirm_state(&chain.state_reports(), None).unwrap();
+    let c = here.confirm_state(&chain.state_reports()).unwrap();
     assert!(c.diverged && here.confirmed_height().unwrap() < chain.height - 1, "and cannot be confirmed at or above it");
     let mut w = here.fresh_for_rescan();
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
@@ -420,45 +432,52 @@ fn rw2_f4_a_conflict_confirms_nothing_and_the_quorum_is_a_majority_of_the_nodes_
         ],
     }] });
     let mut forged = WalletState::new(address.pk);
+    // four CONFIGURED nodes: the quorum is three of them, whoever is asked (REVIEW_WALLET_3 RW3-1)
+    configure(&mut forged, &["liar", "liar-again", "honest-1", "honest-2"]);
     forged.scan(&parse(&page), &alice.scan_key()).unwrap();
     let lying = forged.state_at(10).unwrap();
     // the real pool is empty
-    let real = PoolView { tree_root: WalletState::new(address.pk).anchor(), nullifier_acc: [0u8; 32], note_count: 0, nullifier_count: 0 };
+    let real = PoolView { tree_root: WalletState::new(address.pk).anchor(), nullifier_acc: [0u8; 32], note_count: 0, nullifier_count: 0, ciphertext_acc: [0u8; 32] };
     let report = |id: &str, height: u64, v: PoolView| StateReport {
-        node_id: id.to_string(),
+        node_id: node(id),
         height,
         tree_root: v.tree_root,
         nullifier_acc: v.nullifier_acc,
         note_count: v.note_count,
         nullifier_count: v.nullifier_count,
+        ciphertext_acc: v.ciphertext_acc,
     };
 
     for (what, honest_height) in [("the honest nodes at the same height", 10u64), ("the honest nodes one block behind", 9)] {
         let mut w = forged.clone();
         let c = w
-            .confirm_state(
-                &[report("liar", 10, lying), report("liar-again", 10, lying), report("honest-1", honest_height, real), report("honest-2", honest_height, real)],
-                None,
-            )
+            .confirm_state(&[report("liar", 10, lying), report("liar-again", 10, lying), report("honest-1", honest_height, real), report("honest-2", honest_height, real)])
             .unwrap();
         assert!(c.diverged && c.conflicts == vec![honest_height], "{what}: the conflict is reported");
+        assert_eq!(c.dissenting.iter().map(|d| d.node_id.clone()).collect::<Vec<_>>(), vec![node("honest-1"), node("honest-2")], "{what}: by node");
         assert!(
             c.newly_confirmed.is_empty() && c.matched_height.is_none() && w.balances().confirmed == 0 && w.confirmed_height().is_none(),
-            "{what}: the call that reports `diverged` confirms nothing"
+            "{what}: two of four are not a majority, so nothing is confirmed"
         );
         assert!(w.content_eq(&forged), "{what}: the state is as it was");
     }
-    // no conflict the wallet can see (the honest nodes are ahead of what it scanned): four nodes
-    // were asked, so three must agree — the two names of one operator are not a majority
+    // no conflict the wallet can see (the honest nodes are ahead of what it scanned): three of the
+    // four configured nodes must agree — the two names of one operator are not a majority
     let mut w = forged.clone();
-    let c = w.confirm_state(&[report("liar", 10, lying), report("liar-again", 10, lying), report("honest-1", 11, real), report("honest-2", 11, real)], None).unwrap();
+    let c = w.confirm_state(&[report("liar", 10, lying), report("liar-again", 10, lying), report("honest-1", 11, real), report("honest-2", 11, real)]).unwrap();
     assert_eq!((c.diverged, c.nodes, c.quorum, c.agreeing, c.not_comparable, c.matched_height), (false, 4, 3, 2, 2, None));
     assert_eq!(w.balances().confirmed, 0);
-    // a caller cannot lower the quorum below the majority either
-    assert_eq!(w.clone().confirm_state(&[report("liar", 10, lying), report("honest-1", 11, real), report("honest-2", 11, real)], Some(1)).unwrap().quorum, 2);
-    // (two names that are the ONLY nodes asked do confirm: which nodes are asked, and that their
-    // ids are the configured endpoints and not what a node says of itself, is the caller's part)
-    assert!(w.confirm_state(&[report("liar", 10, lying), report("liar-again", 10, lying)], None).unwrap().matched_height.is_some());
+    // asking fewer nodes does not lower the quorum: it is a majority of the CONFIGURED four
+    let c = w.clone().confirm_state(&[report("liar", 10, lying), report("honest-1", 11, real), report("honest-2", 11, real)]).unwrap();
+    assert_eq!((c.quorum, c.configured, c.nodes), (3, 4, 3));
+    // … so the two liars ALONE confirm nothing (REVIEW_WALLET_3: "drop the nodes that conflict"
+    // used to confirm the forgery here)
+    let c = w.confirm_state(&[report("liar", 10, lying), report("liar-again", 10, lying)]).unwrap();
+    assert_eq!((c.matched_height, c.quorum, w.balances().confirmed), (None, 3, 0));
+    // (a wallet CONFIGURED with those two names only does confirm: whom the wallet is configured
+    // with is the user's trust decision, made explicitly with `set_nodes`)
+    configure(&mut w, &["liar", "liar-again"]);
+    assert!(w.confirm_state(&[report("liar", 10, lying), report("liar-again", 10, lying)]).unwrap().matched_height.is_some());
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -494,9 +513,9 @@ fn rw2_f5_one_empty_page_that_lies_about_the_height_releases_nothing() {
     for (what, mut w) in [("continuing state", lied_to), ("state from fresh_for_rescan", rescanning)] {
         assert_eq!(w.resolve().still_pending, 1, "{what}: not released by one page");
         let echoed = echo(&w, "the-node");
-        assert!(w.confirm_state(&[echoed.clone(), echoed], None).unwrap().matched_height.is_none(), "{what}: one node, twice, is one node");
+        assert!(w.confirm_state(&[echoed.clone(), echoed]).unwrap().matched_height.is_none(), "{what}: one node, twice, is one node");
         // honest nodes are at the real height
-        let c = w.confirm_state(&chain.state_reports(), None).unwrap();
+        let c = w.confirm_state(&chain.state_reports()).unwrap();
         assert!(c.confirmed_height.unwrap_or(0) < expiry, "{what}");
         let r = w.resolve();
         assert_eq!((r.expired.len(), r.still_pending), (0, 1), "{what}: still pending");
@@ -686,12 +705,12 @@ fn rw2_f7_pruning_spent_notes_keeps_every_balance_exact() {
     // not yet: the spends are inside the retention window
     chain.advance_to(first_spent_at + PRUNE_RETENTION_BLOCKS - 1);
     a.scan(&chain.page(a.next_height()), &alice.scan_key()).unwrap();
-    assert_eq!(a.confirm_state(&chain.state_reports(), None).unwrap().pruned, 0);
+    assert_eq!(a.confirm_state(&chain.state_reports()).unwrap().pruned, 0);
     // scanned beyond the window is not enough: pruning follows the CONFIRMED height
     chain.advance_to(spent_at + PRUNE_RETENTION_BLOCKS);
     a.scan(&chain.page(a.next_height()), &alice.scan_key()).unwrap();
     assert_eq!(a.notes().len(), 7);
-    let c = a.confirm_state(&chain.state_reports(), None).unwrap();
+    let c = a.confirm_state(&chain.state_reports()).unwrap();
     assert_eq!((c.pruned, a.notes().len()), (3, 4));
     assert_eq!((a.pruned().count, a.pruned().total), (3, 9 * Q as u128), "2 + 3 + 4 XRGE of spent notes, as a total");
     assert_eq!(a.balances(), balances_before, "every balance is exactly what it was");
@@ -708,7 +727,8 @@ fn rw2_f7_pruning_spent_notes_keeps_every_balance_exact() {
     let mut again = a.fresh_for_rescan();
     again.scan(&parse(&chain.page_value(0, a.scanned_height().unwrap())), &alice.scan_key()).unwrap();
     assert_eq!(again.notes().len(), 7);
-    assert_eq!(again.confirm_state(&[echo(&again, "x"), echo(&again, "y")], None).unwrap().pruned, 3);
+    configure(&mut again, &["x", "y"]);
+    assert_eq!(again.confirm_state(&[echo(&again, "x"), echo(&again, "y")]).unwrap().pruned, 3);
     assert_eq!(again.balances(), a.balances());
     assert_eq!(again.pruned(), a.pruned());
 }
@@ -840,7 +860,7 @@ fn rw2_a_format_2_state_is_migrated_with_every_pending_entry_locked() {
     assert_eq!((m.next_height(), m.notes().len(), m.confirmed_height(), m.pending().len()), (0, 0, None, 2));
     assert!(m.pending().iter().all(|p| p.status == PendingStatus::Pending && p.seen_height.is_none() && !p.legacy && p.outputs.is_empty()));
     assert_eq!(m.pending()[0].input_cms, vec![now.note_at(pos3).unwrap().cm]);
-    assert!(m.to_json().unwrap().contains("\"version\":3"));
+    assert!(m.to_json().unwrap().contains("\"version\":4"));
 
     // the truth: ta was mined after all, tb never
     chain.block(&[&ta.body]).unwrap();

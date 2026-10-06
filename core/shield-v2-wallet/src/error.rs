@@ -29,6 +29,11 @@ pub enum WalletError {
     /// The note is known from one node's listing only (`confirm_state` has not confirmed its
     /// height): it is handed to a builder only on the caller's explicit `allow_unverified`.
     NoteUnverified,
+    /// The wallet has no confirmed height, or its tree root is above it: a spend is built on the
+    /// state a strict majority of the configured nodes confirmed, and its expiry is measured
+    /// from that height only (REVIEW_WALLET_3 RW3-7). Configure the nodes (`set_nodes`), scan to
+    /// the tip and confirm the state, then build.
+    StateUnconfirmed,
     /// The state in hand does not have the revision the caller expects: another writer has
     /// changed the stored state since this copy was loaded. Reload and repeat.
     StaleState,
@@ -65,6 +70,9 @@ impl fmt::Display for WalletError {
             WalletError::FeeAboveMaximum { .. } => f.write_str("the fee is above the caller's ceiling (max_fee; default 10 x the minimum fee)"),
             WalletError::NoteLocked => f.write_str("the note is an input of a pending transaction (locked until it is settled on confirmed data)"),
             WalletError::NoteUnverified => f.write_str("the note is unverified (known from one node's listing only): confirm the state first, or allow unverified inputs explicitly"),
+            WalletError::StateUnconfirmed => f.write_str(
+                "the wallet's state is not confirmed up to its tree root: configure at least two nodes, scan to the tip and confirm the state before building",
+            ),
             WalletError::StaleState => f.write_str("the state is not at the expected revision: another writer changed it; reload the stored state and repeat"),
             WalletError::RescanRequired => f.write_str(
                 "the state was scanned without nk and spends may have been missed: rescan from an empty state with the full scan key",

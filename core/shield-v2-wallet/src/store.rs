@@ -6,9 +6,10 @@
 //! paths need, **the running nullifier hash of the pool** (the node's `nullifier_acc`, rebuilt
 //! from the listing), the height the scan has reached, the pool state of the recent heights
 //! (tree root, nullifier hash, both counts), and the transactions the wallet has built and
-//! handed out that are not settled ([`PendingTx`]). It serialises to JSON (`to_json` /
-//! `from_json`, format version 3; versions 1 and 2 are migrated). It contains note secrets (`r`,
-//! values) but no key: the caller encrypts it at rest like the rest of the wallet.
+//! handed out that are not settled ([`PendingTx`]), **the nodes the wallet is configured with**
+//! and the running hash over every listed ciphertext. It serialises to JSON (`to_json` /
+//! `from_json`, format version 4; versions 1, 2 and 3 are migrated). It contains note secrets
+//! (`r`, values) but no key: the caller encrypts it at rest like the rest of the wallet.
 //!
 //! **The principle** (REVIEW_WALLET_2): *the wallet believes nothing about a transaction's fate
 //! that it cannot tie to data a quorum of nodes vouches for.*
@@ -24,9 +25,11 @@
 //! transaction as mined that it is holding back, or replace the nullifiers of a transaction so
 //! that a spend is hidden. [`WalletState::confirm_state`] compares the wallet's own
 //! `(tree_root, nullifier_acc, note_count, nullifier_count)` at a height with what the nodes the
-//! caller chose report for that height. A listing that invents, hides, reorders or alters any
-//! commitment or any nullifier up to that height gives another root or another hash. Up to the
-//! **confirmed height**, and only up to it, the wallet's data is what those nodes hold.
+//! wallet is CONFIGURED with report for that height ([`WalletState::set_nodes`]). A listing that
+//! invents, hides, reorders or alters any commitment, any nullifier or any ciphertext up to that
+//! height gives another root or another hash. Up to the **confirmed height**, and only up to it,
+//! the wallet's data is what a strict majority of its configured nodes holds — and nothing about
+//! a transaction's expiry or its lock is measured from any other height (REVIEW_WALLET_3).
 //!
 //! **Pending transactions.** A signer-less transaction that has left the wallet stays valid until
 //! its `expiry_height`, whatever a node answered when it was submitted. Its inputs are locked
@@ -44,6 +47,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 use quantum_vault_shield_v2::pool::{nullifier_acc_step, SHIELD_V2_MIN_FEE_QUANTA};
+use sha2::{Digest as _, Sha256};
 use quantum_vault_shield_v2::reference::{derive_rho, merge, nullifier, Digest, Note, ZERO_DIGEST};
 use serde::{Deserialize, Serialize};
 
@@ -56,14 +60,20 @@ use crate::tx::MAX_EXPIRY_OFFSET;
 pub const TREE_DEPTH: usize = 32;
 /// The format version `to_json` writes. `from_json` also reads versions 1 and 2 and migrates
 /// them (see [`WalletState::from_json`]).
-pub const STATE_VERSION: u32 = 3;
-/// [`WalletState::confirm_state`]: how many distinct nodes must report the wallet's state when
-/// the caller names no quorum. The quorum applied is never below a strict majority of the
-/// distinct nodes whose reports were supplied.
-pub const DEFAULT_CONFIRM_QUORUM: usize = 2;
+pub const STATE_VERSION: u32 = 4;
+/// [`WalletState::confirm_state`] confirms nothing for a wallet configured with fewer nodes than
+/// this: one node's word is never "confirmed" (a single-node wallet shows everything as
+/// unverified).
+pub const MIN_CONFIGURED_NODES: usize = 2;
+/// Nodes a wallet can be configured with ([`WalletState::set_nodes`]).
+pub const MAX_CONFIGURED_NODES: usize = 64;
 /// Reports taken by one `confirm_state` call, and the longest node id.
-pub const MAX_STATE_REPORTS: usize = 64;
+pub const MAX_STATE_REPORTS: usize = 1_024;
 pub const MAX_NODE_ID_BYTES: usize = 128;
+/// Domain tag of the running hash over the listed ciphertexts — the node's node-local
+/// `ciphertext_acc` (`core/daemon/src/shield_v2.rs`). Not a constant of spec §2 and not
+/// consensus: it is what lets a quorum vouch for the ciphertexts a listing served.
+pub const CIPHERTEXT_ACC_TAG: &[u8] = b"rougechain.shield_v2.ciphertext_acc.node_local.v1";
 /// Heights at which the pool state changed whose state the wallet keeps (oldest dropped first).
 pub const MAX_CHECKPOINTS: usize = 256;
 /// Transactions the wallet can have pending at once (locks migrated from format 1 are counted
@@ -82,10 +92,23 @@ pub const MAX_STATE_JSON_BYTES: usize = 256 << 20;
 /// note worth less than the fee to spend it cannot be spent alone; it is counted
 /// ([`WalletState::below_minimum`]) and not stored (REVIEW_WALLET_2 RW2-7).
 pub const DEFAULT_MIN_NOTE_VALUE: u64 = SHIELD_V2_MIN_FEE_QUANTA;
-/// Notes a state stores. Further incoming notes are counted ([`WalletState::over_capacity`]) and
-/// not stored. With at most 32 tree nodes and one record per note this bounds a state far below
-/// [`MAX_STATE_JSON_BYTES`]: `to_json` cannot write what `from_json` refuses.
-pub const MAX_STORED_NOTES: usize = 65_536;
+/// The default of a state's cap on **unspent** notes received from others
+/// ([`WalletState::max_unspent_notes`]). Further incoming notes are counted
+/// ([`WalletState::over_capacity`]) and not stored; a rescan with a higher cap recovers them.
+/// Spent notes never count (REVIEW_WALLET_3 RW3-4), and the wallet's own outputs are stored
+/// whatever the count.
+pub const DEFAULT_MAX_UNSPENT_NOTES: usize = 65_536;
+/// The former name of [`DEFAULT_MAX_UNSPENT_NOTES`].
+pub const MAX_STORED_NOTES: usize = DEFAULT_MAX_UNSPENT_NOTES;
+/// The highest cap a state accepts. (`to_json` refuses a state above [`MAX_STATE_JSON_BYTES`]
+/// whatever the cap: about 420 bytes per note plus its share of the tree nodes.)
+pub const MAX_UNSPENT_NOTES_LIMIT: usize = 1 << 20;
+/// Room above the cap for the wallet's own outputs (change, payments to itself), which are
+/// stored regardless of the cap.
+const OWN_OUTPUT_SLACK: usize = 65_536;
+/// Spent notes a state keeps for display (the most recently spent). Older ones are dropped into
+/// [`WalletState::pruned`] as the scan goes: a spent note has no path and is in no balance.
+pub const MAX_SPENT_RETAINED: usize = 4_096;
 /// A spent note is dropped from the state (into [`WalletState::pruned`]) once its spend is this
 /// many blocks below the confirmed height.
 pub const PRUNE_RETENTION_BLOCKS: u64 = 256;
@@ -224,6 +247,97 @@ mod dec128 {
     }
 }
 
+// ---- the ciphertext hash (REVIEW_WALLET_3 RW3-2) -----------------------------------------------------
+
+/// One step of the running hash over the listed ciphertexts:
+/// `SHA-256(tag ‖ acc ‖ cm_out ‖ kem_ct ‖ note_ct)`, starting from 32 zero bytes, one step per
+/// output in tree order. The node keeps the same value beside its pool record (node-local, not
+/// in the state root) and reports it as `ciphertext_acc`; the daemon's interop tests compare the
+/// two implementations.
+pub fn ciphertext_acc_step(acc: &[u8; 32], cm_out: &[u8; 32], kem_ct: &[u8; KEM_CT_BYTES], note_ct: &[u8; NOTE_CT_BYTES]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(CIPHERTEXT_ACC_TAG);
+    h.update(acc);
+    h.update(cm_out);
+    h.update(kem_ct);
+    h.update(note_ct);
+    h.finalize().into()
+}
+
+// ---- node ids (REVIEW_WALLET_3 RW3-8) ----------------------------------------------------------------
+
+/// The canonical form of a node id: an http(s) ORIGIN, `scheme://host[:port]`.
+///
+/// * the scheme (`http` or `https`) and the host are lower-cased;
+/// * the default port (80, 443) is removed, any other port is kept without leading zeros;
+/// * a path, a query and a fragment are dropped — one origin is one node however many of its
+///   routes the client was given — and so is one trailing dot of the host;
+/// * refused: anything else — no scheme, another scheme, user information (`user@`), an empty
+///   host, a host with characters outside `a–z 0–9 . -` (write an internationalised name in its
+///   `xn--` form) or a bracketed IPv6 literal that is not hexadecimal groups, a port that is not
+///   1–65535, and an id longer than [`MAX_NODE_ID_BYTES`].
+///
+/// Two spellings of one endpoint are one node. Two NAMES of one machine are two nodes: the core
+/// cannot know who operates what, and whoever configures the wallet must list operators, not
+/// aliases.
+pub fn canonical_node_id(id: &str) -> Result<String, WalletError> {
+    let bad = |what: &'static str| WalletError::Request(what.into());
+    if id.is_empty() || id.len() > MAX_NODE_ID_BYTES || !id.is_ascii() {
+        return Err(bad("a node id must be 1 to 128 ASCII bytes"));
+    }
+    let (scheme, rest) = id.split_once("://").ok_or_else(|| bad("a node id must be an http(s) origin: scheme://host[:port]"))?;
+    let scheme = scheme.to_ascii_lowercase();
+    let default_port = match scheme.as_str() {
+        "http" => 80u32,
+        "https" => 443,
+        _ => return Err(bad("a node id must be an http(s) origin: scheme://host[:port]")),
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.contains('@') {
+        return Err(bad("a node id must not carry user information"));
+    }
+    let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
+        let (inner, after) = v6.split_once(']').ok_or_else(|| bad("a node id's IPv6 host is not closed"))?;
+        if inner.is_empty() || !inner.bytes().all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.') || !inner.contains(':') {
+            return Err(bad("a node id's IPv6 host is malformed"));
+        }
+        let port = match after.strip_prefix(':') {
+            Some(p) => Some(p),
+            None if after.is_empty() => None,
+            None => return Err(bad("a node id's port is malformed")),
+        };
+        (format!("[{}]", inner.to_ascii_lowercase()), port)
+    } else {
+        let (h, port) = match authority.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        };
+        let h = h.strip_suffix('.').unwrap_or(h).to_ascii_lowercase();
+        let label_ok = |l: &str| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-') && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        if h.is_empty() || h.len() > 253 || !h.split('.').all(label_ok) {
+            return Err(bad("a node id's host is empty or malformed"));
+        }
+        (h, port)
+    };
+    let port = match port {
+        None => None,
+        Some(p) => {
+            if p.is_empty() || p.len() > 5 || !p.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(bad("a node id's port is not a number from 1 to 65535"));
+            }
+            let n: u32 = p.parse().map_err(|_| bad("a node id's port is not a number from 1 to 65535"))?;
+            if n == 0 || n > 65_535 {
+                return Err(bad("a node id's port is not a number from 1 to 65535"));
+            }
+            (n != default_port).then_some(n)
+        }
+    };
+    Ok(match port {
+        Some(p) => format!("{scheme}://{host}:{p}"),
+        None => format!("{scheme}://{host}"),
+    })
+}
+
 // ---- the note tree ---------------------------------------------------------------------------------
 
 fn empty_roots() -> &'static [Digest; TREE_DEPTH + 1] {
@@ -336,7 +450,7 @@ impl TreeTracker {
         if self.note_count > 1u64 << TREE_DEPTH || self.tracked.iter().next_back().is_some_and(|&p| p >= self.note_count) {
             return bad("the tree tracker's counters are inconsistent");
         }
-        if self.tracked.len() > MAX_STORED_NOTES || self.nodes.len() > TREE_DEPTH * self.tracked.len() {
+        if self.tracked.len() > MAX_UNSPENT_NOTES_LIMIT + OWN_OUTPUT_SLACK || self.nodes.len() > TREE_DEPTH * self.tracked.len() {
             return bad("the tree tracker holds more nodes than its tracked leaves need");
         }
         if self.nodes.keys().any(|&(l, i)| l as usize >= TREE_DEPTH || i >> (TREE_DEPTH - l as usize) != 0) {
@@ -533,8 +647,14 @@ pub struct ScanReport {
     /// pending transactions one of whose nullifiers the page listed in ANOTHER transaction
     pub pending_seen_superseded: usize,
     /// notes for this wallet that were counted and not stored (below the minimum note value, or
-    /// beyond the state's capacity)
+    /// beyond the state's cap on unspent notes)
     pub not_stored: usize,
+    /// notes stored from the wallet's own pending record, not from a ciphertext (its change, a
+    /// payment to itself): the listing's ciphertext for it did not decrypt, or the note is below
+    /// the minimum note value
+    pub own_outputs_from_record: usize,
+    /// spent notes this call dropped from the state (more than [`MAX_SPENT_RETAINED`] were held)
+    pub spent_dropped: usize,
     /// where the next page starts
     pub next_height: u64,
     /// `true` when the page reached the node's tip
@@ -557,13 +677,22 @@ pub enum PendingStatus {
     SeenSuperseded,
 }
 
-/// The change note a pending transaction will return to the wallet when it is mined. `Debug`
-/// does not print the value.
+/// A note a pending transaction creates FOR THIS WALLET — its change, or its payment when the
+/// wallet pays itself. `Debug` prints neither the value nor `r`.
+///
+/// With `r` the record opens the commitment by itself: when the scan meets `cm` in the tree it
+/// stores the note from this record (after recomputing the commitment), whatever the listing
+/// served as its ciphertext and whatever the note's size (REVIEW_WALLET_3 RW3-2, RW3-3). `r` is
+/// `None` only in an entry migrated from an older state format, whose note is then found through
+/// its ciphertext like anyone else's.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingChange {
     pub cm: B32,
     #[serde(with = "dec")]
     pub value: u64,
+    /// Secret: the commitment randomness of the note.
+    #[serde(default)]
+    pub r: Option<B32>,
 }
 
 impl core::fmt::Debug for PendingChange {
@@ -597,11 +726,16 @@ pub struct PendingTx {
     /// The total value of those notes, quanta.
     #[serde(with = "dec")]
     pub input_total: u64,
-    /// The change the wallet expects back. Credited like any other note: when the scan finds it
-    /// and `confirm_state` confirms its height — which is when the transaction settles as mined.
+    /// The change the wallet expects back. Stored from this record when the scan meets its
+    /// commitment, and confirmed with its height — which is when the transaction settles as mined.
     pub change: Option<PendingChange>,
-    /// The last height at which the node accepts the transaction. For a lock migrated from
-    /// format 1, whose expiry was not recorded: the migrated state's scanned height + 128.
+    /// The payment output, when the recipient is this wallet's own address (a self-merge).
+    #[serde(default)]
+    pub own_payment: Option<PendingChange>,
+    /// The last height at which the node accepts the transaction (the node accepts it while
+    /// `expiry_height ≥ H`). `mark_pending` refuses one above the CONFIRMED height + 128. For a
+    /// lock migrated from format 1, whose expiry was not recorded: the migrated state's scanned
+    /// height + 128.
     pub expiry_height: u64,
     #[serde(default)]
     pub status: PendingStatus,
@@ -613,6 +747,13 @@ pub struct PendingTx {
     /// locked.
     #[serde(default)]
     pub rejected_hint: bool,
+    /// The client said it never submitted this transaction
+    /// ([`WalletState::abandon_unsubmitted`]). **A hint for the UI and nothing else**: the inputs
+    /// stay locked until the entry settles as expired on confirmed data, exactly as if it had
+    /// been submitted — the core cannot check the claim, and a wrong one would be a double
+    /// payment.
+    #[serde(default)]
+    pub abandoned_hint: bool,
     /// A lock migrated from an older state format: the transaction itself is not known.
     #[serde(default)]
     pub legacy: bool,
@@ -629,6 +770,11 @@ impl core::fmt::Debug for PendingTx {
 }
 
 impl PendingTx {
+    /// The notes this entry creates for the wallet itself.
+    fn own_outputs(&self) -> impl Iterator<Item = &PendingChange> {
+        self.change.iter().chain(self.own_payment.iter())
+    }
+
     fn locks(&self, note: &OwnedNote) -> bool {
         if self.input_cms.is_empty() {
             self.inputs.contains(&note.position) // an entry migrated without its notes
@@ -666,63 +812,106 @@ pub struct Resolution {
 // ---- state confirmation ----------------------------------------------------------------------------
 
 /// The pool state after the block at one height, as far as a wallet can rebuild it from a
-/// listing: both halves of spec §4.8.
+/// listing: both halves of spec §4.8, and the node-local hash over the ciphertexts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PoolView {
     pub tree_root: [u8; 32],
     pub nullifier_acc: [u8; 32],
     pub note_count: u64,
     pub nullifier_count: u64,
+    pub ciphertext_acc: [u8; 32],
 }
 
 /// One node's statement "after the block at `height` the pool is in this state" — the `report`
-/// object of its `/api/shield-v2/stats`, which the node takes from ONE read of its pool state.
+/// object of its `/api/shield-v2/stats`, which the node takes from ONE record written when it
+/// accepted that block.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StateReport {
-    /// The caller's name for the node. Only its distinctness is used: two reports with one id
-    /// count once. It MUST be the endpoint the user or the application configured — never a
-    /// string the node returned about itself, or one node is as many nodes as it likes.
+    /// The caller's name for the node: **the endpoint the wallet is configured with**
+    /// ([`WalletState::set_nodes`]) — never a string the node returned about itself. It is
+    /// canonicalised ([`canonical_node_id`]) and looked up in the configured set; a report under
+    /// any other id is not counted.
     pub node_id: String,
     pub height: u64,
     pub tree_root: [u8; 32],
     pub nullifier_acc: [u8; 32],
     pub note_count: u64,
     pub nullifier_count: u64,
+    /// The node's running hash over every accepted output's `(cm_out, kem_ct, note_ct)`.
+    pub ciphertext_acc: [u8; 32],
 }
 
 impl StateReport {
     fn view(&self) -> PoolView {
-        PoolView { tree_root: self.tree_root, nullifier_acc: self.nullifier_acc, note_count: self.note_count, nullifier_count: self.nullifier_count }
+        PoolView {
+            tree_root: self.tree_root,
+            nullifier_acc: self.nullifier_acc,
+            note_count: self.note_count,
+            nullifier_count: self.nullifier_count,
+            ciphertext_acc: self.ciphertext_acc,
+        }
     }
+}
+
+/// A configured node whose report for a height is not the wallet's state there (or that made two
+/// different reports for it). For the user interface: "node X disagrees".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Dissent {
+    pub node_id: String,
+    pub height: u64,
 }
 
 /// What [`WalletState::confirm_state`] concluded.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct ConfirmReport {
-    /// The quorum that was applied: the larger of the one asked for and a strict majority of
-    /// `nodes`.
+    /// Nodes the wallet is configured with.
+    pub configured: usize,
+    /// The quorum that was applied: a strict majority of the CONFIGURED nodes
+    /// (`configured / 2 + 1`), and never below 2. It does not depend on the reports supplied.
     pub quorum: usize,
-    /// Distinct node ids among the reports supplied.
+    /// Distinct configured nodes among the reports supplied.
     pub nodes: usize,
-    /// The highest height at which the quorum matched in THIS call (`None` when `diverged`).
+    /// The highest height at which the quorum matched in THIS call.
     pub matched_height: Option<u64>,
     /// The highest height the state has ever had confirmed.
     pub confirmed_height: Option<u64>,
     /// Positions of the notes this call moved from unverified to confirmed.
     pub newly_confirmed: Vec<u64>,
-    /// Distinct nodes whose report is the wallet's state at `matched_height` (or, without a
+    /// Configured nodes whose report is the wallet's state at `matched_height` (or, without a
     /// match, the best count reached at any height).
     pub agreeing: usize,
     /// Reports for heights the wallet has not scanned yet or no longer keeps the state of.
     pub not_comparable: usize,
-    /// `true`: at a height the wallet can compare, a report differs from the wallet's state (or
-    /// one node made two different reports). **Nothing was confirmed by this call.** Either the
-    /// wallet's listing is not the chain those nodes see, or one of them lies: the caller decides
-    /// which nodes to ask again, and rebuilds from `fresh_for_rescan` against another node if the
-    /// disagreement is with its listing.
-    pub diverged: bool,
-    /// The heights at which a report conflicted.
+    /// Reports under an id that is not a configured node (or not an http(s) origin): not counted.
+    pub not_configured: usize,
+    /// Every configured node whose report at a comparable height is NOT the wallet's state, with
+    /// the height. **A dissenting minority does not block**: within the trust model (a strict
+    /// minority of the configured nodes lies) a match by a strict majority contains an honest
+    /// node, and that node's report is the chain's state at its height.
+    pub dissenting: Vec<Dissent>,
+    /// The heights of `dissenting`, ascending, each once.
     pub conflicts: Vec<u64>,
+    /// `true`: nothing matched in this call and at least one configured node contradicts the
+    /// wallet. Ask again; if it stays, see `listing_refuted`.
+    pub diverged: bool,
+    /// `true`: at some height more configured nodes contradict the wallet than a lying minority
+    /// can be (`> configured − quorum`). At least one of them is honest, so **the wallet's own
+    /// listing is not the chain** from that height on: rebuild from `fresh_for_rescan` against
+    /// ANOTHER node. (What was confirmed below that height stays confirmed.)
+    pub listing_refuted: bool,
+    /// The height a quorum of the configured nodes says the chain has reached: the quorum-th
+    /// highest height among the nodes' reports. At least one honest node has reached it, and no
+    /// lying minority can push it above the highest honest claim. `None` without that many
+    /// reporting nodes.
+    pub quorum_tip: Option<u64>,
+    /// `true`: the wallet's listing shows pool transactions in blocks ABOVE `quorum_tip` —
+    /// blocks a quorum of the configured nodes does not have (yet). For a moment that is normal
+    /// (the listing node is a block ahead: ask again). If it stays, the listing node invented
+    /// those blocks — a payment that is on no chain, or a spend of one of the wallet's notes
+    /// that never happened, which would keep that note out of every balance for as long as
+    /// nobody reports that height: rebuild from `fresh_for_rescan` against ANOTHER node. Nothing
+    /// above the confirmed height is confirmed either way.
+    pub listing_ahead: bool,
     /// Spent notes this call dropped from the state (see [`PRUNE_RETENTION_BLOCKS`]).
     pub pruned: usize,
 }
@@ -735,6 +924,7 @@ struct Checkpoint {
     nullifier_acc: B32,
     note_count: u64,
     nullifier_count: u64,
+    ciphertext_acc: B32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -784,9 +974,15 @@ pub struct WalletState {
     #[serde(with = "dec")]
     min_note_value: u64,
     tree: TreeTracker,
+    /// Received notes beyond this many UNSPENT ones are counted in `over_capacity`, not stored.
+    max_unspent_notes: u64,
+    /// The nodes this wallet is configured with: canonical ids, sorted, each once.
+    nodes: Vec<String>,
     /// The pool's running nullifier hash and nullifier count after the last scanned block.
     nullifier_acc: B32,
     nullifier_count: u64,
+    /// The running hash over every listed output's ciphertexts after the last scanned block.
+    ciphertext_acc: B32,
     #[serde(with = "stored_notes")]
     notes: Vec<OwnedNote>,
     pending: Vec<PendingTx>,
@@ -842,6 +1038,17 @@ struct PendingTxV2 {
     rejected_hint: bool,
 }
 
+/// State format 3 (REVIEW_WALLET_2), read only to be migrated.
+#[derive(Deserialize)]
+struct WalletStateV3 {
+    revision: u64,
+    pk: B32,
+    #[serde(with = "dec")]
+    min_note_value: u64,
+    #[serde(default)]
+    pending: Vec<PendingTx>,
+}
+
 #[derive(Deserialize)]
 struct VersionOnly {
     version: u32,
@@ -857,8 +1064,12 @@ struct PreparedTx {
 
 struct PreparedOutput {
     cm: [u8; 32],
+    kem_ct: Box<[u8; KEM_CT_BYTES]>,
+    note_ct: [u8; NOTE_CT_BYTES],
     /// `(value, r, rho)` of a non-zero note that is this wallet's.
     mine: Option<(u64, [u8; 32], Digest)>,
+    /// `mine` was opened by the wallet's own pending record (its change, a payment to itself).
+    own: bool,
 }
 
 fn mark_spent(notes: &mut [OwnedNote], tree: &mut TreeTracker, report: &mut ScanReport, height: u64, is_it: impl Fn(&OwnedNote) -> bool) {
@@ -872,23 +1083,40 @@ fn mark_spent(notes: &mut [OwnedNote], tree: &mut TreeTracker, report: &mut Scan
 
 impl WalletState {
     /// An empty state for the wallet whose address has this `pk`, with the default minimum note
-    /// value ([`DEFAULT_MIN_NOTE_VALUE`]). Scanning it from height 0 is the restore of spec §5.4.
+    /// value ([`DEFAULT_MIN_NOTE_VALUE`]) and the default cap on unspent notes
+    /// ([`DEFAULT_MAX_UNSPENT_NOTES`]). Scanning it from height 0 is the restore of spec §5.4.
+    /// It is configured with NO node: nothing can be confirmed before [`WalletState::set_nodes`].
     pub fn new(pk: [u8; 32]) -> Self {
-        Self::empty(pk, DEFAULT_MIN_NOTE_VALUE)
+        Self::empty(pk, DEFAULT_MIN_NOTE_VALUE, DEFAULT_MAX_UNSPENT_NOTES as u64)
     }
 
     /// [`WalletState::new`] with the caller's minimum note value, in quanta (at least 1). An
     /// incoming note below it is counted and not stored: it is not in any balance and cannot be
     /// spent from this state. `1` stores every non-zero note. The value holds for the life of
-    /// the state; to change it, rescan ([`WalletState::fresh_for_rescan_with_min_note_value`]).
+    /// the state; to change it, rescan ([`WalletState::fresh_for_rescan_with`]). The wallet's OWN
+    /// outputs are stored whatever their size.
     pub fn with_min_note_value(pk: [u8; 32], min_note_value: u64) -> Result<Self, WalletError> {
+        Self::with_limits(pk, min_note_value, DEFAULT_MAX_UNSPENT_NOTES)
+    }
+
+    /// [`WalletState::new`] with the caller's minimum note value and cap on unspent notes
+    /// (1 to [`MAX_UNSPENT_NOTES_LIMIT`]).
+    pub fn with_limits(pk: [u8; 32], min_note_value: u64, max_unspent_notes: usize) -> Result<Self, WalletError> {
+        Self::check_limits(min_note_value, max_unspent_notes)?;
+        Ok(Self::empty(pk, min_note_value, max_unspent_notes as u64))
+    }
+
+    fn check_limits(min_note_value: u64, max_unspent_notes: usize) -> Result<(), WalletError> {
         if min_note_value == 0 {
             return Err(WalletError::Request("the minimum note value must be at least 1 quantum".into()));
         }
-        Ok(Self::empty(pk, min_note_value))
+        if max_unspent_notes == 0 || max_unspent_notes > MAX_UNSPENT_NOTES_LIMIT {
+            return Err(WalletError::Request("the cap on unspent notes must be 1 to 1,048,576".into()));
+        }
+        Ok(())
     }
 
-    fn empty(pk: [u8; 32], min_note_value: u64) -> Self {
+    fn empty(pk: [u8; 32], min_note_value: u64, max_unspent_notes: u64) -> Self {
         let tree = TreeTracker::new();
         Self {
             version: STATE_VERSION,
@@ -896,10 +1124,20 @@ impl WalletState {
             pk: B32(pk),
             next_height: 0,
             min_note_value,
-            checkpoints: vec![Checkpoint { height: 0, root: tree.root, nullifier_acc: B32([0u8; 32]), note_count: 0, nullifier_count: 0 }],
+            max_unspent_notes,
+            nodes: Vec::new(),
+            checkpoints: vec![Checkpoint {
+                height: 0,
+                root: tree.root,
+                nullifier_acc: B32([0u8; 32]),
+                note_count: 0,
+                nullifier_count: 0,
+                ciphertext_acc: B32([0u8; 32]),
+            }],
             tree,
             nullifier_acc: B32([0u8; 32]),
             nullifier_count: 0,
+            ciphertext_acc: B32([0u8; 32]),
             notes: Vec::new(),
             pending: Vec::new(),
             confirmed_height: None,
@@ -910,17 +1148,20 @@ impl WalletState {
         }
     }
 
-    /// An empty state for the same wallet that KEEPS the pending transactions: what to rescan
-    /// into after a reorganisation or a `diverged` state check.
+    /// An empty state for the same wallet that KEEPS the pending transactions and the configured
+    /// nodes: what to rescan into after a reorganisation or a state check that refuted the
+    /// listing (`ConfirmReport::listing_refuted`).
     ///
     /// **Every entry is carried over as pending and locked — never as mined or superseded.** What
     /// the old state had seen of it came from the listing that is being thrown away; the status
     /// is found again from the rescanned data, and nothing settles before `confirm_state` has
     /// confirmed that data. The locks are held by note commitment, so they apply as soon as the
-    /// rescan finds the notes again. The revision continues.
+    /// rescan finds the notes again. The revision continues. The confirmed height starts again
+    /// at nothing: a new listing has to earn it.
     pub fn fresh_for_rescan(&self) -> Self {
-        let mut s = Self::empty(self.pk.0, self.min_note_value);
+        let mut s = Self::empty(self.pk.0, self.min_note_value, self.max_unspent_notes);
         s.revision = self.revision;
+        s.nodes = self.nodes.clone();
         s.pending = self
             .pending
             .iter()
@@ -937,11 +1178,20 @@ impl WalletState {
 
     /// [`WalletState::fresh_for_rescan`] with another minimum note value.
     pub fn fresh_for_rescan_with_min_note_value(&self, min_note_value: u64) -> Result<Self, WalletError> {
-        if min_note_value == 0 {
-            return Err(WalletError::Request("the minimum note value must be at least 1 quantum".into()));
-        }
+        self.fresh_for_rescan_with(Some(min_note_value), None)
+    }
+
+    /// [`WalletState::fresh_for_rescan`] with another minimum note value and / or another cap on
+    /// unspent notes (`None`: keep the state's). **Raising the cap and rescanning is how the
+    /// notes counted in [`WalletState::over_capacity`] are recovered**; lowering the minimum note
+    /// value recovers those counted in [`WalletState::below_minimum`].
+    pub fn fresh_for_rescan_with(&self, min_note_value: Option<u64>, max_unspent_notes: Option<usize>) -> Result<Self, WalletError> {
+        let min = min_note_value.unwrap_or(self.min_note_value);
+        let cap = max_unspent_notes.unwrap_or(self.max_unspent_notes as usize);
+        Self::check_limits(min, cap)?;
         let mut s = self.fresh_for_rescan();
-        s.min_note_value = min_note_value;
+        s.min_note_value = min;
+        s.max_unspent_notes = cap as u64;
         Ok(s)
     }
 
@@ -959,13 +1209,23 @@ impl WalletState {
         Ok(json)
     }
 
-    /// Parses and validates a state. Format 3 is read as is.
+    /// Parses and validates a state. Format 4 is read as is.
     ///
-    /// **Formats 1 and 2 are migrated to an EMPTY state that keeps the locks**, to be scanned
-    /// from the activation height. They did not record the pool's nullifier hash, and it cannot
-    /// be computed afterwards (it runs over every nullifier since activation), so an old state's
-    /// notes can never be confirmed; a rescan finds every one of them again.
+    /// **Formats 1, 2 and 3 are migrated to an EMPTY state that keeps the locks**, to be scanned
+    /// from the activation height. Formats 1 and 2 did not record the pool's nullifier hash and
+    /// format 3 did not record the ciphertext hash; neither can be computed afterwards (each
+    /// runs over everything since activation), so an old state's notes can never be confirmed
+    /// under the current rules; a rescan finds every one of them again. A migrated state is
+    /// configured with no node: call [`WalletState::set_nodes`].
     ///
+    /// * Format 3: every pending entry is carried over as pending and locked, with its two
+    ///   nullifiers, two outputs and expiry; the minimum note value and the revision are kept.
+    ///   Its change record has no `r`, so the change is found through its ciphertext — which the
+    ///   confirmed ciphertext hash now covers. **A format-3 expiry was bounded by the SCANNED
+    ///   height (REVIEW_WALLET_3 RW3-7) and is kept as recorded**: the transaction really is
+    ///   valid until then, so shortening it here would release a lock on a live transaction. A
+    ///   format-3 entry built after a lying page keeps its long lock; no client was released on
+    ///   format 3.
     /// * Format 2: every pending entry is carried over as pending and locked — also one the old
     ///   state called `mined` on one node's word. Its lock is held by the commitments of its
     ///   input notes. It has both nullifiers and the change commitment but not both outputs: it
@@ -987,6 +1247,7 @@ impl WalletState {
         let s = match v.version {
             1 => Self::migrate_v1(serde_json::from_str(json).map_err(bad)?)?,
             2 => Self::migrate_v2(serde_json::from_str(json).map_err(bad)?)?,
+            3 => Self::migrate_v3(serde_json::from_str(json).map_err(bad)?)?,
             STATE_VERSION => {
                 let mut s: Self = serde_json::from_str(json).map_err(bad)?;
                 let confirmed = s.confirmed_height;
@@ -995,7 +1256,7 @@ impl WalletState {
                 }
                 s
             }
-            _ => return Err(WalletError::State("unknown state version (this wallet reads versions 1, 2 and 3)".into())),
+            _ => return Err(WalletError::State("unknown state version (this wallet reads versions 1, 2, 3 and 4)".into())),
         };
         s.validate()?;
         Ok(s)
@@ -1019,10 +1280,12 @@ impl WalletState {
                 input_cms: vec![n.cm],
                 input_total: n.value,
                 change: None,
+                own_payment: None,
                 expiry_height: expiry,
                 status: PendingStatus::Pending,
                 seen_height: None,
                 rejected_hint: false,
+                abandoned_hint: false,
                 legacy: true,
             });
         }
@@ -1048,13 +1311,37 @@ impl WalletState {
                 input_cms: cms.unwrap_or_default(),
                 input_total: p.input_total,
                 change: p.change,
+                own_payment: None,
                 expiry_height: p.expiry_height.unwrap_or(synthetic),
                 status: PendingStatus::Pending,
                 seen_height: None,
                 rejected_hint: p.rejected_hint,
+                abandoned_hint: false,
                 legacy,
             });
         }
+        Ok(s)
+    }
+
+    fn migrate_v3(old: WalletStateV3) -> Result<Self, WalletError> {
+        if old.min_note_value == 0 || old.revision > MAX_REVISION {
+            return Err(WalletError::State("the revision or the minimum note value is out of range".into()));
+        }
+        let mut s = Self::empty(old.pk.0, old.min_note_value, DEFAULT_MAX_UNSPENT_NOTES as u64);
+        s.revision = old.revision;
+        s.pending = old
+            .pending
+            .into_iter()
+            .map(|mut p| {
+                // what format 3 had seen came from a listing whose ciphertexts nobody vouched for
+                p.status = PendingStatus::Pending;
+                p.seen_height = None;
+                p.own_payment = None;
+                p.abandoned_hint = false;
+                p
+            })
+            .collect();
+        s.bump();
         Ok(s)
     }
 
@@ -1066,8 +1353,19 @@ impl WalletState {
         if self.revision > MAX_REVISION || self.min_note_value == 0 {
             return bad("the revision or the minimum note value is out of range");
         }
+        if self.max_unspent_notes == 0 || self.max_unspent_notes > MAX_UNSPENT_NOTES_LIMIT as u64 {
+            return bad("the cap on unspent notes is out of range");
+        }
+        if self.nodes.len() > MAX_CONFIGURED_NODES
+            || self.nodes.windows(2).any(|w| w[0] >= w[1])
+            || self.nodes.iter().any(|id| canonical_node_id(id).ok().as_deref() != Some(id.as_str()))
+        {
+            return bad("the configured nodes are not canonical, sorted and distinct");
+        }
         self.tree.check()?;
-        if self.notes.len() > MAX_STORED_NOTES || self.tree.tracked.len() > self.notes.len() {
+        let unspent = self.notes.iter().filter(|n| !n.spent).count();
+        let spent_bound = MAX_SPENT_RETAINED + 2 * (MAX_PENDING + MAX_LEGACY_LOCKS);
+        if unspent > MAX_UNSPENT_NOTES_LIMIT + OWN_OUTPUT_SLACK || self.notes.len() - unspent > spent_bound || self.tree.tracked.len() > self.notes.len() {
             return bad("the state stores more notes than it can hold");
         }
         let mut seen = BTreeSet::new();
@@ -1091,7 +1389,10 @@ impl WalletState {
             let inputs_ok = matches!(p.inputs.len(), 1 | 2) && (p.inputs.len() == 1 || p.inputs[0] != p.inputs[1]);
             let cms_ok = (p.input_cms.is_empty() || p.input_cms.len() == p.inputs.len()) && distinct(&p.input_cms);
             let nf_ok = p.nullifiers.len() <= 2 && distinct(&p.nullifiers) && (p.legacy || p.nullifiers.len() == 2);
-            let out_ok = matches!(p.outputs.len(), 0 | 2) && distinct(&p.outputs) && (p.legacy || p.outputs.len() == 2 || p.change.is_some());
+            let out_ok = matches!(p.outputs.len(), 0 | 2)
+                && distinct(&p.outputs)
+                && (p.legacy || p.outputs.len() == 2 || p.change.is_some())
+                && !(p.change.is_some() && p.change.as_ref().map(|c| c.cm) == p.own_payment.as_ref().map(|c| c.cm));
             let type_ok = p.tx_type.is_empty() || TX_TYPES[1..].contains(&p.tx_type.as_str());
             let seen_ok = (p.status == PendingStatus::Pending) == p.seen_height.is_none() && p.seen_height.is_none_or(|h| h < self.next_height);
             if !inputs_ok || !cms_ok || !nf_ok || !out_ok || !type_ok || !seen_ok {
@@ -1114,9 +1415,13 @@ impl WalletState {
             return bad("the state history is not in order");
         }
         if self.checkpoints.last().is_some_and(|c| {
-            c.root != self.tree.root || c.nullifier_acc != self.nullifier_acc || c.note_count != self.tree.note_count || c.nullifier_count != self.nullifier_count
+            c.root != self.tree.root
+                || c.nullifier_acc != self.nullifier_acc
+                || c.note_count != self.tree.note_count
+                || c.nullifier_count != self.nullifier_count
+                || c.ciphertext_acc != self.ciphertext_acc
         }) {
-            return bad("the state history does not end at the current tree root and nullifier hash");
+            return bad("the state history does not end at the current tree root, nullifier hash and ciphertext hash");
         }
         if self.confirmed_height.is_some_and(|h| h >= self.next_height) {
             return bad("the confirmed height is above the scanned height");
@@ -1164,10 +1469,54 @@ impl WalletState {
     pub fn below_minimum(&self) -> Tally {
         self.below_minimum
     }
-    /// Incoming notes that arrived while the state already held [`MAX_STORED_NOTES`]. Merge
-    /// notes or raise the minimum note value, then rescan, to recover them.
+    /// The cap on unspent notes received from others (see [`DEFAULT_MAX_UNSPENT_NOTES`]).
+    pub fn max_unspent_notes(&self) -> usize {
+        self.max_unspent_notes as usize
+    }
+    /// Incoming notes that arrived while the state already held `max_unspent_notes` UNSPENT
+    /// notes: counted, not stored. **Recovered by a rescan with a higher cap**
+    /// ([`WalletState::fresh_for_rescan_with`]), or with a minimum note value above the notes
+    /// that fill the state, or after spending or merging notes. A running total of what
+    /// arrived, not a balance.
     pub fn over_capacity(&self) -> Tally {
         self.over_capacity
+    }
+    /// The nodes this wallet is configured with: canonical ids, sorted.
+    pub fn nodes(&self) -> &[String] {
+        &self.nodes
+    }
+    /// The quorum [`WalletState::confirm_state`] applies: a strict majority of the configured
+    /// nodes, never below 2.
+    pub fn quorum(&self) -> usize {
+        (self.nodes.len() / 2 + 1).max(MIN_CONFIGURED_NODES)
+    }
+
+    /// Configures the nodes this wallet asks for the pool state — **the set the quorum is a
+    /// strict majority OF** (REVIEW_WALLET_3 RW3-1). Every id is canonicalised
+    /// ([`canonical_node_id`]: an http(s) origin, lower-cased, default port and path removed) and
+    /// duplicates are collapsed; an id that is not an http(s) origin refuses the whole call.
+    /// Returns the canonical set.
+    ///
+    /// This is an explicit decision of the user or the application, and the ONLY way the
+    /// threshold changes: `confirm_state` never derives it from the reports it is handed, so
+    /// asking fewer nodes — or leaving out a node that disagrees — can only make a confirmation
+    /// harder, never easier. Changing the set does not un-confirm what was confirmed; it applies
+    /// to every later confirmation. With fewer than two nodes nothing can be confirmed: a
+    /// single-node wallet shows everything as unverified.
+    pub fn set_nodes<S: AsRef<str>>(&mut self, ids: &[S]) -> Result<Vec<String>, WalletError> {
+        let mut set = BTreeSet::new();
+        for id in ids {
+            set.insert(canonical_node_id(id.as_ref())?);
+        }
+        if set.len() > MAX_CONFIGURED_NODES {
+            return Err(WalletError::Request("more than 64 configured nodes".into()));
+        }
+        let nodes: Vec<String> = set.into_iter().collect();
+        if nodes != self.nodes {
+            self.nodes = nodes;
+            self.bump();
+        }
+        Ok(self.nodes.clone())
     }
     /// Spent notes dropped from the state: their spend is confirmed and more than
     /// [`PRUNE_RETENTION_BLOCKS`] below the confirmed height.
@@ -1201,6 +1550,10 @@ impl WalletState {
     pub fn nullifier_acc(&self) -> [u8; 32] {
         self.nullifier_acc.0
     }
+    /// The running hash over the ciphertexts of every output this state has read.
+    pub fn ciphertext_acc(&self) -> [u8; 32] {
+        self.ciphertext_acc.0
+    }
     pub fn nullifier_count(&self) -> u64 {
         self.nullifier_count
     }
@@ -1215,7 +1568,29 @@ impl WalletState {
             nullifier_acc: c.nullifier_acc.0,
             note_count: c.note_count,
             nullifier_count: c.nullifier_count,
+            ciphertext_acc: c.ciphertext_acc.0,
         })
+    }
+
+    /// What a spend is built on (REVIEW_WALLET_3 RW3-7): `(anchor, base height)`.
+    ///
+    /// The base height is the **confirmed height** — the only height a strict majority of the
+    /// configured nodes vouched for. The builders measure `expiry_height` from it and from
+    /// nothing else. Without a confirmed height there is nothing to measure from and nothing is
+    /// built ([`WalletError::StateUnconfirmed`]), whatever `allow_unverified` says.
+    ///
+    /// The anchor is the wallet's tree root, which the input paths lead to. It must be the root
+    /// the quorum confirmed: if the listing has shown outputs above the confirmed height, the
+    /// root is one node's word and the call refuses with [`WalletError::StateUnconfirmed`] —
+    /// confirm the state first — unless `allow_unverified`, the caller's explicit decision to
+    /// build on an unconfirmed root (the expiry is still measured from the confirmed height).
+    pub fn spend_base(&self, allow_unverified: bool) -> Result<([u8; 32], u64), WalletError> {
+        let confirmed = self.confirmed_height.ok_or(WalletError::StateUnconfirmed)?;
+        let root_confirmed = self.state_at(confirmed).is_some_and(|v| v.tree_root == self.tree.root.0 && v.note_count == self.tree.note_count);
+        if !root_confirmed && !allow_unverified {
+            return Err(WalletError::StateUnconfirmed);
+        }
+        Ok((self.tree.root.0, confirmed))
     }
     /// The wallet's own tree root after the block at `height` (see [`WalletState::state_at`]).
     pub fn root_at(&self, height: u64) -> Option<[u8; 32]> {
@@ -1252,7 +1627,7 @@ impl WalletState {
             }
         }
         b.expected_change =
-            self.pending.iter().filter(|p| p.status == PendingStatus::Pending).filter_map(|p| p.change.as_ref()).map(|c| c.value as u128).sum();
+            self.pending.iter().filter(|p| p.status == PendingStatus::Pending).flat_map(|p| p.own_outputs()).map(|c| c.value as u128).sum();
         b
     }
     pub fn unspent(&self) -> impl Iterator<Item = &OwnedNote> {
@@ -1300,17 +1675,21 @@ impl WalletState {
         self.note_at(position).is_some_and(|n| self.pending.iter().any(|p| p.locks(n)))
     }
 
-    /// Records a built transfer or unshield (`BuiltTx::pending()`) and locks its inputs. Call it
-    /// BEFORE the transaction leaves the wallet, and persist the state. From then on the inputs
+    /// Records a transfer or unshield and locks its inputs. **Clients do not call this**: the
+    /// builders ([`crate::build_transfer`], [`crate::build_unshield`]) call it and hand back the
+    /// transaction TOGETHER with the state in which it is recorded (REVIEW_WALLET_3 RW3-5). It
+    /// is public for tools and tests that assemble a record themselves. From then on the inputs
     /// cannot be selected or handed to a builder until [`WalletState::resolve`] settles the
     /// entry on confirmed data. No answer of a node unlocks them.
     ///
-    /// Refused: a record without two distinct nullifiers or two distinct non-zero output
-    /// commitments; a change commitment that is not one of the outputs; an expiry more than 128
-    /// blocks above the scanned height (the builders' bound — locked notes are released in
-    /// bounded time); inputs that are not unspent, unlocked notes of this state whose values add
-    /// up to `input_total`; an input whose stored nullifier is not the transaction's nullifier
-    /// for that input slot.
+    /// Refused: a state without a confirmed height ([`WalletError::StateUnconfirmed`]); **an
+    /// expiry more than 128 blocks above the CONFIRMED height** (RW3-7: the bound that ends a
+    /// lock is measured from a height a quorum vouched for — never from the scanned height,
+    /// which is one node's claim); a record without two distinct nullifiers or two distinct
+    /// non-zero output commitments; an own output (change, payment to self) whose commitment is
+    /// not one of the outputs; inputs that are not unspent, unlocked notes of this state whose
+    /// values add up to `input_total`; an input whose stored nullifier is not the transaction's
+    /// nullifier for that input slot.
     pub fn mark_pending(&mut self, mut tx: PendingTx) -> Result<(), WalletError> {
         let bad = |what: &'static str| Err(WalletError::Request(what.into()));
         if !TX_TYPES[1..].contains(&tx.tx_type.as_str()) {
@@ -1322,11 +1701,15 @@ impl WalletState {
         if tx.outputs.len() != 2 || tx.outputs[0] == tx.outputs[1] || tx.outputs.iter().any(|c| c.0 == [0u8; 32]) {
             return bad("a pending transaction has two distinct output commitments");
         }
-        if tx.change.as_ref().is_some_and(|c| !tx.outputs.contains(&c.cm)) {
+        if tx.own_outputs().any(|c| !tx.outputs.contains(&c.cm)) {
             return bad("the expected change is not one of the transaction's outputs");
         }
-        if tx.expiry_height > self.next_height.saturating_sub(1).saturating_add(MAX_EXPIRY_OFFSET) {
-            return bad("the expiry height is more than 128 blocks above the scanned height");
+        if tx.change.is_some() && tx.change.as_ref().map(|c| c.cm) == tx.own_payment.as_ref().map(|c| c.cm) {
+            return bad("the change and the payment to self are the same output");
+        }
+        let confirmed = self.confirmed_height.ok_or(WalletError::StateUnconfirmed)?;
+        if tx.expiry_height > confirmed.saturating_add(MAX_EXPIRY_OFFSET) {
+            return bad("the expiry height is more than 128 blocks above the confirmed height");
         }
         if !matches!(tx.inputs.len(), 1 | 2) || (tx.inputs.len() == 2 && tx.inputs[0] == tx.inputs[1]) {
             return bad("a pending transaction spends one or two distinct notes");
@@ -1360,10 +1743,33 @@ impl WalletState {
         tx.status = PendingStatus::Pending;
         tx.seen_height = None;
         tx.rejected_hint = false;
+        tx.abandoned_hint = false;
         tx.legacy = false;
         self.pending.push(tx);
         self.bump();
         Ok(())
+    }
+
+    /// For a client that built a transaction and is CERTAIN it never handed it to any node (the
+    /// user cancelled before the submit, the submit call was never made). Records that on the
+    /// pending entry with this nullifier (`abandoned_hint`) and returns whether it was found.
+    ///
+    /// **It releases nothing.** The inputs stay locked until [`WalletState::resolve`] settles the
+    /// entry as expired — that is, until the confirmed height has reached its `expiry_height`,
+    /// at most 128 blocks above the confirmed height it was built at. The core cannot check that
+    /// the transaction never left the device (a retry path, a second tab, a crashed submit that
+    /// did go out), and if the claim is wrong, releasing the inputs is a double payment. So even
+    /// a wrong call here is safe: it is a note for the user interface ("cancelled — funds free
+    /// again in about N blocks").
+    pub fn abandon_unsubmitted(&mut self, nullifier: &[u8; 32]) -> bool {
+        match self.pending.iter_mut().find(|p| p.nullifiers.iter().any(|n| n.0 == *nullifier)) {
+            Some(p) => {
+                p.abandoned_hint = true;
+                self.bump();
+                true
+            }
+            None => false,
+        }
     }
 
     /// Records that a node answered "rejected" for the pending transaction with this nullifier.
@@ -1415,70 +1821,110 @@ impl WalletState {
 
     // ---- state confirmation -------------------------------------------------------------------------
 
-    /// Compares the wallet's own pool state with what nodes report, and moves the confirmed
-    /// height to the highest height at which a quorum of distinct nodes reported **exactly the
-    /// wallet's tree root, nullifier hash, note count and nullifier count**. Notes created at or
-    /// below it become `confirmed`; pending transactions settle against it
-    /// ([`WalletState::resolve`]).
+    /// Compares the wallet's own pool state with what its configured nodes report, and moves the
+    /// confirmed height to the highest height `h` at which **a strict majority of the CONFIGURED
+    /// nodes** ([`WalletState::set_nodes`]) reported **exactly the wallet's tree root, nullifier
+    /// hash, ciphertext hash, note count and nullifier count at `h`**. Notes created at or below
+    /// it become `confirmed`; pending transactions settle against it ([`WalletState::resolve`]).
     ///
     /// Why this is evidence. The root commits every output commitment up to that height in
-    /// order; the nullifier hash commits every nullifier up to that height in order; a listed
-    /// transaction is two consecutive entries of each. If both are the nodes', every transaction
-    /// the wallet read up to that height — which nullifiers with which outputs — is one those
+    /// order; the nullifier hash commits every nullifier up to that height in order; the
+    /// ciphertext hash commits the two ciphertexts of every output; a listed transaction is two
+    /// consecutive entries of each. If all are the nodes', every transaction the wallet read up
+    /// to that height — which nullifiers with which outputs and which ciphertexts — is one those
     /// nodes hold, and no other.
     ///
-    /// **The quorum.** `quorum` (`None`: [`DEFAULT_CONFIRM_QUORUM`] = 2) is raised to a strict
-    /// majority of the distinct node ids among the reports supplied: with four nodes asked,
-    /// three must agree. A caller that asks one node — its own — passes `Some(1)`.
+    /// **The quorum** (REVIEW_WALLET_3 RW3-1) is `configured / 2 + 1`, at least 2, of the
+    /// configured set — a property of the STATE, not of this call:
     ///
-    /// **A conflict confirms nothing.** If, at any height the wallet can compare, a report is not
-    /// the wallet's state, or one node made two different reports, the call confirms nothing at
-    /// all and returns `diverged` with the heights. The caller resolves the conflict: it chooses
-    /// which nodes it asks. Distinctness is by the caller-supplied id — see [`StateReport`].
+    /// * a report under an id that is not configured is not counted (`not_configured`);
+    /// * a node counts at most once per height: two different reports from one node for one
+    ///   height make that node dissent there;
+    /// * handing in fewer reports cannot lower the threshold. There is no quorum argument;
+    /// * with fewer than two configured nodes nothing is confirmed, ever.
     ///
-    /// What it is not: proof against the chain. It is the word of the nodes asked. Reports for
-    /// heights the wallet has not scanned, or whose state it no longer keeps, cannot be compared.
-    pub fn confirm_state(&mut self, reports: &[StateReport], quorum: Option<usize>) -> Result<ConfirmReport, WalletError> {
-        let asked = quorum.unwrap_or(DEFAULT_CONFIRM_QUORUM);
-        if asked == 0 {
-            return Err(WalletError::Request("the quorum must be at least 1".into()));
-        }
+    /// **A dissenting minority does not block.** Within the trust model — a strict minority of
+    /// the configured nodes lies arbitrarily — a strict majority contains an honest node, and an
+    /// honest node's report is the chain's state at its height: the wallet's state there is the
+    /// chain's whatever the others say. Every dissenting node is returned by id and height
+    /// (`dissenting`), so that a user interface can say "node X disagrees". When more nodes
+    /// contradict the wallet at one height than a lying minority can be, the wallet's own
+    /// listing is what is wrong (`listing_refuted`): rescan against another node. The same when
+    /// the listing shows transactions in blocks above the height a quorum has reached and keeps
+    /// doing so (`listing_ahead`, `quorum_tip`): nobody can contradict a block nobody has, so
+    /// that is the one lie about the wallet's own notes a state comparison cannot catch.
+    ///
+    /// What it is not: proof against the chain. It is the word of a majority of the nodes the
+    /// wallet was configured with; if most of them lie, or are one operator, everything
+    /// "confirmed" is theirs. Reports for heights the wallet has not scanned, or whose state it
+    /// no longer keeps, cannot be compared.
+    pub fn confirm_state(&mut self, reports: &[StateReport]) -> Result<ConfirmReport, WalletError> {
         if reports.len() > MAX_STATE_REPORTS {
-            return Err(WalletError::Request("more than 64 state reports".into()));
+            return Err(WalletError::Request("more than 1,024 state reports".into()));
         }
-        if reports.iter().any(|r| r.node_id.is_empty() || r.node_id.len() > MAX_NODE_ID_BYTES) {
-            return Err(WalletError::Request("a node id must be 1 to 128 bytes".into()));
-        }
-        // height → node → what that node reported there
-        let mut by_height: BTreeMap<u64, BTreeMap<&str, Vec<PoolView>>> = BTreeMap::new();
-        let mut ids = BTreeSet::new();
+        let configured = self.nodes.len();
+        let quorum = self.quorum();
+        let mut out = ConfirmReport { configured, quorum, confirmed_height: self.confirmed_height, ..Default::default() };
+        // (height, configured node) → what that node reported there; `None`: two different reports
+        let mut said: BTreeMap<(u64, usize), Option<PoolView>> = BTreeMap::new();
+        let mut asked = BTreeSet::new();
         for r in reports {
-            ids.insert(r.node_id.as_str());
-            let views = by_height.entry(r.height).or_default().entry(r.node_id.as_str()).or_default();
-            if !views.contains(&r.view()) {
-                views.push(r.view());
-            }
-        }
-        let quorum = asked.max(ids.len() / 2 + 1);
-        let mut out = ConfirmReport { quorum, nodes: ids.len(), confirmed_height: self.confirmed_height, ..Default::default() };
-        let mut matched: Option<(u64, usize)> = None;
-        for (&height, nodes) in &by_height {
-            let Some(mine) = self.state_at(height) else {
-                out.not_comparable += nodes.len();
+            let Some(node) = canonical_node_id(&r.node_id).ok().and_then(|id| self.nodes.binary_search(&id).ok()) else {
+                out.not_configured += 1;
                 continue;
             };
-            let agreeing = nodes.values().filter(|views| views.as_slice() == [mine]).count();
-            if agreeing != nodes.len() {
+            asked.insert(node);
+            match said.get_mut(&(r.height, node)) {
+                None => {
+                    said.insert((r.height, node), Some(r.view()));
+                }
+                Some(v) if *v != Some(r.view()) => *v = None,
+                Some(_) => {}
+            }
+        }
+        out.nodes = asked.len();
+        // the quorum-th highest height the configured nodes claim
+        let mut tops: BTreeMap<usize, u64> = BTreeMap::new();
+        for &(height, node) in said.keys() {
+            let top = tops.entry(node).or_insert(height);
+            *top = (*top).max(height);
+        }
+        let mut tops: Vec<u64> = tops.into_values().collect();
+        tops.sort_unstable_by(|a, b| b.cmp(a));
+        if configured >= MIN_CONFIGURED_NODES {
+            out.quorum_tip = tops.get(quorum - 1).copied();
+        }
+        out.listing_ahead = out.quorum_tip.is_some_and(|tip| self.checkpoints.last().is_some_and(|c| c.height > tip));
+        let mut matched: Option<(u64, usize)> = None;
+        let heights: BTreeSet<u64> = said.keys().map(|&(h, _)| h).collect();
+        for height in heights {
+            let at = said.range((height, 0)..=(height, usize::MAX));
+            let Some(mine) = self.state_at(height) else {
+                out.not_comparable += at.count();
+                continue;
+            };
+            let (mut agreeing, mut dissenting) = (0usize, 0usize);
+            for (&(_, node), view) in at {
+                if *view == Some(mine) {
+                    agreeing += 1;
+                } else {
+                    dissenting += 1;
+                    out.dissenting.push(Dissent { node_id: self.nodes[node].clone(), height });
+                }
+            }
+            if dissenting > 0 {
                 out.conflicts.push(height);
             }
-            if agreeing >= quorum {
+            // more dissent than a strict minority can be: an honest node says this is not the chain
+            if configured >= MIN_CONFIGURED_NODES && dissenting > configured - quorum {
+                out.listing_refuted = true;
+            }
+            if configured >= MIN_CONFIGURED_NODES && agreeing >= quorum {
                 matched = Some((height, agreeing)); // ascending: the last match is the highest
             }
-            out.agreeing = out.agreeing.max(agreeing);
-        }
-        if !out.conflicts.is_empty() {
-            out.diverged = true;
-            return Ok(out);
+            if matched.is_none() {
+                out.agreeing = out.agreeing.max(agreeing);
+            }
         }
         if let Some((h, agreeing)) = matched {
             out.matched_height = Some(h);
@@ -1493,6 +1939,7 @@ impl WalletState {
             out.pruned = self.prune();
             self.bump();
         }
+        out.diverged = matched.is_none() && !out.dissenting.is_empty();
         Ok(out)
     }
 
@@ -1505,6 +1952,31 @@ impl WalletState {
         let (pending, pruned) = (&self.pending, &mut self.pruned);
         self.notes.retain(|n| {
             let drop = n.spent_height.is_some_and(|h| h <= cutoff) && !pending.iter().any(|p| p.locks(n));
+            if drop {
+                pruned.add(n.value);
+            }
+            !drop
+        });
+        before - self.notes.len()
+    }
+
+    /// Keeps at most [`MAX_SPENT_RETAINED`] spent notes (the most recently spent; an input of a
+    /// pending entry is always kept) and drops the rest into the `pruned` tally. Called at the
+    /// end of every page, so that a scan over a long history never holds more than that plus one
+    /// page of spent notes: spent notes cannot fill a state (REVIEW_WALLET_3 RW3-4). A spent
+    /// note is in no balance and has no path; what a rescan needs of it, the rescan reads again.
+    fn drop_old_spent(&mut self) -> usize {
+        let spent = self.notes.iter().filter(|n| n.spent).count();
+        if spent <= MAX_SPENT_RETAINED {
+            return 0;
+        }
+        let mut by_age: Vec<(u64, u64)> = self.notes.iter().filter(|n| n.spent).map(|n| (n.spent_height.unwrap_or(0), n.position)).collect();
+        by_age.sort_unstable();
+        let cut = by_age[spent - MAX_SPENT_RETAINED]; // everything strictly older goes
+        let before = self.notes.len();
+        let (pending, pruned) = (&self.pending, &mut self.pruned);
+        self.notes.retain(|n| {
+            let drop = n.spent && (n.spent_height.unwrap_or(0), n.position) < cut && !pending.iter().any(|p| p.locks(n));
             if drop {
                 pruned.add(n.value);
             }
@@ -1531,8 +2003,17 @@ impl WalletState {
     ///    recipient check of spec §2.4.1 is run with `rho = H_rho(nf1, nf2, j)` computed from the
     ///    transaction's own nullifiers — only a note whose recomputed commitment equals `cm_out_j`
     ///    is the wallet's. It is stored unverified (see `confirm_state`). A zero-value note, a
-    ///    note below the state's minimum note value and a note beyond the state's capacity are
-    ///    counted and not stored.
+    ///    note below the state's minimum note value and a note that arrives while the state holds
+    ///    its cap of UNSPENT notes are counted and not stored. **An output the wallet created
+    ///    itself** — its commitment is the change or the payment-to-self of a pending entry, and
+    ///    the entry's `(value, r)` open it — **is stored from the record**: whatever the listing
+    ///    served as its ciphertext, whatever its size, whatever the count. So is a note for this
+    ///    wallet in a transaction that spends one of this wallet's notes (only the wallet's key
+    ///    makes such a transaction): the wallet's own change is recognised on a restore too,
+    ///    where no pending record exists (not when scanning with the viewing key alone, which
+    ///    cannot see spends);
+    /// 5. both ciphertexts of each output enter the wallet's running ciphertext hash
+    ///    ([`ciphertext_acc_step`]), which `confirm_state` compares with the nodes'.
     ///
     /// **Every string of the page is validated before anything is stored**: nullifiers,
     /// commitments, ciphertexts and `tx_hash` are fixed-length lowercase hexadecimal, `tx_type`
@@ -1595,6 +2076,13 @@ impl WalletState {
         if 2 * page.txs.len() as u64 > room {
             return Err(listing("the page has more outputs than the commitment tree has room for"));
         }
+        // the outputs the wallet created itself: commitment → (value, r) of the pending record
+        let own_outputs: BTreeMap<[u8; 32], (u64, [u8; 32])> = self
+            .pending
+            .iter()
+            .flat_map(|p| p.own_outputs())
+            .filter_map(|c| c.r.map(|r| (c.cm.0, (c.value, r.0))))
+            .collect();
         let mut prepared: Vec<PreparedTx> = Vec::with_capacity(page.txs.len());
         let mut last: Option<(u64, u64)> = None;
         let mut expected_leaf = self.tree.note_count;
@@ -1638,12 +2126,19 @@ impl WalletState {
                 expected_leaf += 1;
                 // trial decryption, then the recipient check of spec §2.4.1; a zero-value note
                 // is nothing to keep
-                let mine = decrypt_note(&dk, &kem, &note_ct, &cm_b).and_then(|(value, r_b)| {
+                let opens = |value: u64, r_b: [u8; 32]| {
                     let r = field::digest(&r_b, "r").ok()?;
                     let rho = derive_rho(&nf, j);
                     (value > 0 && Note { value, pk, rho, r }.commitment() == cm).then_some((value, r_b, rho))
-                });
-                outs[j] = Some(PreparedOutput { cm: cm_b, mine });
+                };
+                // an output of the wallet's own pending transaction is opened by the record: no
+                // ciphertext is needed for it and none is believed (RW3-2)
+                let own = own_outputs.get(&cm_b).and_then(|&(value, r_b)| opens(value, r_b));
+                let mine = match own {
+                    Some(note) => Some(note),
+                    None => decrypt_note(&dk, &kem, &note_ct, &cm_b).and_then(|(value, r_b)| opens(value, r_b)),
+                };
+                outs[j] = Some(PreparedOutput { cm: cm_b, kem_ct: Box::new(kem), note_ct, mine, own: own.is_some() });
             }
             let [Some(o0), Some(o1)] = outs else { return Err(WalletError::Internal("outputs")) };
             prepared.push(PreparedTx { height: tx.height, nf: nf_b, tx_hash: tx.tx_hash.clone(), outputs: [o0, o1] });
@@ -1665,6 +2160,8 @@ impl WalletState {
         }
         // the nullifiers that would spend a note of this wallet (most listed ones spend none)
         let mut own_nf: BTreeSet<[u8; 32]> = self.notes.iter().filter(|n| n.spent_height.is_none()).filter_map(|n| n.nullifier.map(|x| x.0)).collect();
+        // the cap counts UNSPENT notes: kept current as notes are spent and stored below
+        let mut unspent = self.notes.iter().filter(|n| !n.spent).count();
         for tx in prepared {
             // F-3: without nk, remember what appears while a note has no nullifier
             if nk.is_none() && self.notes.iter().any(|n| n.nullifier.is_none() && n.spent_height.is_none()) {
@@ -1677,6 +2174,7 @@ impl WalletState {
                 }
             }
             let cms = [tx.outputs[0].cm, tx.outputs[1].cm];
+            let spent_before = report.spent.len();
             for nf in tx.nf {
                 // 1. the pool's running nullifier hash
                 self.nullifier_acc = B32(nullifier_acc_step(&self.nullifier_acc.0, &nf));
@@ -1716,15 +2214,29 @@ impl WalletState {
                     p.seen_height = Some(tx.height);
                 }
             }
+            // notes this transaction spent leave the count the cap is measured against
+            let spent_here = report.spent.len() - spent_before;
+            unspent = unspent.saturating_sub(spent_here);
+            // a transaction that spends a note of this wallet was made with this wallet's key:
+            // whatever it pays to this wallet is the wallet's OWN output (its change, a merge),
+            // also on a restore, where no pending record says so (RW3-3)
+            let spends_own = spent_here > 0;
             // 4. outputs
             for (j, out) in tx.outputs.into_iter().enumerate() {
+                // 5. the running hash over the ciphertexts, as the node keeps it
+                self.ciphertext_acc = B32(ciphertext_acc_step(&self.ciphertext_acc.0, &out.cm, &out.kem_ct, &out.note_ct));
                 let store = match &out.mine {
+                    // the wallet's own output: always stored (RW3-2, RW3-3)
+                    Some(_) if (out.own || spends_own) && unspent < MAX_UNSPENT_NOTES_LIMIT + OWN_OUTPUT_SLACK => {
+                        report.own_outputs_from_record += out.own as usize;
+                        true
+                    }
                     Some((value, _, _)) if *value < self.min_note_value => {
                         self.below_minimum.add(*value);
                         report.not_stored += 1;
                         false
                     }
-                    Some((value, _, _)) if self.notes.len() >= MAX_STORED_NOTES => {
+                    Some((value, _, _)) if unspent >= self.max_unspent_notes as usize => {
                         self.over_capacity.add(*value);
                         report.not_stored += 1;
                         false
@@ -1732,6 +2244,7 @@ impl WalletState {
                     Some(_) => true,
                     None => false,
                 };
+                unspent += store as usize;
                 let leaf = self.tree.append(&out.cm, store).map_err(|_| WalletError::Internal("the tree refused a checked leaf"))?;
                 if let (true, Some((value, r_b, rho))) = (store, out.mine) {
                     let nf = nk.as_ref().map(|nk| B32(field::bytes(&nullifier(nk, &rho))));
@@ -1768,6 +2281,7 @@ impl WalletState {
                 nullifier_acc: self.nullifier_acc,
                 note_count: self.tree.note_count,
                 nullifier_count: self.nullifier_count,
+                ciphertext_acc: self.ciphertext_acc,
             };
             match self.checkpoints.last_mut() {
                 Some(last) if last.height >= tx.height => *last = c,
@@ -1778,6 +2292,7 @@ impl WalletState {
             }
             report.txs += 1;
         }
+        report.spent_dropped = self.drop_old_spent();
         self.next_height = page.next_height;
         report.next_height = page.next_height;
         report.at_tip = page.next_height > page.tip_height;
@@ -1867,9 +2382,9 @@ mod tests {
         let s = WalletState::new([1u8; 32]);
         let json = s.to_json().unwrap();
         assert_eq!(WalletState::from_json(&json).unwrap(), s);
-        assert!(json.contains("\"version\":3") && json.contains("\"revision\":0"));
+        assert!(json.contains("\"version\":4") && json.contains("\"revision\":0"));
         assert!(WalletState::from_json("{}").is_err());
-        assert!(WalletState::from_json(&json.replace("\"version\":3", "\"version\":4")).is_err());
+        assert!(WalletState::from_json(&json.replace("\"version\":4", "\"version\":5")).is_err());
         assert!(WalletState::from_json(&json.replace("\"note_count\":0", "\"note_count\":18446744073709551615")).is_err());
         assert!(WalletState::from_json(&json.replace("\"min_note_value\":\"1000000000\"", "\"min_note_value\":\"0\"")).is_err());
         // a truncated frontier is refused, not indexed out of bounds later

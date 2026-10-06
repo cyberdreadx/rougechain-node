@@ -9,8 +9,12 @@
 //!   secret key**: the caller signs and calls [`BuiltTx::signed_envelope`].
 //! * `shielded_transfer_v2`, `unshield_v2` — signer-less: `version` 1, empty `from_pub_key` and
 //!   `sig`, `nonce` 0, no `signed_payload`, envelope `fee` 0.0. Ready to submit — and, once it
-//!   has left the wallet, valid until `expiry_height` whatever any node answers: record it with
-//!   [`crate::WalletState::mark_pending`] ([`BuiltTx::pending`]) before submitting.
+//!   has left the wallet, valid until `expiry_height` whatever any node answers. So **building
+//!   and locking are one operation** (REVIEW_WALLET_3 RW3-5): [`build_transfer`] and
+//!   [`build_unshield`] take the wallet state and the revision the caller expects, and return
+//!   the transaction TOGETHER with the new state in which its inputs are locked and the pending
+//!   entry is recorded ([`LockedTx`]). No function of this crate returns a proven spend without
+//!   that state. **The client's rule is one sentence: persist the returned state, then submit.**
 //!
 //! Randomness (spec §5.6, §5.7): the commitment randomness `r` of both outputs, `sk` / `rho` /
 //! `r` of every dummy input, the `pk` and the ML-KEM key of a zero-value output, the ML-KEM
@@ -38,7 +42,7 @@ use crate::error::WalletError;
 use crate::field;
 use crate::keys::{account_from_pub_key, ShieldedAddress, ShieldedKeys};
 use crate::note_enc::{encrypt_note, encrypt_to_nobody};
-use crate::store::{PendingChange, PendingStatus, PendingTx, SpendInput, B32};
+use crate::store::{PendingChange, PendingStatus, PendingTx, SpendInput, WalletState, B32};
 
 /// The default distance between the anchor's height and `expiry_height`
 /// ([`TxContext::new`]): 64 blocks. Every client SHOULD use exactly this offset (a fixed offset
@@ -50,6 +54,12 @@ pub const DEFAULT_EXPIRY_OFFSET: u64 = 64;
 /// I-1). **`expiry_height` is the only bound on how long a signer-less transaction stays valid**,
 /// which is why the builders and `mark_pending` enforce this distance: the notes a pending
 /// transaction locks are released in bounded time (REVIEW_WALLET_1 F-7).
+///
+/// **For a transfer or an unshield the distance is measured from the wallet's CONFIRMED height**
+/// (REVIEW_WALLET_3 RW3-7): `expiry_height ≤ confirmed_height + 128`. The node accepts a
+/// transaction while `expiry_height ≥ H`, so the last block that can hold it is block
+/// `expiry_height`; once the confirmed height reaches it, the entry is settled — mined,
+/// superseded or expired. A height that only one node claimed is never part of the bound.
 pub const MAX_EXPIRY_OFFSET: u64 = SHIELD_V2_ANCHOR_WINDOW as u64;
 /// The fee ceiling a builder applies when the caller sets none: 10 × the consensus minimum fee
 /// (10 XRGE). A fee above the ceiling is refused, so that a unit mistake in a caller cannot burn
@@ -67,8 +77,9 @@ pub struct TxContext {
     /// the input notes' paths lead to — the wallet's own tree root once it has scanned to the tip
     /// (`WalletState::anchor`), which is the node's `latest_anchor`.
     pub anchor: [u8; 32],
-    /// The height of the block whose pool state has that root: the height the wallet has scanned
-    /// through (`WalletState::scanned_height`), the node's tip for a shield.
+    /// The height `expiry_height` is measured from: the node's tip for a shield; for a transfer
+    /// or an unshield the wallet's CONFIRMED height ([`WalletState::spend_base`]), set by the
+    /// builders — a caller cannot choose it.
     pub anchor_height: u64,
     /// The last block height at which the transaction is valid. Must be above `anchor_height`
     /// and at most [`MAX_EXPIRY_OFFSET`] blocks after it; [`TxContext::new`] sets
@@ -138,6 +149,8 @@ pub struct UnprovenTx {
     pub input_positions: Vec<u64>,
     pub input_total: u64,
     pub expiry_height: u64,
+    /// The payment output goes to the sender's own address (a self-merge).
+    pub payment_to_self: bool,
     shield_sender: Option<(String, u64)>,
 }
 
@@ -155,6 +168,8 @@ pub struct BuiltTx {
     pub input_positions: Vec<u64>,
     pub input_total: u64,
     pub expiry_height: u64,
+    /// The payment output goes to the sender's own address (a self-merge).
+    pub payment_to_self: bool,
     /// The envelope of spec §3.1. For a `shield_v2` its `sig` is still empty.
     pub envelope: TxV1,
     /// `shield_v2` only: the bytes the funding account's ML-DSA-65 key signs. `None` for the two
@@ -178,15 +193,18 @@ fn output_commitments_of(body: &[u8]) -> [[u8; 32]; 2] {
 }
 
 /// The record [`crate::WalletState::mark_pending`] takes: the two nullifiers and the two output
-/// commitments (together they identify the transaction in a listing), the input notes, the change
-/// the wallet expects and the expiry height. `None` for a shield (it spends no note).
-fn pending_of(kind: TxKind, body: &[u8], outputs: &[OutputRecord; 2], inputs: &[u64], input_total: u64, expiry_height: u64) -> Option<PendingTx> {
+/// commitments (together they identify the transaction in a listing), the input notes, the
+/// expiry height, and **the notes the transaction creates for the wallet itself** — its change,
+/// and its payment when it pays itself — each with value and `r`, so that the wallet stores them
+/// from its own record whatever a listing serves as their ciphertexts (REVIEW_WALLET_3 RW3-2).
+/// `None` for a shield (it spends no note).
+fn pending_of(kind: TxKind, body: &[u8], outputs: &[OutputRecord; 2], inputs: &[u64], input_total: u64, expiry_height: u64, payment_to_self: bool) -> Option<PendingTx> {
     if kind == TxKind::Shield || inputs.is_empty() {
         return None;
     }
     let nf = nullifiers_of(body);
     let cm = output_commitments_of(body);
-    let change = outputs.iter().find(|o| o.role == OutputRole::Change).map(|o| PendingChange { cm: B32(o.cm), value: o.value });
+    let own = |role: OutputRole| outputs.iter().find(|o| o.role == role).map(|o| PendingChange { cm: B32(o.cm), value: o.value, r: Some(B32(o.r)) });
     Some(PendingTx {
         tx_type: kind.tx_type().to_string(),
         nullifiers: vec![B32(nf[0]), B32(nf[1])],
@@ -195,11 +213,13 @@ fn pending_of(kind: TxKind, body: &[u8], outputs: &[OutputRecord; 2], inputs: &[
         // filled in by `mark_pending` from the notes of the state
         input_cms: Vec::new(),
         input_total,
-        change,
+        change: own(OutputRole::Change),
+        own_payment: if payment_to_self { own(OutputRole::Payment) } else { None },
         expiry_height,
         status: PendingStatus::Pending,
         seen_height: None,
         rejected_hint: false,
+        abandoned_hint: false,
         legacy: false,
     })
 }
@@ -214,10 +234,10 @@ impl BuiltTx {
         output_commitments_of(&self.body)
     }
 
-    /// What to hand to [`crate::WalletState::mark_pending`] BEFORE submitting a transfer or an
-    /// unshield. `None` for a shield.
+    /// The pending record of a transfer or an unshield — what the builders recorded in the state
+    /// they returned with this transaction. `None` for a shield.
     pub fn pending(&self) -> Option<PendingTx> {
-        pending_of(self.kind, &self.body, &self.outputs, &self.input_positions, self.input_total, self.expiry_height)
+        pending_of(self.kind, &self.body, &self.outputs, &self.input_positions, self.input_total, self.expiry_height, self.payment_to_self)
     }
 
     /// The envelope as the JSON the node's transaction routes take.
@@ -390,6 +410,7 @@ fn assemble(
     amounts: Amounts,
     spent: (&[SpendInput], u64),
     shield_sender: Option<(String, u64)>,
+    payment_to_self: bool,
     rnd: &mut dyn TxRandom,
 ) -> Result<UnprovenTx, WalletError> {
     // the nullifiers first: each output's rho is H_rho(nf1, nf2, j) (spec §5.5)
@@ -466,6 +487,7 @@ fn assemble(
         input_positions: spent.0.iter().map(|n| n.position).collect(),
         input_total: spent.1,
         expiry_height: ctx.expiry_height,
+        payment_to_self,
         shield_sender,
     })
 }
@@ -473,7 +495,7 @@ fn assemble(
 impl UnprovenTx {
     /// See [`BuiltTx::pending`].
     pub fn pending(&self) -> Option<PendingTx> {
-        pending_of(self.kind, &self.body, &self.outputs, &self.input_positions, self.input_total, self.expiry_height)
+        pending_of(self.kind, &self.body, &self.outputs, &self.input_positions, self.input_total, self.expiry_height, self.payment_to_self)
     }
 
     /// TEST VECTORS ONLY (spec §8.4): the witness, for the vector file and its checker.
@@ -486,7 +508,7 @@ impl UnprovenTx {
     /// which verifies its own output, and wraps body and proof in the envelope of spec §3.1. The
     /// witness is dropped (wiped) as soon as the prover returns.
     pub fn prove(self) -> Result<BuiltTx, WalletError> {
-        let UnprovenTx { kind, body, binding, public, witness, outputs, input_positions, input_total, expiry_height, shield_sender } = self;
+        let UnprovenTx { kind, body, binding, public, witness, outputs, input_positions, input_total, expiry_height, payment_to_self, shield_sender } = self;
         let proof = prove_spend(&witness, &public);
         drop(witness); // wiped: nothing needs it after the proof
         let proof = proof?;
@@ -520,6 +542,7 @@ impl UnprovenTx {
             input_positions,
             input_total,
             expiry_height,
+            payment_to_self,
             envelope,
             signing_bytes,
         })
@@ -569,7 +592,7 @@ fn assemble_shield(req: &ShieldRequest<'_>, src: Source<'_>) -> Result<UnprovenT
     ];
     let inputs = [dummy_input(rnd, 0)?, dummy_input(rnd, 1)?];
     let amounts = Amounts { v_in: req.v_in, v_out: 0, fee: req.fee, account };
-    assemble(TxKind::Shield, &req.ctx, inputs, outs, amounts, (&[], 0), Some((hex::encode(req.from_pub_key), req.nonce)), rnd)
+    assemble(TxKind::Shield, &req.ctx, inputs, outs, amounts, (&[], 0), Some((hex::encode(req.from_pub_key), req.nonce)), false, rnd)
 }
 
 /// Builds and proves a `shield_v2`. The result's envelope still needs the account signature over
@@ -580,7 +603,10 @@ pub fn build_shield(req: &ShieldRequest<'_>) -> Result<BuiltTx, WalletError> {
 
 // ---- transfer --------------------------------------------------------------------------------------
 
-/// `shielded_transfer_v2`: `amount` to `recipient`, the rest minus `fee` back to the sender.
+/// The assembly's own input for a `shielded_transfer_v2`: a context and notes with their paths.
+/// **Not a way to build**: no public function of a wallet build takes it (the builders make it
+/// from the state — [`build_transfer`]); the `test-vectors` feature assembles unproven bodies
+/// from it.
 pub struct TransferRequest<'a> {
     pub ctx: TxContext,
     pub keys: &'a ShieldedKeys,
@@ -630,19 +656,13 @@ fn assemble_transfer(req: &TransferRequest<'_>, src: Source<'_>) -> Result<Unpro
         OutSpec { role: OutputRole::Change, value: change, pk: *req.keys.pk(), ek: Some(&own) },
     ];
     let amounts = Amounts { v_in: 0, v_out: 0, fee: req.fee, account: [0u8; 32] };
-    assemble(TxKind::Transfer, &req.ctx, inputs, outs, amounts, (req.inputs, total), None, rnd)
-}
-
-/// Builds and proves a `shielded_transfer_v2`. Ready to submit — after
-/// [`crate::WalletState::mark_pending`].
-pub fn build_transfer(req: &TransferRequest<'_>) -> Result<BuiltTx, WalletError> {
-    assemble_transfer(req, Source::Hedged(&mut OsEntropy))?.prove()
+    let payment_to_self = req.recipient.pk == own.pk;
+    assemble(TxKind::Transfer, &req.ctx, inputs, outs, amounts, (req.inputs, total), None, payment_to_self, rnd)
 }
 
 // ---- unshield --------------------------------------------------------------------------------------
 
-/// `unshield_v2`: `v_out` quanta to the public account `to_account`, the rest minus `fee` back to
-/// the sender as a note.
+/// The assembly's own input for an `unshield_v2`, as [`TransferRequest`].
 pub struct UnshieldRequest<'a> {
     pub ctx: TxContext,
     pub keys: &'a ShieldedKeys,
@@ -678,13 +698,127 @@ fn assemble_unshield(req: &UnshieldRequest<'_>, src: Source<'_>) -> Result<Unpro
         OutSpec { role: OutputRole::Dummy, value: 0, pk: derive_pk(&entropy::digest(rnd, Draw::NobodyPk, 0)?), ek: None },
     ];
     let amounts = Amounts { v_in: 0, v_out: req.v_out, fee: req.fee, account: req.to_account };
-    assemble(TxKind::Unshield, &req.ctx, inputs, outs, amounts, (req.inputs, total), None, rnd)
+    assemble(TxKind::Unshield, &req.ctx, inputs, outs, amounts, (req.inputs, total), None, false, rnd)
 }
 
-/// Builds and proves an `unshield_v2`. Ready to submit — after
-/// [`crate::WalletState::mark_pending`].
-pub fn build_unshield(req: &UnshieldRequest<'_>) -> Result<BuiltTx, WalletError> {
-    assemble_unshield(req, Source::Hedged(&mut OsEntropy))?.prove()
+// ---- build and lock (REVIEW_WALLET_3 RW3-5, RW3-7) ------------------------------------------------------
+
+/// What every spend from the wallet's notes needs besides its amounts.
+#[derive(Clone, Debug)]
+pub struct SpendOptions<'a> {
+    /// The chain id string, e.g. `rougechain-mainnet-1`.
+    pub chain_id: &'a str,
+    /// Leaf positions of the one or two notes to spend (from coin selection).
+    pub inputs: &'a [u64],
+    /// The last block height at which the transaction is valid. `None`: the confirmed height
+    /// + [`DEFAULT_EXPIRY_OFFSET`]. It must be above the confirmed height and at most
+    /// [`MAX_EXPIRY_OFFSET`] above it.
+    pub expiry_height: Option<u64>,
+    /// `false`: every input must be a confirmed note and the wallet's tree root must be the
+    /// confirmed one. `true` — the caller's explicit decision — also spends notes known from one
+    /// node's listing only, on that listing's root. The expiry is measured from the confirmed
+    /// height either way, and a state without a confirmed height builds nothing.
+    pub allow_unverified: bool,
+    /// The highest fee the caller accepts; `None`: [`DEFAULT_MAX_FEE_QUANTA`].
+    pub max_fee: Option<u64>,
+}
+
+/// `shielded_transfer_v2`: `amount` to `recipient`, the rest minus `fee` back to the sender.
+#[derive(Clone, Debug)]
+pub struct TransferParams<'a> {
+    pub spend: SpendOptions<'a>,
+    pub recipient: &'a ShieldedAddress,
+    pub amount: u64,
+    pub fee: u64,
+}
+
+/// `unshield_v2`: `v_out` quanta to the public account `to_account`, the rest minus `fee` back to
+/// the sender as a note.
+#[derive(Clone, Debug)]
+pub struct UnshieldParams<'a> {
+    pub spend: SpendOptions<'a>,
+    /// The 32-byte payload of the `rouge1` address that receives `v_out`.
+    pub to_account: [u8; 32],
+    pub v_out: u64,
+    pub fee: u64,
+}
+
+/// A proven transfer or unshield **and the wallet state in which it is recorded**: its inputs
+/// locked, its pending entry (nullifiers, outputs, own outputs with their `r`, expiry) in the
+/// list, the revision one higher.
+///
+/// **Persist `state`, then submit `tx`.** If the state is not persisted (a crash, a failed
+/// write, a `stale_state` from the storage's compare-and-swap), do not submit: build again from
+/// the stored state. A transaction that was submitted from a state that was lost is a live
+/// payment the wallet does not know — the one thing this type exists to prevent.
+pub struct LockedTx {
+    pub tx: BuiltTx,
+    pub state: WalletState,
+}
+
+/// The context and the inputs of a spend, from the state alone: nothing a caller or a single
+/// node says about heights enters it.
+fn spend_inputs(state: &WalletState, expected_revision: u64, keys: &ShieldedKeys, o: &SpendOptions<'_>) -> Result<(TxContext, Vec<SpendInput>), WalletError> {
+    state.expect_revision(expected_revision)?;
+    if state.pk() != keys.address().pk {
+        return Err(WalletError::Request("this state belongs to another wallet".into()));
+    }
+    if o.chain_id.is_empty() {
+        return Err(WalletError::Request("chain_id is empty".into()));
+    }
+    if o.inputs.is_empty() || o.inputs.len() > 2 {
+        return Err(WalletError::Request("inputs must name one or two note positions".into()));
+    }
+    let (anchor, confirmed) = state.spend_base(o.allow_unverified)?;
+    let mut ctx = TxContext::new(o.chain_id, anchor, confirmed);
+    if let Some(e) = o.expiry_height {
+        ctx.expiry_height = e;
+    }
+    ctx.check()?;
+    let inputs = o.inputs.iter().map(|&p| state.spend_input_with(p, o.allow_unverified)).collect::<Result<Vec<_>, _>>()?;
+    Ok((ctx, inputs))
+}
+
+/// The state with `tx` recorded as pending and its inputs locked.
+fn locked(state: &WalletState, tx: &UnprovenTx) -> Result<WalletState, WalletError> {
+    let mut next = state.clone();
+    next.mark_pending(tx.pending().ok_or(WalletError::Internal("a spend without a pending record"))?)?;
+    Ok(next)
+}
+
+fn transfer_request<'a>(ctx: TxContext, keys: &'a ShieldedKeys, inputs: &'a [SpendInput], p: &TransferParams<'a>) -> TransferRequest<'a> {
+    TransferRequest { ctx, keys, inputs, recipient: p.recipient, amount: p.amount, fee: p.fee, max_fee: p.spend.max_fee }
+}
+
+fn unshield_request<'a>(ctx: TxContext, keys: &'a ShieldedKeys, inputs: &'a [SpendInput], p: &UnshieldParams<'a>) -> UnshieldRequest<'a> {
+    UnshieldRequest { ctx, keys, inputs, to_account: p.to_account, v_out: p.v_out, fee: p.fee, max_fee: p.spend.max_fee }
+}
+
+/// Builds and proves a `shielded_transfer_v2` **and locks its inputs**: one operation.
+///
+/// * `state` must be at `expected_revision` — the revision the caller read from its storage
+///   ([`WalletError::StaleState`] otherwise);
+/// * the anchor and the height the expiry is measured from come from the state's CONFIRMED
+///   checkpoint ([`WalletState::spend_base`]); `expiry_height ≤ confirmed height + 128`;
+/// * the pending entry is recorded BEFORE the proof is made, so a state that cannot take the
+///   lock (a locked or spent input, a full pending list) costs no proof.
+///
+/// Returns the transaction and the state to persist — see [`LockedTx`]. The input `state` is not
+/// changed: on any error the caller still has what it had.
+pub fn build_transfer(state: &WalletState, expected_revision: u64, keys: &ShieldedKeys, p: &TransferParams<'_>) -> Result<LockedTx, WalletError> {
+    let (ctx, inputs) = spend_inputs(state, expected_revision, keys, &p.spend)?;
+    let unproven = assemble_transfer(&transfer_request(ctx, keys, &inputs, p), Source::Hedged(&mut OsEntropy))?;
+    let next = locked(state, &unproven)?;
+    Ok(LockedTx { tx: unproven.prove()?, state: next })
+}
+
+/// Builds and proves an `unshield_v2` **and locks its inputs**: one operation, as
+/// [`build_transfer`].
+pub fn build_unshield(state: &WalletState, expected_revision: u64, keys: &ShieldedKeys, p: &UnshieldParams<'_>) -> Result<LockedTx, WalletError> {
+    let (ctx, inputs) = spend_inputs(state, expected_revision, keys, &p.spend)?;
+    let unproven = assemble_unshield(&unshield_request(ctx, keys, &inputs, p), Source::Hedged(&mut OsEntropy))?;
+    let next = locked(state, &unproven)?;
+    Ok(LockedTx { tx: unproven.prove()?, state: next })
 }
 
 // ---- test vectors only -----------------------------------------------------------------------------
@@ -706,6 +840,21 @@ pub mod deterministic {
     }
     pub fn unshield(req: &UnshieldRequest<'_>, label: &str) -> Result<UnprovenTx, WalletError> {
         assemble_unshield(req, Source::Stream(&mut DeterministicEntropy::new(label)))
+    }
+    /// [`super::build_transfer`] without the proof: the same state checks, the same context from
+    /// the confirmed height, the same lock — and an unproven body with deterministic randomness.
+    pub fn transfer_locked(state: &WalletState, expected_revision: u64, keys: &ShieldedKeys, p: &TransferParams<'_>, label: &str) -> Result<(UnprovenTx, WalletState), WalletError> {
+        let (ctx, inputs) = spend_inputs(state, expected_revision, keys, &p.spend)?;
+        let unproven = assemble_transfer(&transfer_request(ctx, keys, &inputs, p), Source::Stream(&mut DeterministicEntropy::new(label)))?;
+        let next = locked(state, &unproven)?;
+        Ok((unproven, next))
+    }
+    /// [`super::build_unshield`] without the proof, as [`transfer_locked`].
+    pub fn unshield_locked(state: &WalletState, expected_revision: u64, keys: &ShieldedKeys, p: &UnshieldParams<'_>, label: &str) -> Result<(UnprovenTx, WalletState), WalletError> {
+        let (ctx, inputs) = spend_inputs(state, expected_revision, keys, &p.spend)?;
+        let unproven = assemble_unshield(&unshield_request(ctx, keys, &inputs, p), Source::Stream(&mut DeterministicEntropy::new(label)))?;
+        let next = locked(state, &unproven)?;
+        Ok((unproven, next))
     }
     /// The production assembly (operating-system entropy, hedged) without the proof — for tests
     /// that need many bodies and no proofs.
