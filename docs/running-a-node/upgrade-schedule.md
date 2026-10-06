@@ -18,6 +18,11 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Contracts read NFT royalty (CONTRACT_NFT_ROYALTY) | 235 | 1360 |
 | Monetary-integrity rule (MONETARY_INTEGRITY) | 245 | 1390 |
 
+**Every height in this table has been reached** on both networks (mainnet height 251, testnet past
+1390, on 2026-10-06). Nothing is scheduled beyond them; the next consensus changes — restoring the
+types suspended at 245, the shielded pool V2, and the consensus redesign decided on 2026-10-06 — have
+no heights yet and will be announced in advance (see [Status & Roadmap](../status.md)).
+
 **Testnet validator cleanup (block 1240, testnet only):** 99% of testnet's stake sat on validator
 `4e094d21…`, whose key nobody holds, so it could never sign finality votes. At block 1240 its stake is
 returned to its balance and set to zero, and the testnet node's own key (staked beforehand) becomes the
@@ -35,6 +40,8 @@ because testnet's earliest blocks predate stored receipts. Proposer selection an
   primary updates both services — each still follows its own schedule.
 
 ## Runbook: activating TOKEN_MINTING (together with CONTRACT_NFT_ROYALTY)
+
+> Completed: testnet 1360, mainnet 235. Kept as the template for the next scheduled upgrade.
 
 TOKEN_MINTING is a hard fork: from its height, `create_token` may carry `token_mintable` /
 `token_max_supply` (an old node drops those fields, computes a different block `tx_hash` and rejects

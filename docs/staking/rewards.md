@@ -8,13 +8,13 @@ Validators earn a share of the transaction fees in every block on RougeChain.
 |--------|-------------|
 | **Transaction fees** | Your share of the tip pool from transactions in each block (proposer + stake-weighted validator share) |
 
-There is no fixed block reward: validator income comes only from fees (plus the minimum-tip subsidy from the staking reserve, below).
+There is no fixed block reward: validator income comes only from fees. The minimum-tip subsidy described below exists in the code but pays nothing on mainnet, because its reserve is empty.
 
 ## How Rewards Work
 
 1. The designated proposer (the eligible validator with the most stake) proposes a block when there are pending transactions
 2. The proposer assembles pending transactions; each transaction's full signed fee is debited from its sender
-3. Fees are split, not paid entirely to the proposer: up to **half of the base fee per transaction is burned** (`burned = min(total fees, base fee × tx count ÷ 2)`), and the remaining tip pool is distributed **20% to the proposer, 70% among all staked, non-jailed validators (stake-weighted), and 10% to the treasury**. If the tip pool is below 0.1 XRGE it is topped up from the staking reserve.
+3. Fees are split, not paid entirely to the proposer: up to **half of the base fee per transaction is burned** (`burned = min(total fees, base fee × tx count ÷ 2)`), and the remaining tip pool is distributed **20% to the proposer, 70% among all staked, non-jailed validators (stake-weighted), and 10% to the treasury**. If the tip pool is below 0.1 XRGE the code tops it up from the `__staking_rewards__` reserve — which holds **0 XRGE** on mainnet (2026-10-06; it was never funded), so no top-up happens. Every validator in the set is paid its stake-weighted share whether or not it voted on the block.
 4. Rewards are credited when the block is applied to state
 
 ## Fee Structure
@@ -46,7 +46,7 @@ Rewards depend on:
 | Scenario | Value |
 |----------|-------|
 | Your stake | 10,000 XRGE |
-| Total staked | 100,000 XRGE |
+| Total staked | 100,000 XRGE (illustrative — mainnet's total is about 100.1 M XRGE, over 99.9 % of it in one validator, so a 10,000 XRGE stake earns about 0.01 % of the validator pool today) |
 | Your share | 10% |
 | Your share of the validator pool | 10% of 70% of each block's tip pool |
 | Avg fee per block | varies with network activity |

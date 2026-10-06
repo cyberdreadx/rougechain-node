@@ -234,7 +234,6 @@ The faucet refuses a request with `429` while you already have a faucet transfer
 | `create_token` | Create custom token (`token_mintable` / `token_max_supply` only from TOKEN_MINTING activation) |
 | `mint_tokens` | Creator mints more of a mintable token (`token_total_supply` = amount) — applied only from TOKEN_MINTING activation |
 | `burn` | Burn tokens permanently |
-| `shield` | Shield tokens (make private) |
-| `unshield` | Unshield tokens (make public) |
+| `shield` / `shielded_transfer` / `unshield` | **Suspended since block 245** (V1 shielded pool; a block carrying one is invalid). Also suspended: `token_lock`, `token_unlock`, `create_staking_pool`, `token_stake`, `token_unstake`, `create_proposal`, `cast_vote`, `execute_proposal`, `delegate`, `undelegate`, `token_approve`, `token_transfer_from`; and `slash` is rejected. See [Status](../status.md#suspended-since-block-245) |
 | `contract_deploy` | Deploy WASM smart contract |
 | `contract_call` | Call smart contract method |

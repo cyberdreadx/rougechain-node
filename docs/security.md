@@ -1,7 +1,7 @@
 # Security Overview
 
 An honest summary of what is post-quantum-secured today and what is not. For live/pending status
-see [Status & Roadmap](status.md).
+see [Status & Roadmap](status.md). _Last reviewed: 2026-10-06._
 
 ## RougeChain L1 — post-quantum-secured
 
@@ -17,6 +17,15 @@ see [Status & Roadmap](status.md).
   was used for, both received and sent.
 - These algorithms are quantum-resistant under current cryptographic understanding. No system can
   promise more than that, and implementation bugs remain possible.
+- **Shielded transfers are not available.** The V1 shielded pool is suspended since block 245: its
+  STARK proof established value balance only, did not bind a withdrawal to a specific note, and its
+  prover has no zero-knowledge mode, so it did not deliver privacy. The mainnet pool was empty. A
+  redesigned pool (V2, Plonky3-based with a hiding mode, launching under a 1,000,000 XRGE cap) is in
+  development and **unaudited**; nothing may claim audited privacy until an external audit covers it.
+- **Messenger and mail are node-hosted, not on-chain.** Since node release 1.6.3 a directory entry can
+  be replaced only by the signing key that owns it, an encryption key registered to another wallet is
+  refused, and the unauthenticated legacy read routes return `410 Gone`. Nodes before 1.6.3 do not
+  enforce this.
 
 ## Bridges — mixed
 
@@ -28,7 +37,11 @@ see [Status & Roadmap](status.md).
 | Bitcoin (qBTC) | Separate bridge; Bitcoin custody uses Bitcoin's classical signatures |
 
 So: assets held **on RougeChain** are protected by post-quantum signatures. The **Base-side
-custody** of bridged assets is not post-quantum today.
+custody** of bridged assets is not post-quantum today. The bridges are operator-run (deposit
+watcher, relayers and the `bridge_mint` key), the ETH/USDC contract is owned by a single hot key, and
+**no bridge component has been externally audited**. ETH/USDC deposits go through the contract's
+`depositETH` / `depositERC20` and are claimed automatically; the manual claim route is closed at the
+public endpoint. Bitcoin deposits are live; Bitcoin withdrawals are switched off in the site.
 
 ## What V3 will change (not activated)
 
@@ -44,10 +57,17 @@ externally audited.
 
 Verified BFT finality ([FINALITY_V2](staking/finality.md)) is **live since block 150**: every block
 carries a certificate of ML-DSA-65 precommits from more than two thirds of stake for its parent, and
-nodes reject blocks without one. Stake is still concentrated in few keys, which limits what any BFT
-guarantee means until the validator set broadens.
+nodes reject blocks without one. Stake is still concentrated in few keys — three validators are
+staked and one holds more than 99.9 % of the stake, so its own vote is the quorum — which limits what
+any BFT guarantee means until the validator set broadens.
+
+**No slashing is active.** Missed-block slashing is frozen since block 100, the legacy `slash`
+transaction is rejected since block 245, and evidence-based slashing does not exist yet. The 10,000
+XRGE minimum stake is enforced by the node API, not by consensus.
 
 ## Decentralization
 
 Validator stake and bridge operation are currently concentrated in a small operator set. This is a
-known limitation and part of the roadmap.
+known limitation and part of the roadmap: a consensus redesign (rotating proposers, a capped validator
+set, a consensus-enforced minimum stake, evidence-based slashing) was decided on 2026-10-06 and is
+**not built**; see [Status & Roadmap](status.md#consensus-redesign--decided-2026-10-06-not-built).

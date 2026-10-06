@@ -38,7 +38,7 @@ Returns bridge status, custody address, chain ID, and supported tokens.
 POST /api/bridge/claim
 ```
 
-Claim wrapped **qETH** or **qUSDC** after depositing ETH or USDC on Base. (Usually automatic — see the auto-claim note below.)
+Claim wrapped **qETH** or **qUSDC** after depositing ETH or USDC on Base. **Closed at the public mainnet endpoint** (`api.rougechain.io` refuses it at the reverse proxy): deposits made through the contract's `depositETH` / `depositERC20` are claimed automatically — see the auto-claim note below. Documented for operators running their own node.
 
 **Body:**
 ```json
@@ -59,8 +59,9 @@ amount), checks the EVM signature, requires the configured confirmation depth
 > **Auto-claim:** with the deposit watcher enabled (default), the relayer detects
 > `BridgeDepositETH` / `BridgeDepositERC20` events on Base and claims them for you
 > via [`/api/bridge/deposit/auto-claim`](#deposit-auto-claim) — no manual claim
-> needed. This endpoint remains available as a manual fallback. Claims are deduped,
-> so an auto-claim and a manual claim of the same deposit cannot double-mint.
+> needed. This endpoint remains in the node as an operator fallback but is not open to the
+> public. Claims are deduped, so an auto-claim and a manual claim of the same deposit cannot
+> double-mint.
 
 ### Bridge Withdraw
 

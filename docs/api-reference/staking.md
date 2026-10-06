@@ -46,7 +46,7 @@ GET /api/validators
 | `name` | string | Node name, if known (omitted otherwise) |
 | `stake` | number | Amount of XRGE staked |
 | `status` | string | `active`, `jailed` or `inactive` (no stake) |
-| `slashCount` | number | Times this validator has been slashed |
+| `slashCount` | number | Times this validator has been slashed (historical: no slashing is active since height 100, and the `slash` transaction is rejected since height 245) |
 | `jailedUntil` | number | Block height the validator is jailed until (`0` if never) |
 | `entropyContributions` | number | Entropy contributions counter |
 | `blocksProposed` | number | Total blocks produced |
@@ -90,7 +90,7 @@ No transaction id is returned; check `/api/validators` once the transaction is i
 
 | Requirement | Value |
 |-------------|-------|
-| Minimum stake | 10,000 XRGE |
+| Minimum stake | 10,000 XRGE — checked by this API (and the CLI), not by consensus; a block applying a smaller stake is valid |
 | Fee | 1 XRGE (fixed for stake and unstake) |
 
 ---

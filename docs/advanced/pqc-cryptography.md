@@ -105,20 +105,33 @@ const valid = ml_dsa65.verify(signature, message, publicKey);
 3. **Side channels** - Library implementations are designed to be constant-time
 4. **Hybrid approach** - Consider adding classical signatures for defense-in-depth
 
-## zk-STARKs (Zero-Knowledge Proofs)
+## STARKs (hash-based proofs)
 
-RougeChain includes a zk-STARK proof system for privacy-preserving transaction verification. STARKs are **quantum-resistant by design** — they rely only on hash functions, not elliptic curves.
+RougeChain's crypto crate includes a STARK proof module. STARKs are **quantum-resistant by design** —
+they rely only on hash functions, not elliptic curves.
+
+> **Status (2026-10-06).** The circuits below are built on `winterfell` 0.13, which has **no
+> zero-knowledge mode**: a proof shows the computation was done correctly but does not hide its
+> inputs. They are integrity proofs, not privacy proofs, and **no live feature uses them**: the V1
+> shielded pool that did is suspended since block 245 (its proof established value balance only and
+> did not bind a withdrawal to a specific note; the mainnet pool was empty), and the rollup below is
+> a prototype that is not connected to consensus. A redesigned shielded pool (V2) is specified and in
+> development on a Plonky3-based STARK with a hiding mode (proofs about 190 KB, verify about 6 ms,
+> prove about 3 s on a phone), to launch under a 1,000,000 XRGE pool cap before the external audit.
+> It is **not audited**; nothing may claim audited privacy until it is.
 
 ### How It Works
 
-The STARK module can prove that a balance transfer is valid (value is conserved, sender has sufficient funds) **without revealing** the actual balances or transfer amount. The verifier only sees the final balances.
+The STARK module proves that a balance transfer is consistent (value is conserved, sender has
+sufficient funds). The public inputs are the final balances; because the prover has no hiding mode,
+the other values are not kept private by the proof.
 
 | Property | Value |
 |----------|-------|
-| Library | [winterfell](https://github.com/facebook/winterfell) (Meta) |
+| Library | [winterfell](https://github.com/facebook/winterfell) 0.13 (Meta) — no zero-knowledge mode |
 | Hash function | Blake3-256 |
 | Quantum resistance | ✅ Hash-based (no EC) |
-| Proof type | Balance transfer (value conservation) |
+| Proof type | Balance transfer (value conservation) — integrity only |
 
 ### Usage
 
@@ -140,9 +153,11 @@ let public_inputs = BalanceTransferInputs {
 verify_balance_transfer(proof, public_inputs).unwrap();
 ```
 
-## zk-STARK Rollup Batch Proofs (Phase 3)
+## STARK Rollup Batch Proofs (Phase 3) — research prototype
 
-The rollup system batches multiple transfers into a single STARK proof, dramatically reducing on-chain verification costs.
+The rollup accumulator batches multiple transfers into a single STARK proof. It is **not connected to
+consensus**: a batch submitted through the API moves no funds and enters no block. It is kept as
+research code.
 
 ### Rollup AIR (5-Column Trace)
 
@@ -178,7 +193,7 @@ curl -X POST https://testnet.rougechain.io/api/v2/rollup/submit \
 curl https://testnet.rougechain.io/api/v2/rollup/batch/1
 ```
 
-## Bridge Verification (STARK Bridge)
+## Bridge Deposit Verification (not STARK-based)
 
 > This section covers **deposit verification** on the RougeChain side. Releases on Base are still
 > authorized with classical keys in production. The ML-DSA-65 on-chain authorization for XRGE (V3)
@@ -192,15 +207,15 @@ Deposits from Base are cryptographically verified before minting:
 
 ## Future Roadmap
 
-- [x] zk-STARK proof system (Phase 1: balance transfer AIR)
-- [x] zk-STARK Phase 2: shielded transactions on-chain
-- [x] zk-STARK Phase 3: ZK-rollup layer
-- [x] STARK bridge deposit verification
+- [x] STARK proof system (Phase 1: balance transfer AIR) — integrity proofs, no zero-knowledge mode; unused by any live feature
+- [ ] Shielded transactions: V1 **suspended since block 245**; V2 (Plonky3, hiding mode, 1,000,000 XRGE cap) in development, unaudited
+- [ ] STARK rollup layer: prototype only, not connected to consensus
+- [x] Bridge deposit verification on the RougeChain side (EVM receipts + SHA-256 commitment nullifiers — not STARK proofs)
 - [ ] V3 XRGE bridge with on-chain ML-DSA-65 authorization — built, audit pending, **not activated** ([status](../status.md))
 - [ ] Fully trustless STARK bridge (Base light client)
 - [ ] SLH-DSA (SPHINCS+) as alternative signature scheme
 - [ ] Hybrid classical+PQC mode
 - [ ] Hardware wallet support
 - [ ] Threshold signatures for multi-sig
-- [x] WASM-compiled STARK prover for browser (`core/wasm-prover/`, served as `stark-prover.wasm`)
+- [x] WASM-compiled STARK prover for browser (`core/wasm-prover/`) — built; used by no live feature
 

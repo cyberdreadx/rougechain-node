@@ -13,9 +13,10 @@ RougeChain uses Proof of Stake (PoS) for consensus. Validators stake XRGE tokens
 
 | Requirement | Value |
 |-------------|-------|
-| Minimum stake | 10,000 XRGE (enforced on every stake call) |
-| Unbonding period | 500 blocks |
-| Slashing | 10% per violation; jailed for 20 blocks. Automatic missed-block slashing is frozen since height 100 |
+| Minimum stake | 10,000 XRGE — enforced by the node **API** on every stake call (`/api/v2/stake`, CLI), **not by consensus**: block apply accepts any positive stake, and one mainnet validator holds 9,000 XRGE |
+| Unbonding period | 500 blocks (a block count, not a duration) |
+| Slashing | **None active.** The code carries 10 % per violation and a 20-block jail, but automatic missed-block slashing is frozen since height 100, the legacy `slash` transaction is rejected since height 245, and evidence-based slashing does not exist yet |
+| Validators on mainnet (2026-10-06) | 3: about 100.09 M XRGE (producing), 10,000 XRGE and 9,000 XRGE (both non-producing) |
 
 ## Become a Validator
 
@@ -117,9 +118,12 @@ Validators earn from an **EIP-1559-inspired fee model**:
 |-----------|-------------|
 | Base fee | Half of the base fee per transaction is burned (capped at the fees collected); everything else flows into the block's tip pool |
 | Tip pool | Proposer 20% · validators 70% (stake-weighted) · treasury 10% |
-| Minimum tip | 0.1 XRGE per block (subsidized from staking reserves if needed) |
+| Minimum tip | The code tops the tip pool up to 0.1 XRGE per block from the `__staking_rewards__` reserve — but on mainnet that reserve holds **0 XRGE** (never funded), so the floor pays nothing |
 
-Fees are credited when a block is applied to state. See [Validator Economics](becoming-validator.md) for detailed reward calculations.
+Fees are credited when a block is applied to state. The validator share goes to every validator in
+the set by stake, with no check that the validator took part in finality. There is no block subsidy:
+with today's activity, rewards are small (about 541 XRGE of fees were collected over the whole chain
+up to 2026-10-06, before burning and splitting). See [Validator Economics](becoming-validator.md) for detailed reward calculations.
 
 ## PQC Security
 
@@ -134,3 +138,9 @@ Block production and staking are therefore signed with quantum-resistant keys.
 > **Finality:** verified BFT finality (FINALITY_V2 — verified ML-DSA-65 votes, recomputed quorum,
 > anti-equivocation journals) is **active on mainnet since height 150**. Every block from 151 carries a
 > ⅔-stake commit certificate for its parent. See [Finality](finality.md).
+
+> **Planned, not built:** a consensus redesign decided on 2026-10-06 — rotating stake-weighted
+> proposers, Tendermint-style rounds, an active set capped at 32, a **consensus-enforced minimum of
+> 100,000 XRGE** (30-day grace for existing validators), 21-day unbonding and evidence-based slashing.
+> Heights will be announced in advance; see [Status & Roadmap](../status.md#consensus-redesign--decided-2026-10-06-not-built).
+> Until then, everything on this page describes the rules as they run today.
