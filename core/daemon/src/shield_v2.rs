@@ -44,6 +44,20 @@
 //! and production paths answer by restoring the pre-apply snapshot — the pool store included
 //! (`ShieldV2Store::snapshot` / `restore`). Spec §4.6: the block is invalid as a whole.
 
+// The node is built WITHOUT the wallet prover (spec §7, L-3; `core/shield-v2-wallet/NOTES.md` §1
+// item 6). Cargo unifies features across one build, so `cargo build --workspace` (or any build
+// that also selects the wallet crates) would silently compile the prover into this binary. This
+// assertion turns that into a compile error. It is skipped for this crate's own tests, whose
+// dev-dependencies enable `test-prover` on purpose: `cargo test -p quantum-vault-daemon` compiles
+// the daemon with `cfg(test)` only (the package has no integration test that would also build the
+// plain binary — if one is ever added, build it in a separate cargo invocation).
+#[cfg(not(test))]
+const _: () = assert!(
+    !quantum_vault_shield_v2::PROVER_COMPILED,
+    "quantum-vault-daemon must not be built with the `prover` feature of quantum-vault-shield-v2: build the node with `-p quantum-vault-daemon`, never with `--workspace`"
+);
+
+
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 

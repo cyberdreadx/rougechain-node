@@ -13,4 +13,28 @@ members = [
   "cli",
   "wasm-prover",
   "shield-v2",
+  "shield-v2-wallet",
+  "shield-v2-wasm",
+]
+# The wallet-side crates of the shielded pool V2 enable the `prover` feature of
+# `quantum-vault-shield-v2`. They are members (one lock file, one pinned proof library) but NOT
+# default members: a plain `cargo build` / `cargo test` in this directory builds exactly what it
+# built before they existed, so the node is never compiled with the prover through feature
+# unification. Node builds use `-p quantum-vault-daemon`; never build a node with `--workspace`.
+# Since REVIEW_WALLET_1 the daemon refuses to compile if the feature is unified into it (a const
+# assertion on `quantum_vault_shield_v2::PROVER_COMPILED` in daemon/src/shield_v2.rs), so
+# `cargo build --workspace` / `cargo check --workspace` fail on purpose: select packages with `-p`.
+default-members = [
+  "bridge-exec",
+  "types",
+  "crypto",
+  "consensus",
+  "storage",
+  "p2p",
+  "daemon",
+  "vm",
+  "finality",
+  "cli",
+  "wasm-prover",
+  "shield-v2",
 ]

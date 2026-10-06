@@ -1,0 +1,22 @@
+[package]
+name = "quantum-vault-shield-v2-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "WebAssembly surface (wasm-bindgen) over quantum-vault-shield-v2-wallet: derive the shielded address, scan, plan, build the three shielded pool V2 transactions. Every export returns a Result to JavaScript. No network, no UI."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+quantum-vault-shield-v2-wallet = { path = "../shield-v2-wallet" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+zeroize = "1"
+
+[dev-dependencies]
+# deterministic, proof-less bodies for the listing the tests scan (never in a normal build)
+quantum-vault-shield-v2-wallet = { path = "../shield-v2-wallet", features = ["test-vectors"] }
+quantum-vault-shield-v2 = { path = "../shield-v2" }
