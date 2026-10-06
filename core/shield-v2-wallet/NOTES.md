@@ -1,9 +1,10 @@
 # Shielded pool V2 — wallet core: implementation notes
 
-Specification: `docs/SHIELDED_POOL_V2_SPEC.md` (SPEC v1, amended 2026-10-06, W-1 … W-17). Branch
+Specification: `docs/SHIELDED_POOL_V2_SPEC.md` (SPEC v1, amended 2026-10-06, W-1 … W-19). Branch
 `feat/shield-v2-wallet-core`, from `main` @4aeb25b (which contains the node side); the settlement
-redesign after the second review is on `fix/shield-v2-wallet-settlement` (§11), and what the
-third review asked for is on `fix/shield-v2-wallet-settlement-2` (§12).
+redesign after the second review is on `fix/shield-v2-wallet-settlement` (§11), what the third
+review asked for is on `fix/shield-v2-wallet-settlement-2` (§12), and what the fourth asked for
+is on `fix/shield-v2-wallet-settlement-3` (§13).
 
 Three pieces:
 
@@ -38,8 +39,17 @@ High), plus three Medium. §12 describes what was changed in answer: the quorum 
 majority of the nodes the wallet is CONFIGURED with, the expiry is measured from the confirmed
 height, building and locking are one call, the ciphertexts are in the confirmed state. It
 supersedes what §5, §6 items 3, 4, 6 and 7 and §11 said about `confirm_state`, `mark_pending`
-and the builders; those items are rewritten below. **These changes have not been reviewed by a
-second person.**
+and the builders; those items are rewritten below.
+
+They were read by a fourth reviewer (`REVIEW_WALLET_4.md`, of `e229cde`): **the redesign is sound
+in its main lines; three corner cases left a state behind that was not** — a state no call could
+read again (High), a payment lost to a crafted address and an embargo after a restore that ended
+too early (Medium) — and the property test failed outside its sixty seeds. §13 describes what
+was changed in answer (state format 5, the restore embargo in the core, `recover_locks`, the
+revision identity, the node-set rule) and **§6 now ends with the client loop as a normative
+algorithm**. It supersedes what §6 items 3, 4 and 7 said about the revision, the node ids and
+the restored device; those items are rewritten below. **These changes have not been reviewed by
+a second person.**
 
 ---
 
@@ -265,20 +275,30 @@ Nothing below was built.
    background thread), with a progress state and a cancel that terminates the worker.
 3. **Storing the state.** `WalletState` holds note values and `r`. It must be encrypted at rest
    with the wallet's existing vault key — and authenticated: a tampered blob can show a wrong
-   balance — never synced in clear. It is versioned (`version: 4`; versions 1, 2 and 3 are read
-   and migrated to an empty state that keeps the locks and has NO configured node: call
-   `set_nodes`, then rescan — §11, §12). **The one rule for a payment: persist the state that
+   balance — never synced in clear. It is versioned (`version: 5`; version 4 is migrated in
+   place; versions 1, 2 and 3 are read and migrated to an empty state that keeps the locks and
+   has NO configured node: call `set_nodes`, then rescan — §11, §12, §13). **Store the state as
+   the opaque text the core returned**: the core has read that text back before returning it
+   (`state_invariant:` otherwise — §13), so it is never a state the next call refuses. **If the
+   STORED text is ever refused (`state:`), call `recover_locks` — never `new_state`**: a new
+   state has no locks (§13). **The one rule for a payment: persist the state that
    `build_transfer` / `build_unshield` returned, then submit** (item 7). A wallet that loses the
    pending record has lost the lock.
-   **One writer at a time, enforced by the revision** (§11): keep the `revision` every changing
-   call returns next to the stored state, pass the STORED revision as `expected_revision`, and
-   store a result only if the stored revision is still that one (one storage transaction, or a
-   Web Lock around read–call–write). A `stale_state:` error means another tab or worker wrote in
-   between: reload and repeat. Two DEVICES on one phrase share no storage and cannot share
+   **One writer at a time, enforced by the revision's IDENTITY** (§11, §13 RW4-10): every result
+   carries `revision` (a counter, the `expected_revision` of the next call) and **`revision_id`**
+   (a hash over the previous identity, the counter and the change). Two tabs that start from one
+   revision both reach "counter + 1" — with two different identities. Keep the `revision_id`
+   next to the stored state and store a result only if the stored identity is still the one the
+   tab LOADED (compare-and-swap in one storage transaction, or a Web Lock around
+   read–call–write); a state that could not be written is discarded, never worked on. A
+   `stale_state:` error means another tab or worker wrote in between: reload and repeat. Two DEVICES on one phrase share no storage and cannot share
    locks — see item 7, "Locks are per device".
 4. **Sync and what a balance means.**
    **Configure the nodes first** (`set_nodes`, §12): the list of endpoints the user or the
-   application chose, as http(s) origins (`https://node-a.example`, `https://node-b.example:8443`).
+   application chose, as **https** origins (`https://node-a.example`, `https://node-b.example:8443`)
+   — **one per host, an odd number of at least three, run by different operators** (§13 RW4-2,
+   RW4-7: `http` is accepted for loopback hosts only, a loopback node is never in a set with
+   other nodes, two ids with one host are refused, an IP literal has one spelling).
    The core canonicalises them (lower case, default port and path removed) and collapses
    duplicates; an id that is not an origin is refused. **The quorum is a strict majority of THIS
    set, at least 2** — it lives in the state, and nothing a call is handed can lower it. Changing
@@ -318,9 +338,17 @@ Nothing below was built.
    * the confirmed height stays below `report.quorum_tip` after a full sync — your listing node
      is slow or withholding: list from another configured node (no rescan needed).
    Nodes are not always at one height, and only reports for the SAME height can form a quorum:
-   query the nodes together, and ask again when no height has a majority. A malformed report (or
-   one from an old node, without `ciphertext_acc`) is skipped and counted in `malformed`: it
-   costs that node's vote, not the call.
+   query the nodes together, keep the reports of the last rounds, and ask again when no height
+   has a majority. A malformed report is skipped and counted in `malformed`: it costs that
+   node's vote, not the call. **A report that lacks only `ciphertext_acc` is an OUTDATED NODE**
+   — a build before the node-local ciphertext hash, or one that has not been restarted since —
+   and is returned by id in `outdated_nodes`: say "node X must be updated", not "node X
+   disagrees" (§13 RW4-12).
+   A page whose `report.leaf_mismatch` is true (the page numbers its outputs below where the
+   wallet's tree stands: the listing the state was built on held more than this node has) is a
+   fifth signal with the recovery of the second: `rescan_state`, another node.
+   **How these rules are combined — how often "ask again" is, in which order nodes are tried —
+   is the client loop at the end of this section, which is normative.**
    `summary` reports the confirmed and the unverified balance separately; `plan_payment` uses
    unverified notes only with `allow_unverified = true`, and `build_transfer` /
    `build_unshield` refuse an unverified input (`note_unverified:`) unless their parameters say
@@ -394,18 +422,28 @@ Nothing below was built.
    **Locks are per device** (RW3-10, spec §5.5). They are in the wallet state; a second device on
    the same phrase, or this device after a restore from the phrase, has none. Same notes chosen ⇒
    one of the two transactions is `superseded`, nothing lost. OTHER notes chosen for "the same"
-   payment while the first is withheld ⇒ both are mined, and no core can prevent it. **The UI
-   must**: (a) say, after a restore and on first use of a phrase on a new device, that payments
-   made from another copy of the wallet in the last 128 blocks may still be in flight and are
-   not shown here; (b) **not offer a payment until a height at least 128 blocks above the first
-   height confirmed after the restore is confirmed** (every transaction any earlier copy built
-   is then mined or dead), unless the user overrides knowingly; (c) never offer "pay again" for a
-   payment whose state this device does not hold.
+   payment while the first is withheld ⇒ both are mined, and no core can prevent it between two
+   LIVE devices. **For a state made from the phrase the core now enforces an embargo** (§13
+   RW4-1): `build_*` refuses with `restored_recently:` until the confirmed height is 128 blocks
+   above the state's embargo base, and `summary.spend` / `confirm_state.spend` say so
+   (`reason: "embargo"`, `embargo_until`, `embargo_blocks_left`). **The UI must**: (a) say, after
+   a restore and on first use of a phrase on a new device, that payments made from another copy
+   of the wallet may still be in flight and are not shown here, and show the embargo in BLOCKS;
+   (b) offer the override (`assert_sole_copy`) only as the user's explicit statement that no
+   other copy has a payment in flight — true for a new wallet, rarely for a restore; (c) never
+   offer "pay again" for a payment whose state this device does not hold.
    The expected change is not money until then: `expected_change` is reported for display and is
    in none of the balances.
-   Shields are not recorded: a shield spends no note (it is an account transaction with a nonce).
-   Store `BuiltTx.outputs` as the outgoing record — the chain will not give it back — and treat
-   it as secret: `value` and `r` open the note (I-3).
+   A shield to SOMEBODY ELSE is not recorded: it spends no note (it is an account transaction
+   with a nonce). Store `BuiltTx.outputs` as the outgoing record — the chain will not give it
+   back — and treat it as secret: `value` and `r` open the note (I-3). **A shield to the
+   wallet's OWN address is built with `build_own_shield`, which records the note in the state**
+   (§13 RW4-11): it is then stored whatever its value. `build_shield` refuses a note below the
+   minimum note value (`note_below_minimum:`) unless `allow_below_min_note_value`.
+   **Every bound is a number of BLOCKS** (§13 RW4-8): this chain makes a block when a
+   transaction is pending, not on a clock. Show "expires in N blocks", never minutes; keep the
+   envelope with the state so that a lost submit is answered by re-submitting the same envelope,
+   not by waiting for the expiry.
 8. **Fees.** `SHIELD_V2_MIN_FEE_QUANTA` (1 XRGE) is the floor; a self-merge costs one fee.
    Show the fee of every merge a payment needs before starting. The builders refuse a fee above
    `max_fee`; without one the ceiling is `DEFAULT_MAX_FEE_QUANTA` = 10 × the minimum = 10 XRGE
@@ -442,9 +480,87 @@ Hermes has no built-in `WebAssembly`. The options, none built or measured here:
 Whatever the option, Qwalla's entropy must be the platform generator (`SecRandomCopyBytes`,
 `getrandom(2)`), which option A gets for free through `getrandom`.
 
+### The client loop (normative)
+
+REVIEW_WALLET_4 §2.8 found that the items above give rules and leave the algorithm open. This is
+the algorithm. It is what the core was checked against, and **what the property test's client
+executes, step for step** (`tests/settlement_properties.rs`, `World::round`). The names are the
+WebAssembly surface's; "persist" always means: store the returned state under its `revision_id`
+if the stored `revision_id` is still the one this tab loaded (compare-and-swap), and otherwise
+discard the result.
+
+```
+S     the stored state, with the revision_id it was stored under
+N     the configured nodes            L     the node listed from
+bad   nodes whose listing was refuted or contradicted in this session (memory only)
+R     the reports of the last three rounds (one per node and height, at most 1,024)
+ahead, behind   counters (memory only)
+
+round():
+  1. page from L at S.next_height → scan with the FULL scan key → persist; repeat until
+     report.at_tip or a page budget.
+       a `listing:` error, report.leaf_mismatch, or `rescan_required:`   → RESCAN(L); end
+  2. ask EVERY node of N for /api/shield-v2/stats at the same time; take `report`; drop one
+     that is null or not a report; label each with the CONFIGURED origin — never with anything
+     the node says about itself. A report without `ciphertext_acc` is handed in as it is: the
+     core names that node in `outdated_nodes` (no vote; "node X must be updated").
+     Add them to R; drop from R what is older than three rounds.
+  3. confirm_state(S, R) → persist.
+       report.listing_refuted            → RESCAN(L); end
+       report.listing_ahead              → ahead += 1; if ahead ≥ 3 (three rounds in a row, each
+                                           with fresh reports) → RESCAN(L); end either way
+       otherwise                         → ahead := 0
+       at_tip and (nothing confirmed, or confirmed_height < report.quorum_tip)
+                                         → behind += 1; if behind ≥ 2 → L := next node not in
+                                           bad (NO rescan), behind := 0
+       otherwise                         → behind := 0
+       no match and none of the above    → wait and repeat: NOTHING else
+  4. resolve_pending → persist → tell the user: mined / superseded / expired.
+  5. for every entry that is still pending and whose envelope is stored: if its submit failed
+     or was not answered, submit THE SAME envelope again (to any node). Never build again for it.
+     A payment is offered only if
+       – this round's confirm_state matched, and confirmed_height = scanned_height;
+       – `spend.can_spend_now` of that result (the core's answer: no embargo, not view-only,
+         the root confirmed, a window left);
+       – the payment is new, or step 4 reported its last attempt superseded or expired.
+     build_*(S, revision) → persist { state, envelope } DURABLY, in one storage transaction,
+     compare-and-swap on the revision_id that was LOADED → submit the envelope.
+     Not written ⇒ discard the result and do not submit.
+
+RESCAN(L):  bad += L;  S := rescan_state(S) → persist;  L := next node not in bad.
+            Every node in bad → stop and tell the user: more than a minority of the configured
+            nodes lies or cannot be reached. (A new session starts with bad empty.)
+
+a `state:` error on the STORED state:
+            recover_locks(text) → persist → set_nodes if nodes_kept is false → rounds.
+            NEVER new_state: that state has no locks.
+
+after new_state (a new wallet, a restore, a second device):
+            nothing for the client to remember. The core refuses build_* (`restored_recently:`)
+            until the embargo has ended; show `spend.reason = "embargo"`, `embargo_until`,
+            `embargo_blocks_left` and "payments made from another copy of this wallet may still
+            be in flight". Make the FIRST state check with every node answering (a node that is
+            silent then costs 256 blocks). `assert_sole_copy` only on the user's explicit
+            statement — a new wallet on a new phrase.
+```
+
+What the loop guarantees, given a strict majority of honest configured nodes: G2 and the
+settlement rules always; G1 on one device with durable writes, and across a restore under the
+assumption stated in §13 (RW4-1); G3 / G4 — with the honest majority reachable at the tip, the
+loop ends with nothing pending and the tip confirmed within `4·nodes + 8` rounds (the property
+test's bound; the most it measured is 6). Two deliberate differences from the loop as the review
+wrote it: the listing node is changed when the confirmed height stays below the quorum's tip
+after a full sync **whether or not this round matched** (a lying node that serves a true but
+short listing never produces a match at its own height, and "wait" would then wait for ever);
+and the embargo after `new_state` is the core's, not the client's.
+
+A background worker that scans with the viewing key (`export_scan_key(seed, false)`) leaves a
+state that is marked view-only: no balance of it is spendable and nothing is built from it until
+step 1 has applied one page with the full key (§13 RW4-3).
+
 ## 7. Not done
 
-* No second review of what §12 changed (the third review covered `188d0ed`).
+* No second review of what §13 changed (the fourth review covered `e229cde`).
 * No light-client verification of anything: `confirm_state` is the word of a majority of the
   configured nodes, not a proof (spec §5.4).
 * **A wallet with fewer than two configured nodes is not a working wallet**: nothing is ever
@@ -784,3 +900,149 @@ The review's mutation table against it is in the Resolution.
 * An honest node's report is trusted to be of an accepted block; a validator that equivocates
   can still make two honest nodes hold two different accepted blocks at one height — that is a
   consensus failure, not a wallet one.
+
+
+## 13. After REVIEW_WALLET_4: a state that always reads back, the embargo in the core
+
+`REVIEW_WALLET_4.md` (of `e229cde`): one High, two Medium, three Low, six Info. Branch
+`fix/shield-v2-wallet-settlement-3`. State format 5. No constant, tag, encoding or parameter of
+spec §2, no consensus rule and nothing of the state root is touched: the wallet crates and the
+wasm surface only (and one line of test set-up in the daemon's interop tests).
+
+**RW4-5 (High) — a state that could never be read again.** Root cause: a pending entry named
+its inputs by leaf position, and a rescan rewrote those positions one at a time. Now:
+
+* **An entry is held by the commitments of its input notes and by its nullifiers — never by a
+  position.** `PendingTx.inputs` is derived: after every change, and on every read of a state,
+  it is recomputed from the stored notes (for a note the state does not hold: the last position
+  known, which nothing reads). A note is locked when its commitment is one of the entry's
+  `input_cms` **or its own nullifier is one of the entry's `nullifiers`**.
+* **Leaf numbers are the listing node's claim.** A note's position is where the wallet's own
+  tree puts it. Inside a page the numbers must be consecutive; a page that starts ABOVE the
+  wallet's tree skipped transactions and is refused (`listing:`), as before; a page that starts
+  BELOW it is applied and reported (`report.leaf_mismatch` — rescan): the earlier listing is
+  what is in doubt, and refusing every later honest page would leave the client with a state it
+  cannot feed.
+* (a) **Every call that changes a state validates the result with the validation `from_json`
+  applies before it replaces the caller's state** (`scan`, `confirm_state`, `resolve`,
+  `mark_pending`, `set_nodes`, the hints, the override, `record_own_shield`). A failure is an
+  implementation fault: a debug build stops on it; a release build refuses the call
+  (`state_invariant:`), state unchanged. (b) **`to_json` reads its own text back and compares**
+  before returning it; if it does not read back as that state it returns the error, never the
+  bytes. (c) **`recover_locks(text)`**: for a STORED state that `from_json` refuses — every
+  pending entry that can be read (nullifiers, input commitments, outputs, own outputs with
+  their `r`, expiry) goes into an empty state to rescan into; nodes, minimum note value, cap and
+  revision are kept where valid. If an entry could not be read at all, or its expiry is
+  unknown, the recovered state is under the restore embargo. **A `state:` error is never
+  answered with `new_state`.**
+* Format 4 states that RW4-5 had poisoned (an entry naming one position twice) are read again:
+  the migration 4 → 5 is in place and does not read positions.
+
+**RW4-1 (Medium) — the embargo after a restore, in the core.** A state made by `new_state`
+has no lock history. It builds nothing (`restored_recently:`) before a confirmed height exists,
+and the FIRST `confirm_state` that confirms a height fixes its **embargo base**:
+
+```
+Tq    the quorum's tip: the highest height that a strict majority of the configured nodes
+      claim to have reached (a node's claim is the highest height it reported in the call)
+Tm    the highest height ANY configured node claimed in the call
+base  = min(Tm, Tq + 256)   if every configured node reported
+      = Tq + 256            if one did not (a silent node is taken to have claimed the most)
+no spend until the confirmed height ≥ base + 128
+```
+
+*Why it is sufficient.* An earlier copy that built at confirmed height `C_b` had a quorum for
+`C_b`: at least one honest node had reached `C_b`, and an honest node never goes back. Its
+transaction is dead after block `C_b + 128` (the builders and `mark_pending` accept no longer
+expiry — the embargo and the longest expiry are one constant). If `base ≥ C_b`, then at
+confirmed height `base + 128` every block that could hold it has been read and confirmed: it is
+mined, and its inputs are spent in this state, or it never will be.
+
+*What a liar can do.* It cannot lower `Tq` below what the honest nodes that answer support (it
+is fewer than a quorum), and it cannot hide the tip of an honest node that answers (`Tm`). It
+can claim a high tip, or stay silent: the base then goes UP, by at most 256 blocks. Delay,
+bounded: at most 384 blocks of embargo instead of 128.
+
+*What remains — stated, not solved.* The rule is sufficient **iff `C_b ≤ Tq + 256`**: the nodes
+whose tips form the first quorum after the restore are not more than 256 blocks behind the
+height the lost copy last built at. Where fewer nodes lie than two quorums must have in common
+(`2·quorum − n`: four nodes with one liar, for instance) the two quorums share an honest node,
+which reports its own tip, so the first confirmed height is already ≥ `C_b` and no assumption
+on lag is needed. With three, five or seven nodes and a full lying minority they may share only
+liars; an honest node more than 256 blocks behind (re-syncing after an outage) together with a
+liar that replays a true old state, against a device that was lost with a payment in flight, is
+then a double payment the embargo does not prevent. No rule without a light client closes that; the margin
+is 256 blocks, and the property test's world (honest nodes up to 200 behind, the liars
+replaying where the slowest honest node stands) runs inside it.
+
+*The override.* `assert_sole_copy` (core: `assert_no_other_copy_has_a_pending_payment`) records
+the user's statement in the state. It is accepted only before the first confirmed state check,
+and honoured at that check only if no configured node reported a tip above the height being
+confirmed — a quorum that forms below a known tip is the shape of the attack, and then the core
+does not take the user's word. A state migrated from an older format, and a state recovered
+with every lock read, is a device's own state and has no embargo.
+
+**RW4-4 (Medium) — a payee's address with the payer's `pk`.** "To self" is the whole address:
+`pk` and encryption key. For any other recipient the note is encrypted to the recipient's key
+and the wallet keeps nothing of it but the outgoing record. A recipient with the wallet's own
+`pk` and another encryption key is refused (`recipient_mixed_address:`) by the transfer builder
+and by `build_own_shield`: it is a mistake or an attack.
+
+**RW4-3 (Low) — a state scanned with the viewing key.** The first scan without the nullifier
+key marks the state (`view_only_since`). While it is marked: `confirmed_balance` leaves out
+every note whose nullifier is unknown — those are reported as `received_spend_unknown`, under
+`unverified_spends: true` — `spendable_balance` is 0, coin selection offers nothing and the
+builders refuse (`view_only:`). One page scanned with the full key derives every missing
+nullifier, applies every remembered spend and removes the mark.
+
+**RW4-2, RW4-7 (Low, Info) — node ids.** An IP literal has one spelling: IPv6 in its RFC 5952
+form; IPv4 as four decimal parts without leading zeros — `127.1`, `2130706433`, `0x7f.0.0.1`,
+`127.0.0.01` are refused. And the SET has a rule, enforced by `set_nodes` and on every read of
+a state: https only; `http` for loopback hosts only (`localhost`, `*.localhost`, `127.0.0.0/8`,
+`[::1]`); a loopback node is never in a set with a node that is not (a development set is
+all-loopback, told apart by port); **one node per host**, whatever the scheme or the port.
+
+**RW4-10 (Info) — the revision identifies content.** `revision_id` =
+`SHA-256(tag ‖ previous identity ‖ counter ‖ name of the change ‖ digest of the changed state)`.
+The counter stays (it orders, and it is the `expected_revision` of the calls); the identity is
+what a client stores and compares — §6 item 3.
+
+**RW4-11 (Info) — the wallet's own shield.** `build_own_shield(state, own_address, …)` records
+the note `(cm, value, r)` in the state; the scan stores it from the record whatever its value,
+by the rule that stores the wallet's own change. `build_shield` refuses a note below the
+minimum note value unless `allow_below_min_note_value`. The record of an unspent note below the
+minimum is kept, also across `rescan_state`; a restore from the phrase alone does not find such
+a note (rescan with a minimum note value of 1) — which is what the explicit flag accepts.
+
+**RW4-8, RW4-9, RW4-12 (Info) — what the UI is told.** `summary.spend`, `confirm_state.spend`
+and `can_spend_now(state, quorum_tip)`: `can_spend_now`, the `reason` when not (`no_nodes`,
+`view_only`, `no_quorum`, `embargo`, `root_unconfirmed`, `window_too_short`), `confirmed_lag`
+(`quorum_tip − confirmed_height`), `usable_window_blocks` (`64 − lag`), `embargo_until`,
+`embargo_blocks_left`, and the four bounds — all in blocks. `constants()` carries
+`restore_embargo_blocks` (128) and `restore_lag_bound_blocks` (256). `confirm_state` returns
+`outdated_nodes`: configured nodes whose report lacks only `ciphertext_acc`.
+
+**The property test** (`tests/settlement_properties.rs`) was rebuilt around what the review
+found missing in its world: 2 to 7 nodes; honest nodes up to 200 blocks behind; several
+transactions per block; 280 pool-changing blocks in a row (evicted checkpoints); scans with the
+viewing key; a hostile payee; restores answered by a stale quorum; pages cut anywhere during
+rescans; and **value computed by the oracle from the request**, with every output's commitment
+recomputed from the amount the request implies. Its client executes the loop of §6. Its false
+positive (RW4-6: a lock migrated from format 1 "holding" a dead attempt) is corrected. It runs
+200 seeds by default; `PROP_RUNS`, `PROP_STEPS`, `PROP_SEED_BASE` move the range, and CI adds a
+randomly placed range whose base it prints. The mutation table is in the Resolution of
+`REVIEW_WALLET_4.md`.
+
+**What changed for callers.**
+
+| Before | Now |
+|---|---|
+| `version: 4` | `version: 5`; 4 migrated in place, 1–3 as before |
+| a state made by `new_state` spends as soon as it is confirmed | `restored_recently:` for 128 blocks above the embargo base, or `assert_sole_copy` |
+| `{ state, revision }` | `{ state, revision, revision_id }`; `expect_revision_id` |
+| `http://` nodes, two ports of one host | refused by `set_nodes` (loopback development sets excepted) |
+| a page numbered below the wallet's tree: `listing:` | applied, `report.leaf_mismatch: true` (rescan) |
+| a `state:` error: nothing to do | `recover_locks` |
+| `build_shield` for one's own address, any value | `build_own_shield` (recorded); `note_below_minimum:` |
+| a recipient with one's own `pk`: "payment to self" | the whole address, or `recipient_mixed_address:` |
+| a report without `ciphertext_acc`: `malformed` | `outdated_nodes` |

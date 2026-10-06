@@ -76,6 +76,24 @@ node API answer only: no constant, tag, encoding or parameter of §2 changed, no
 ciphertext format of §3, no consensus rule, and **the state root of §4.8 is byte-for-byte what
 it was**.
 
+*Amended 2026-10-06 after the fourth wallet core review
+(`core/shield-v2-wallet/REVIEW_WALLET_4.md`, findings RW4-1 … RW4-12):* (W-18) §5.4 — a node
+identity that is an IP literal has ONE spelling, a configured set is `https` only (loopback
+development sets excepted) with **one node per host** (RW4-2, RW4-7); **a pending record holds
+its input notes by commitment and nullifier, never by a leaf position**, leaf numbers in a
+listing are the listing node's claim, and **a wallet library never hands out or writes a state
+that it would not read back**, and gives up the locks of a stored state it cannot read instead
+of forcing a restore (RW4-5); a state scanned without the nullifier key is marked and offers
+nothing to spend (RW4-3); (W-19) §5.5 — **the embargo after a restore is the wallet library's
+rule, not the user interface's**, measured from a base that a stale quorum cannot lower below
+what the answering honest nodes support, with its arithmetic and the assumption that remains
+(RW4-1; item (b) of W-17 is replaced); "payment to self" is the WHOLE address and a recipient
+with the wallet's own `pk` under another encryption key is refused (RW4-4); the wallet's own
+shield is recorded like its change (RW4-11); a state's revision identifies its content
+(RW4-10); and **the client loop** is written out as a SHOULD (RW4-8, RW4-9). Wallet rules
+only: no constant, tag, encoding or parameter of §2 changed, no body or ciphertext format of
+§3, no consensus rule, no node rule, and the state root of §4.8 is byte-for-byte what it was.
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -1149,6 +1167,17 @@ wallet is configured with, and the quorum is a property of that set:
   name, key or address that the node returned about itself: one operator would then be as many
   nodes as it cared to name. That the configured nodes are in fact independent operators is the
   configuring party's choice and risk.
+* *(W-18, RW4-2, RW4-7.)* **An IP literal has one spelling, and a set has a rule.** A bracketed
+  IPv6 literal is written in its RFC 5952 form; a host whose last label is a number is an IPv4
+  literal and MUST be four decimal parts of 0–255 without leading zeros — every other form a
+  URL parser would read as an address (`127.1`, `2130706433`, `0x7f.0.0.1`, `127.0.0.01`) MUST
+  be refused. A wallet MUST refuse a configured set unless: every node is an `https` origin
+  (whoever sits on the network path answers for every `http` node at once — a majority by
+  construction); and **each host appears once**, whatever the scheme or the port. The one
+  exception is a development set in which EVERY host is a loopback host (`localhost`,
+  `*.localhost`, `127.0.0.0/8`, `[::1]`): there `http` is accepted and nodes are told apart by
+  port. A loopback node MUST NOT be counted in a quorum together with a node that is not
+  loopback. A set SHOULD have an odd number of at least three nodes.
 * **The quorum is a strict majority of the configured set**, `⌊n/2⌋ + 1`, and at least 2. A
   height is **confirmed** iff that many configured nodes reported, for that height, exactly the
   wallet's five values. A node counts at most once per height; a node that made two different
@@ -1360,7 +1389,21 @@ its lock ended, in exactly three cases, each decided on the wallet's own data up
   the rescanned data, once that data is confirmed.
 * Two writers of one stored state (two tabs, a page and a worker) MUST NOT overwrite each
   other's records: a lost record is a lost lock. A wallet state SHOULD carry a revision that
-  changes with every write, checked when the state is stored.
+  changes with every write, checked when the state is stored. *(W-19, RW4-10.)* **A counter is
+  not enough**: two writers that start from revision `r` both hold an "r + 1". The revision
+  SHOULD identify the content — a hash over the previous revision's identity, the counter and
+  the change — and the state is stored only if the stored identity is still the one the writer
+  loaded.
+* *(W-18, RW4-5.)* **A pending record holds its input notes by their commitments and by its
+  nullifiers — never by a leaf position.** A position is derived from the wallet's own tree and
+  recomputed; the leaf number a listing gives an output is the listing node's claim and MUST
+  NOT be written into a record. **A wallet library MUST NOT return or write a state that it
+  would refuse to read**: every operation that changes a state validates the result by the
+  rules it applies when reading one, and refuses the operation, leaving the state as it was,
+  if the result would not pass. A stored state that cannot be read MUST NOT force the user
+  into a new state without locks: the library MUST offer a recovery that carries every pending
+  record it can read (nullifiers, input commitments, outputs, expiry) into an empty state to
+  rescan into, and that state is under the embargo below if any record could not be read.
 * *(W-17, RW3-10.)* **Locks are per device.** They live in the wallet state, and a second device
   on the same recovery phrase, or the same device after a restore from the phrase, has none. If
   such a device picks the notes a pending transaction of the other spends, one of the two
@@ -1368,11 +1411,131 @@ its lock ended, in exactly three cases, each decided on the wallet's own data up
   while the first transaction is withheld, both are mined: no wallet library can prevent that,
   because the second device does not know the first transaction exists. The user interface
   MUST: (a) tell the user, after a restore and on first use of a phrase on a new device, that
-  payments made from another copy of the wallet in the last 128 blocks may still be in flight
-  and are not shown here; (b) **not offer a payment until a height at least 128 blocks above the
-  first height it confirmed after the restore is confirmed** — every transaction any earlier
-  copy built has then been mined or can never be — unless the user overrides knowingly; and
-  (c) never suggest "pay again" for a payment whose state it does not hold.
+  payments made from another copy of the wallet may still be in flight and are not shown here;
+  (b) *(replaced by W-19, below)*; and (c) never suggest "pay again" for a payment whose state
+  it does not hold.
+* *(W-19, RW4-1; replaces item (b) of W-17, whose rule — "128 blocks above the first height
+  confirmed after the restore" — ended too early: the first height a restored device confirms
+  can be BELOW the height the lost copy built at, when the quorum that confirms it consists of
+  a lying node replaying a true old state and an honest node that is behind.)* **The embargo
+  after a restore is enforced by the wallet library.** A state created from the recovery
+  phrase — a new wallet, a restore, a second device — has no lock history. The library MUST
+  refuse to build a transfer or an unshield from it until a confirmed height exists, and MUST
+  fix, at the FIRST state check that confirms a height, the **embargo base**:
+
+  * `Tq` — the quorum's tip: the highest height that a strict majority of the configured nodes
+    claim to have reached, a node's claim being the highest height it reported in that check;
+  * `Tm` — the highest height ANY configured node claimed in that check;
+  * `base = min(Tm, Tq + 256)` if every configured node reported, and `base = Tq + 256` if one
+    did not (a node that is silent is treated as if it had claimed the highest tip);
+  * no transfer or unshield until the confirmed height is at least `base + 128`. The longest
+    expiry a library accepts and the length of the embargo are the same number.
+
+  *Why.* A copy that built at confirmed height `C_b` had a quorum for `C_b`, so an honest node
+  had reached `C_b`, and an honest node's height never decreases; the transaction cannot be
+  mined after block `C_b + 128`. If `base ≥ C_b`, then at confirmed height `base + 128` every
+  block that could hold it is read and confirmed: it is mined, and its inputs are spent in
+  this state, or it never will be. A lying minority is fewer than a quorum: it cannot lower
+  `Tq` below what the answering honest nodes support and cannot hide the tip of an honest node
+  that answers. By claiming a high tip or by not answering it raises the base — by at most
+  256 blocks: a bounded delay (G4).
+
+  *The assumption that remains.* The rule is sufficient **iff `C_b ≤ Tq + 256`**: the nodes
+  whose tips form the first quorum after the restore are at most 256 blocks behind the height
+  the lost copy last built at. Where fewer nodes lie than any two quorums have in common
+  (`2·quorum − n`) the quorums share an honest node and nothing is assumed; with three, five
+  or seven nodes and a full lying minority they may share only liars, and then the embargo is
+  a margin of 256 blocks of honest lag and not a proof. A wallet without header-committed
+  proofs of the pool state cannot do better; this is stated to the user as in (a).
+
+  *The override.* A library MAY accept the user's explicit statement that no other copy of the
+  wallet has a payment in flight. It MUST be an explicit, named input; it MUST be recorded in
+  the state; it MUST NOT be accepted after the base is fixed; and it SHOULD be disregarded when
+  the first state check shows a configured node ahead of the height being confirmed. A state
+  that continues a device's own stored state (a migration, a recovery with every record read)
+  is under no embargo.
+* *(W-19, RW4-4.)* **"Payment to self" is the whole address.** A payment output belongs to the
+  wallet's own record only if the recipient address — `pk` AND encryption key — is the
+  wallet's own. A library MUST refuse a recipient whose `pk` is the wallet's own and whose
+  encryption key is not: the note would be the wallet's and readable only by the other party,
+  and the wallet would lose it at its next rescan. *(W-19, RW4-11.)* A `shield_v2` to the
+  wallet's own address SHOULD be recorded in the state with its `(value, r)` like a change, so
+  that its note is stored whatever its value; a library SHOULD refuse to build a shield whose
+  note is below the minimum note value unless the caller says so explicitly.
+* *(W-18, RW4-3.)* **A state scanned without the nullifier key cannot see spends.** It MUST be
+  marked; while it is marked it MUST NOT report as confirmed any note whose nullifier it does
+  not know, MUST report nothing as spendable, and MUST NOT build — until a scan with the full
+  key has derived every missing nullifier and applied the spends that were remembered.
+
+*(W-19, RW4-8, RW4-9.)* **The client loop.** The rules of §5.4 and of this section say what
+each signal means; this is how a client SHOULD combine them — how often "ask again" is, in
+which order nodes are tried, what is persisted when. `S` is the stored state, the calls are
+those of a wallet library with the operations of this specification (the names are the
+reference implementation's):
+
+```
+S     the stored state, with the revision_id it was stored under
+N     the configured nodes            L     the node listed from
+bad   nodes whose listing was refuted or contradicted in this session (memory only)
+R     the reports of the last three rounds (one per node and height, at most 1,024)
+ahead, behind   counters (memory only)
+
+round():
+  1. page from L at S.next_height → scan with the FULL scan key → persist; repeat until
+     report.at_tip or a page budget.
+       a `listing:` error, report.leaf_mismatch, or `rescan_required:`   → RESCAN(L); end
+  2. ask EVERY node of N for /api/shield-v2/stats at the same time; take `report`; drop one
+     that is null or not a report; label each with the CONFIGURED origin — never with anything
+     the node says about itself. A report without `ciphertext_acc` is handed in as it is: the
+     core names that node in `outdated_nodes` (no vote; "node X must be updated").
+     Add them to R; drop from R what is older than three rounds.
+  3. confirm_state(S, R) → persist.
+       report.listing_refuted            → RESCAN(L); end
+       report.listing_ahead              → ahead += 1; if ahead ≥ 3 (three rounds in a row, each
+                                           with fresh reports) → RESCAN(L); end either way
+       otherwise                         → ahead := 0
+       at_tip and (nothing confirmed, or confirmed_height < report.quorum_tip)
+                                         → behind += 1; if behind ≥ 2 → L := next node not in
+                                           bad (NO rescan), behind := 0
+       otherwise                         → behind := 0
+       no match and none of the above    → wait and repeat: NOTHING else
+  4. resolve_pending → persist → tell the user: mined / superseded / expired.
+  5. for every entry that is still pending and whose envelope is stored: if its submit failed
+     or was not answered, submit THE SAME envelope again (to any node). Never build again for it.
+     A payment is offered only if
+       – this round's confirm_state matched, and confirmed_height = scanned_height;
+       – `spend.can_spend_now` of that result (the core's answer: no embargo, not view-only,
+         the root confirmed, a window left);
+       – the payment is new, or step 4 reported its last attempt superseded or expired.
+     build_*(S, revision) → persist { state, envelope } DURABLY, in one storage transaction,
+     compare-and-swap on the revision_id that was LOADED → submit the envelope.
+     Not written ⇒ discard the result and do not submit.
+
+RESCAN(L):  bad += L;  S := rescan_state(S) → persist;  L := next node not in bad.
+            Every node in bad → stop and tell the user: more than a minority of the configured
+            nodes lies or cannot be reached. (A new session starts with bad empty.)
+
+a `state:` error on the STORED state:
+            recover_locks(text) → persist → set_nodes if nodes_kept is false → rounds.
+            NEVER new_state: that state has no locks.
+
+after new_state (a new wallet, a restore, a second device):
+            nothing for the client to remember. The core refuses build_* (`restored_recently:`)
+            until the embargo has ended; show `spend.reason = "embargo"`, `embargo_until`,
+            `embargo_blocks_left` and "payments made from another copy of this wallet may still
+            be in flight". Make the FIRST state check with every node answering (a node that is
+            silent then costs 256 blocks). `assert_sole_copy` only on the user's explicit
+            statement — a new wallet on a new phrase.
+```
+
+**Every bound in these rules is a number of blocks**, and this chain produces a block when a
+transaction is pending, not on a clock: on a quiet chain 64 blocks have no upper bound in time,
+on a busy one they are well under a minute. A user interface MUST show these bounds as blocks,
+SHOULD show how far the quorum's tip is above the confirmed height (a spend is measured from
+the confirmed height, so that many blocks of its life are already gone), and answers a lost
+submission by submitting the SAME envelope again, not by waiting for the expiry. Confirmation
+needs a quorum of nodes that report ONE height: a client keeps the reports of the last rounds
+and asks again.
 
 *(W-17.)* **What these rules guarantee**, for a wallet whose configured nodes are honest in their
 strict majority, against any behaviour of the others, of senders and payees, with several
@@ -1909,5 +2072,5 @@ To be confirmed or changed by the owner before the first testnet activation.
 | `SHIELD_V2_POOL_CAP_QUANTA` on testnet | §4.4 | the same 10^15 as mainnet; the owner's decision names mainnet only |
 | State-root tag and layout | §4.8 | `rougechain.stateroot.shield_v2.v1`, running nullifier hash (O-12) |
 | Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, of `0x02 ‖ pk ‖ ek ‖ check`: 1,974 characters; `check` = first 8 bytes of SHA-256(`"rouge-shield/v2/address-check/v1"` ‖ `0x02` ‖ `pk` ‖ `ek`); fingerprint = first 8 bytes of SHA-256 of `pk ‖ ek` (O-11, W-4, W-9) |
-| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-17) |
+| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-19) |
 | Node-local ciphertext hash (not consensus) | §5.4 | tag `rougechain.shield_v2.ciphertext_acc.node_local.v1`; SHA-256 over `acc ‖ cm_out ‖ kem_ct ‖ note_ct` per output in tree order, from 32 zero bytes; reported as `report.ciphertext_acc`; outside §4.8 (W-16) |
