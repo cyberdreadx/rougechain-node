@@ -94,7 +94,18 @@ jobs:
       - name: Test (shielded pool V2 verifier, default features)
         run: cargo test --release -p quantum-vault-shield-v2 -- --test-threads=1
 
+      # --no-fail-fast: a failing target must not hide the targets after it in the alphabet
+      # (REVIEW_WALLET_4: while `review_wallet_4` failed, `settlement_properties`, `vectors` and
+      # `wallet_flow` did not run). The property test runs seeds 1 to 200 here.
       - name: Test (shielded pool V2 wallet core)
         run: >
           cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors
-          -p quantum-vault-shield-v2-wasm -- --test-threads=1
+          -p quantum-vault-shield-v2-wasm --no-fail-fast -- --test-threads=1
+
+      # The property test once more, on a seed range that is different in every run. The test
+      # prints its range ("PROP_SEED_BASE=…"): a failure is reproduced by setting that variable.
+      - name: Test (wallet settlement properties, a random seed range)
+        run: >
+          PROP_SEED_BASE=$(( (RANDOM * 32768 + RANDOM) * 1000 )) PROP_RUNS=60
+          cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors
+          --test settlement_properties -- --nocapture
