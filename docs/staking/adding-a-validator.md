@@ -80,7 +80,7 @@ Block acceptance itself has no reachability component (it's proposer-auth, the d
 ## Constraints worth knowing
 
 - **`min_stake`: 10,000 XRGE**, enforced by the `stake` CLI/RPC submission path (top-ups must each be ≥ 10,000; totals accumulate). Note this is a submission-time guard, not a consensus-level rejection.
-- **Active-set membership is `stake > 0` and not-jailed** — there is no minimum-stake threshold for *being in the set*. The 10,000 figure is the minimum staking **tier**, not a membership cutoff; a validator with `0 < stake < 10,000` is still in the set. Which member proposes is decided by the designated-proposer rule (most stake), not by membership alone.
+- **Active-set membership is `stake > 0` and not-jailed** — there is no minimum-stake threshold for *being in the set*. The 10,000 figure is an API-side minimum, not a membership cutoff; a validator with `0 < stake < 10,000` is still in the set. Which member proposes is decided by the designated-proposer rule (most stake), not by membership alone.
 - **`max_validators` (100 in genesis)** is a declared parameter but is **not currently enforced** in the selection/sync path — every `stake > 0`, non-jailed validator is in the active set. Do not assume a top-100 cutoff exists today.
 - **One node per key.** Two nodes signing with the same key is equivocation; slashing on equivocation evidence is planned, not active (see [Becoming a Validator → Security & slashing](becoming-validator.md#security--slashing--read-before-you-go-live)).
 - **Unbonding is 500 blocks** after `unstake` (blocks are only produced when there are transactions, so the wall-clock time depends on network activity); dropping to **0** stake (or being jailed) is what removes you from the active set.
