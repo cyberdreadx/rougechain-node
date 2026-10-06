@@ -22,6 +22,22 @@ Quantum-safe cryptocurrency wallet & encrypted messenger browser extension for R
 
 ## Release notes
 
+### 1.8.0
+
+- **Sign a message to prove you control your wallet.** dApps can call
+  `window.rougechain.signMessage({ message })` for logins and token gating; it returns
+  `{ signature, publicKey, address }`. The signature is over
+  `"\x19RougeChain Signed Message:\n" + decimal(byte length) + "\n" + message`, which the chain can
+  never accept as a transaction, and it is verified with `verifyMessage` / `verifySignIn` from
+  `@rougechain/sdk` 1.13.0. The site must be connected and **every request asks for approval**
+  (nothing is remembered). The approval shows the requesting site and the whole message
+  (scrollable, never truncated, invisible characters shown as symbols, at most 4,096 bytes). A
+  sign-in message also shows its domain, address, nonce and expiry, with a red warning when the
+  domain in the message is not the site asking. A message that looks like a transaction payload
+  is refused with a pointer to `signTransaction`. `signTransaction` / `sendTransaction` are
+  unchanged. dApps should feature-detect:
+  `typeof window.rougechain.signMessage === "function"`.
+
 ### 1.7.0
 
 - **One recovery phrase restores your messages everywhere.** New wallets and recovery-phrase
@@ -43,7 +59,7 @@ Quantum-safe cryptocurrency wallet & encrypted messenger browser extension for R
 npm ci                                   # from the monorepo root
 npm run dev -w rougechain-wallet-ext     # Vite dev server
 npm run typecheck -w rougechain-wallet-ext
-npm test -w rougechain-wallet-ext        # vitest: messaging-key vectors + wallet storage paths
+npm test -w rougechain-wallet-ext        # vitest: messaging keys, wallet storage, dApp signMessage
 npm run build -w rougechain-wallet-ext   # Production build → apps/extension/dist/
 ```
 
