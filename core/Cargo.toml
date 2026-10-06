@@ -21,6 +21,9 @@ members = [
 # default members: a plain `cargo build` / `cargo test` in this directory builds exactly what it
 # built before they existed, so the node is never compiled with the prover through feature
 # unification. Node builds use `-p quantum-vault-daemon`; never build a node with `--workspace`.
+# Since REVIEW_WALLET_1 the daemon refuses to compile if the feature is unified into it (a const
+# assertion on `quantum_vault_shield_v2::PROVER_COMPILED` in daemon/src/shield_v2.rs), so
+# `cargo build --workspace` / `cargo check --workspace` fail on purpose: select packages with `-p`.
 default-members = [
   "bridge-exec",
   "types",

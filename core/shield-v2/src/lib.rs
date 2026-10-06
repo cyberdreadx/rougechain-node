@@ -66,6 +66,13 @@ pub mod witness;
 #[cfg(feature = "prover")]
 pub mod prover;
 
+/// `true` iff this build of the crate contains the wallet prover (the `prover` feature, which
+/// `test-prover` implies). The node must never be built with it: the daemon asserts at compile
+/// time that this is `false` in every non-test build (`daemon/src/shield_v2.rs`), so a build that
+/// unifies the feature into the daemon — `cargo build --workspace` — fails instead of producing a
+/// node binary with a prover in it. Not a protocol constant.
+pub const PROVER_COMPILED: bool = cfg!(feature = "prover");
+
 /// Base field: KoalaBear, p = 2^31 - 2^24 + 1.
 pub type Felt = p3_koala_bear::KoalaBear;
 

@@ -388,7 +388,7 @@ pub fn prove_spend(witness: &SpendWitness, public: &PublicInputs) -> Result<Vec<
     let seed = blinding_seed(witness, public)?;
     let mut inputs = trace_inputs(witness, public);
     let result = catch_unwind(AssertUnwindSafe(|| {
-        prove_trace_seeded(build_trace(&inputs, &Overrides::default()), public, *seed)
+        prove_trace_seeded(build_trace(&inputs, &Overrides::default()), public, &seed)
     }));
     wipe_trace_inputs(&mut inputs);
     drop(seed); // zeroized

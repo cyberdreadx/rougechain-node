@@ -267,10 +267,14 @@ pub fn verify_spend(public: &PublicInputs, proof_bytes: &[u8]) -> Result<(), Ver
 pub(crate) fn prove_trace_seeded(
     trace: p3_matrix::dense::RowMajorMatrix<Felt>,
     public: &PublicInputs,
-    seed: [u8; 32],
+    seed: &[u8; 32],
 ) -> Result<Vec<u8>, String> {
     let pis = public.to_values();
-    let proof: Proof<ProductionConfig> = p3_uni_stark::prove(&production_config(seed), &JoinSplitAir::new(), trace, &pis)
+    // The seed is taken by reference so that this function holds no copy of its own for the
+    // caller to miss (REVIEW_WALLET_1 I-2). `production_config` — shared with the verifier, which
+    // passes a constant — still takes it by value, and the proof library's generators keep it:
+    // those copies are freed, not wiped (NOTES.md).
+    let proof: Proof<ProductionConfig> = p3_uni_stark::prove(&production_config(*seed), &JoinSplitAir::new(), trace, &pis)
         .map_err(|e| format!("{e:?}"))?;
     postcard::to_allocvec(&proof).map_err(|e| format!("serialize: {e:?}"))
 }
@@ -292,7 +296,7 @@ pub fn prove_spend(
     public: &PublicInputs,
     seed: [u8; 32],
 ) -> Result<Vec<u8>, String> {
-    let bytes = prove_trace_seeded(trace, public, seed)?;
+    let bytes = prove_trace_seeded(trace, public, &seed)?;
     if bytes.len() > MAX_PROOF_BYTES {
         return Err(format!("proof is {} bytes, above the verifier's cap of {MAX_PROOF_BYTES}", bytes.len()));
     }
