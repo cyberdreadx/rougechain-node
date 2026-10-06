@@ -723,3 +723,280 @@ blocks on a chain that has no block time.
   (the task: tests and a report only).
 * `core/shield-v2` (the circuit, the prover) and the noble cross-check were not re-run; no source
   of theirs is changed by the branch.
+
+---
+
+## Resolution
+
+Branch `fix/shield-v2-wallet-settlement-3`, from `review/shield-v2-wallet-4` @ `075325b`.
+Date: 2026-10-06. State format 5. Nothing of spec §2 (constants, tags, encodings, parameters),
+no consensus rule and nothing of the state root is changed: the diff is the two wallet crates,
+their tests, the documents, the CI step, and one line of test set-up in the daemon's interop
+test module. **None of this has been read by a second person.**
+
+### Per finding
+
+| # | What was done | Where | Commit | Test |
+|---|---|---|---|---|
+| RW4-5 (High) | **Root cause:** a pending entry is held by the commitments of its input notes and by its nullifiers, never by a position; `PendingTx.inputs` is derived (recomputed after every change and on every read) and nothing reads it. Leaf numbers of a listing are the listing node's claim: consecutive inside a page; a page that starts above the wallet's tree is refused as before, one that starts below it is applied and reported (`ScanReport::leaf_mismatch`). **(a)** every call that changes a state (`scan`, `confirm_state`, `resolve`, `mark_pending`, `set_nodes`, both hints, the override, `record_own_shield`) runs on a copy and replaces the caller's state only if the copy passes the validation `from_json` applies — a debug assertion, and a release-mode refusal (`StateInvariant`, code `state_invariant`). **(b)** `to_json` reads its own text back and compares; on failure it returns the error and no bytes. **(c)** `WalletState::recover_locks(text) -> Recovery { state, … }` (wasm: `recover_locks`) reads every pending entry it can into an empty rescan state; an unreadable entry or an unknown expiry puts that state under the embargo. Format-4 states that RW4-5 had poisoned are read again (migration 4 → 5 in place) | `store.rs`: `PendingTx::locks`, `rederive_inputs`, `returnable`, `guarded`, `to_json`, `recover_locks`, `lenient_entry`, `entry_ok`, `scan_inner`, `migrate_v4`; `error.rs`; `api.rs` | `d1fc94e` | `rw4_f5_…` passes unedited; `rw4r_f5_fuzz_rescans_…` (480 rescans on lying listings, every call's state read back), `rw4r_f5_a_format_4_state_…`, `rw4r_f5_recover_locks_…`, `rw4r_f5_a_page_numbered_below_…`; unit test `a_state_that_does_not_read_back_is_refused_and_never_returned`; the property test reads back every state every call returns |
+| RW4-1 (Medium) | The embargo is in the core. A state made by `WalletState::new` is `SpendEmbargo::AwaitingBase` (`spend_embargo_until() == None`, no spend); the first `confirm_state` that confirms a height fixes `base = min(Tm, Tq + 256)` (every configured node reported) or `Tq + 256` (one did not), and `spend_base` / `mark_pending` refuse (`RestoredRecently`, code `restored_recently`) until the confirmed height is `base + 128`. `RESTORE_EMBARGO_BLOCKS` is `MAX_EXPIRY_OFFSET`: the longest expiry the builders and `mark_pending` accept and the embargo are one constant. The override is `assert_no_other_copy_has_a_pending_payment()` (wasm: `assert_sole_copy(state, true, revision)`), recorded in the state (`sole_copy_asserted`), accepted only before the base exists, honoured only if the establishing call shows no configured node above the confirmed height. Arithmetic, guarantee and the remaining assumption: below, `WalletState::spend_embargo`, spec §5.5 (W-19), `NOTES.md` §13 | `store.rs`: `SpendEmbargo`, `spend_embargo`, `spend_gate`, `confirm_state_inner`; `tx.rs`; `api.rs` | `d1fc94e` | `rw4_f1_…`, `rw4_f1b_…` pass unedited (the core refuses the second build); `rw4r_f1_a_restored_state_builds_nothing_…` (54 cases without the user's statement: lag 0–200, default / shortest / longest expiry, the leading honest node answering or silent), `rw4r_f1_the_embargo_base_is_bounded_…`; the property test's stale-quorum adversary |
+| RW4-4 (Medium) | `payment_to_self` iff the recipient address equals the wallet's own, `pk` and `ek`. A recipient with the wallet's `pk` and another `ek` is refused (`MixedOwnAddress`, code `recipient_mixed_address`) by the transfer assembly and by `build_own_shield` | `tx.rs`: `assemble_transfer`, `own_shield_checks` | `d1fc94e` | `rw4_f4_…` passes unedited; `rw4r_f4_payment_to_self_is_the_whole_address`; the property test's hostile payee |
+| RW4-6 (Low) | The false positive is corrected (a lock migrated from format 1 holds an attempt only while that attempt can still be mined), the world is extended as listed in section 5, the default range is 200 seeds, CI adds a randomly placed range with the base printed. Results below | `tests/settlement_properties.rs`, `ci.yml` | `a277cac`, `88b0fab`, `5dbde1f` | below |
+| RW4-3 (Low) | The first scan without the nullifier key sets `view_only_since`; `Balances { unverified_spends, received_spend_unknown }`: `confirmed` leaves out every note whose nullifier is unknown, `spendable` is 0; coin selection offers nothing; the builders refuse (`ViewOnly`, code `view_only`) until a scan with the full key has filled every nullifier and applied the remembered spends | `store.rs`: `balances`, `spend_gate`, `scan_inner`; `select.rs` | `d1fc94e` | `rw4_f3_…` passes unedited; `rw4r_f3_a_view_only_state_…`; the property test's worker |
+| RW4-2 (Low), RW4-7 (Info) | IPv6 literals in RFC 5952 form; a host ending in a number must be four decimal parts without leading zeros (octal, hex, short and numeric forms refused). `set_nodes` and `from_json` enforce the set rule: https only; http for loopback hosts only; a loopback node never in a set with other nodes; one node per host whatever the scheme or the port (development sets: per host and port) | `store.rs`: `parse_node_id`, `check_node_set` | `d1fc94e` | `rw4_f2_…` passes unedited; `rw4_sound_canonical_node_id_…` (its last block restated) |
+| RW4-10 (Info) | `revision_id` = SHA-256(tag ‖ previous identity ‖ counter ‖ name of the change ‖ digest of the changed state); `expect_revision_id`; every wasm result carries `revision_id`. The counter and `expected_revision` are kept (they order; changing every signature of the surface was not worth it): the compare-and-swap key is the identity | `store.rs`: `bump`, `content_digest`; `api.rs`: `out_with_state`, `expect_revision_id` | `d1fc94e` | `rw4r_i10_…`; `rw4_demo_two_different_states_…` (extended); the property test's two-tabs probe and its check that a changed state has another identity |
+| RW4-11 (Info) | `build_own_shield` / wasm `build_own_shield` record the note (`OwnShield { cm, value, r, expiry_height }`) in the state; the scan stores it from the record whatever its value. `build_shield` refuses a note below the minimum note value (`NoteBelowMinimum`, code `note_below_minimum`) unless `build_shield_with(…, allow)` / `allow_below_min_note_value` | `tx.rs`, `store.rs`: `record_own_shield`, `settle_own_shields` | `d1fc94e` | `rw4r_i11_…` |
+| RW4-8, RW4-9, RW4-12 (Info) | `WalletState::spend_status(quorum_tip)` → `SpendStatus` (wasm: `summary.spend`, `confirm_state.spend`, `can_spend_now`): `can_spend_now`, `reason` (`no_nodes` / `view_only` / `no_quorum` / `embargo` / `root_unconfirmed` / `window_too_short`), `confirmed_lag`, `usable_window_blocks`, `embargo_until`, `embargo_blocks_left`, the four bounds in blocks; `ConfirmReport { confirmed_lag, highest_reported, all_reported, embargo_base_set }`. The client loop is in `NOTES.md` §6 as the normative algorithm and in spec §5.5 as a SHOULD. wasm `confirm_state` returns `outdated_nodes` for reports that lack only `ciphertext_acc` | `store.rs`, `api.rs`, `NOTES.md`, spec | `d1fc94e`, `db2c9de` | `rw4r_i8_…`; wasm `address_scan_plan_build_end_to_end` |
+| CI | `--no-fail-fast` on the wallet step; a second step with a random seed range | `ci.yml` | `5dbde1f` | — |
+
+### The embargo: the rule, the arithmetic, what remains
+
+`Tq` is the quorum's tip (the highest height a strict majority of the configured nodes claim to
+have reached, a node's claim being the highest height it reported in the call), `Tm` the highest
+height any configured node claimed. At the first confirmation after `new_state`:
+`base = min(Tm, Tq + 256)` if every configured node reported, `Tq + 256` otherwise; no spend
+until the confirmed height is `base + 128`.
+
+With `n` nodes, quorum `q = ⌊n/2⌋ + 1` and at most `f = n − q` liars: a copy that built at
+confirmed height `C_b` had `q` nodes report `C_b`, so at least `q − f ≥ 1` honest node had
+reached it; honest heights never decrease; its transaction cannot be mined after block
+`C_b + 128`. So `base ≥ C_b` suffices. The liars are fewer than `q`: the `q`-th highest claim
+is at or below the highest honest claim (they cannot push `Tq` above the chain) and, when the
+honest nodes that answer are `q` or more, at or above the `q`-th highest of theirs (they cannot
+push it below); a match at height `h` needs an honest node AT `h`, so `Tq ≥ h ≥` that node's
+tip. `Tm` is at least the tip of every honest node that answers; a liar's higher claim is cut
+at `Tq + 256`, and a node that does not answer is counted as that claim. Hence
+`base ≥ min(highest honest tip that could have answered, Tq + 256)`, and since the highest
+honest tip is `≥ C_b`: **`base ≥ C_b` whenever `C_b ≤ Tq + 256`.** A lying or silent minority
+moves the base up by at most 256 blocks: the embargo is between 128 and 384 blocks.
+
+**The assumption that remains:** the nodes whose tips form the first quorum after the restore
+are at most 256 blocks behind the height the lost copy last built at. If `f < 2q − n` (four
+nodes, one liar) the two quorums share an honest node and nothing is assumed; with three, five
+or seven nodes and a full lying minority they may share only liars, and beyond 256 blocks of
+honest lag the embargo does not hold. That is a margin, not a proof, and it is said so in
+`WalletState::spend_embargo`, spec §5.5 and `NOTES.md` §13.
+
+### What had to follow in the review's own tests
+
+The six `rw4_f*` tests pass as they were committed in `075325b`: not a byte of those six
+functions or of `restore_embargo_scenario` is changed. Three things about them need saying:
+
+* **`restore_embargo_scenario` builds on a state made by `WalletState::new` at its first
+  confirmed height** (device 1), which a core that enforces the embargo refuses. The wallets of
+  the test suite are new wallets: `tests/common::configure` (and the daemon's and the wasm
+  tests' equivalents) now also makes the user's statement. The restored device of `rw4_f1` /
+  `rw4_f1b` goes through the same `configure` — and is refused all the same, because the
+  statement is not honoured when the establishing call shows a configured node ahead of the
+  confirmed height (in `rw4_f1b`: by one block). **The scenario without the statement** — what
+  a real restored device is — is `rw4r_f1_a_restored_state_builds_nothing_…`.
+* **`rw4_f5` asserts that the next HONEST page after the lying one is accepted**
+  (`next_page.is_ok() && rescan_again.is_ok()`). That page numbers its leaves below the
+  wallet's tree; it was a `listing:` error before. It is now applied and reported
+  (`leaf_mismatch`), which is a change of behaviour that the direction of the finding did not
+  ask for; the reasoning is in `scan` and `NOTES.md` §13, and a page that starts ABOVE the
+  wallet's tree is still refused (`rw1_sound_listing_manipulations_…` passes unedited).
+* Tests that STATED a limit which is gone were restated, names kept:
+  `rw4_demo_the_restore_embargo_is_documentation_only` (now: the core refuses),
+  `rw4_sound_canonical_node_id_…` (its last block: the set is refused),
+  `rw4_demo_a_shield_to_ones_own_address_…` and `rw4_demo_two_different_states_…` (one
+  assertion added each). `rw4_sound_without_lag_…` passes unedited. Earlier reviews: the format
+  version in three migration tests (4 → 5), the node set of `rw3_f8_…` (it listed
+  `http://node.example` beside `https://node.example`), and in the wasm tests the set-up
+  (`assert_sole_copy`), two revision numbers and the `malformed` count that is now
+  `outdated_nodes`.
+
+### The property test
+
+`tests/settlement_properties.rs`, on the unmodified code of this branch, each as
+`systemd-run … nice -n 19 cargo test --release --locked --offline -j 1 -p quantum-vault-shield-v2-wallet --features test-vectors --test settlement_properties -- --nocapture`
+on this host (a production validator: `CPUWeight=10`, `nice 19`):
+
+| Run | Result | Time | What it did |
+|---|---|---|---|
+| seeds 1–200 × 280 steps (the default; what CI runs) | passes | 243 s | 2,815 payments, 418 restores, 68 embargo bases fixed more than 64 blocks below the tip |
+| `PROP_RUNS=700` (seeds 1–700 × 280 steps) | **passes** | 827 s | 9,946 payments (1,240 with the 128-block expiry), 1,473 restores (254 stale bases), 8,438 / 920 / 596 settled mined / expired / superseded, 88 eviction bursts, 9,209 blocks with several transactions, 8,939 pages scanned with the viewing key, at most 7 rounds to settle |
+| `PROP_RUNS=250 PROP_STEPS=700` (seeds 1–250 × 700 steps) | **passes** | 1,199 s | 8,514 payments, 1,372 restores (232 stale bases), 7,125 / 832 / 481 settled, at most 8 rounds to settle |
+
+(The first version of the rewritten test, commit `a277cac`, passed the same two configurations in
+888 s and 1,275 s; the figures above are for the final test, which has four more invariants.)
+
+What its world has that the reviewed one lacked, item by item of section 5: honest nodes up to
+200 blocks behind, per node and never going back; blocks with several transactions; 280
+pool-changing blocks in a row in one run of eight; scans with the viewing key; a hostile payee
+(own-`pk` addresses are tried and must be refused; a payee's `pk` under the payer's encryption
+key is paid); a shield is not made by the device in the property test (RW4-11 is covered by
+`rw4r_i11_…`); 2 to 7 configured nodes; a client that asks for an expiry outside the bound,
+for a locked note, for a root above the confirmed height, and that compares revision
+identities; restores answered by a stale quorum; pages cut at any height; and value: the
+oracle computes each output's amount from the request and the books and recomputes its
+commitment (`Tx::checked`).
+
+### Mutations
+
+The review's sixteen (A1–L1), the 26 of REVIEW_WALLET_3's Resolution (M1–R12) as they apply to
+the current code, and five of the code this branch added (N1–N5). Each applied alone to
+`store.rs` / `tx.rs` / `select.rs`, then the property test on seeds 1–120; where it passed, the
+rest of the wallet suite (`--no-fail-fast`); then reverted (the driver restores the three files
+from copies; `git status` clean afterwards).
+
+| # | Mutation | Property test (seeds 1–120 × 280 steps) | Otherwise caught by |
+|---|---|---|---|
+| A1 | listing_refuted already at dissenting >= n - quorum | **caught**: "seed 1: a true listing was refuted by a lying minority" | |
+| A2 | listing_ahead when the listing's last pool block is AT the quorum's tip | **caught**: "seed 1, mid-run: not settled after 28 rounds with an honest majority reachable (pending 0, confirmed Some(219), scanned Some(219), tip 219, listing fr" | |
+| A3 | a report above the scanned height is compared with the latest state | **caught** — by the core itself: the call is refused (`state_invariant`), which the harness treats as a failure ("called `Result::unwrap()` on an `Err` value: StateInvariant") | |
+| A4 | a report older than the kept history is compared with the OLDEST kept state | **caught**: "seed 3: a report for height 24, 288 pool-changing heights below the confirmed height, was compared with a state the wallet no longer keeps" | |
+| B1 | resolve settles a sighting only strictly BELOW the confirmed height | **caught**: "seed 1: a transaction mined at height Some(801) is still pending at confirmed height 801" | |
+| B2 | an expiry up to confirmed + 1,128 is accepted (builder and mark_pending) | **caught**: "seed 1: an expiry 180 blocks above the confirmed height was accepted" | |
+| B3 | spend_base does not require the confirmed root | **caught**: "seed 1: a spend was built on a root above the confirmed height without the caller's explicit decision" | |
+| C1 | neither spend_input_with nor mark_pending checks the lock | **caught**: "seed 3: the builder handed out a locked note" | |
+| C2 | mark_pending does not raise the revision | **caught**: "seed 1: two different states are one revision" | |
+| D1 | an own output is taken from the record WITHOUT recomputing its commitment | **caught** — by the core itself: `scan` refuses the page (`state_invariant`: "the call would have left a wallet state that does not read back"), which the harness treats as a failure | |
+| D2 | every output for the wallet counts as its own (dust minimum and cap never apply) | **caught**: "seed 1, mid-run: the confirmed balance is not the true balance at the tip" | |
+| D3 | the cap admits one note more | **caught**: "seed 15 after mid-run: 6 unspent notes from others are stored under a cap of 5" | |
+| E1 | a second transaction at one height pushes a second checkpoint | **caught** — by the core itself: `scan` refuses the page (`state_invariant`: "the call would have left a wallet state that does not read back"), which the harness treats as a failure | |
+| F1 | the change is computed without the fee | **caught**: "device B's payment: the Change output does not commit to the 2000000000 quanta the request implies" | |
+| F2 | coin selection offers locked notes | **caught**: "seed 1: coin selection offered a locked note" | |
+| L1 | a note's own nullifier in the listing does not mark it spent | **caught**: "seed 1 after a whole round: confirmed balance 22000000000 exceeds the true balance 18000000000 at height 7" | |
+| M1 | resolve settles at the scanned height | **caught**: "seed 10: settled as mined, and it is not on the true chain" | |
+| M2 | a report is compared by root and note count only | **caught**: "seed 1: the state confirmed at height 7 is not the chain's" | |
+| M5 | fresh_for_rescan keeps seen_* | **caught**: "seed 2: the quorum is a strict majority of the configured nodes" | |
+| M6 | any nullifier match marks ALL inputs spent | **caught**: "seed 39, mid-run: the confirmed balance is not the true balance at the tip" | |
+| M7 | mined ignores the outputs (nullifier pair only) | **caught**: "seed 9: settled as mined, and it is not on the true chain" | |
+| M8 | expired one block early | **caught**: "seed 22: settled as expired while the true chain can still mine it (height 2129, expiry 2130)" | |
+| M9 | the quorum is 2 whatever the configured set | **caught**: "seed 1: the quorum is a strict majority of the configured nodes" | |
+| M9b | the quorum is a majority of the reports supplied | **caught**: "seed 10: the state confirmed at height 390 is not the chain's" | |
+| M10 | every note confirmed on any match | **caught** — by the core itself: the call is refused (`state_invariant`), which the harness treats as a failure ("called `Result::unwrap()` on an `Err` value: StateInvariant") | |
+| M11 | the match height is the scanned height | **caught**: "seed 2 after a whole round: a height was confirmed that the true chain has not reached" | |
+| M12 | expired tested before mined | **caught**: "seed 1: a MINED transaction was settled as expired" | |
+| M13 | agreeing reports counted, not distinct nodes | **caught**: "seed 1: a height was confirmed that the true chain has not reached" | |
+| M21 | the recipient check does not compare the commitment | **caught**: "seed 1: a stored note does not open its commitment" | |
+| M25 | a migrated lock expires at the old scanned height (no + 128) | **caught**: "seed 7: settled as expired while the true chain can still mine it (height 619, expiry 675)" | |
+| R1 | a dissenting node blocks the call | **caught**: "seed 1, mid-run: not settled after 28 rounds with an honest majority reachable (pending 0, confirmed None, scanned Some(2608), tip 2608, listing from" | |
+| R7 | the expiry is measured from the scanned height | **caught**: "seed 1: an expiry 129 blocks above the CONFIRMED height 376 was accepted (the listing is at 403)" | |
+| R2 | the ciphertext hash is not compared | **caught**: "seed 1: the state confirmed at height 1288 is not the chain's" | |
+| R4 | the cap counts stored notes, spent ones included | **caught**: "seed 11, mid-run: notes counted as over capacity although the wallet never held 14 unspent notes (peak 13)" | |
+| R2a | the change is not taken from the pending record | **caught**: "seed 3: the listing showed the wallet's own transaction and its change is not stored" | |
+| R3 | own outputs below the minimum are not stored | **caught**: "seed 4, mid-run: the confirmed balance is not the true balance at the tip" | |
+| R5 | the builder returns the state without the lock | **caught**: "seed 1: two different states are one revision" | |
+| R8 | a report under an unconfigured id counts | **caught**: "seed 1: a height was confirmed that the true chain has not reached" | |
+| R9 | listing_ahead is never set | **caught**: "seed 16, mid-run: the confirmed balance is not the true balance at the tip" | |
+| R10 | listing_refuted is never set | **caught**: "seed 95, mid-run: not settled after 32 rounds with an honest majority reachable (pending 0, confirmed None, scanned Some(1002714), tip 2149, listing f" | |
+| R11 | locks are held by leaf position, not by commitment or nullifier | **NOT caught** | `rw4r_f5_fuzz_rescans_with_forged_entries_and_random_page_cuts_never_leave_a_state_that_does_not_read_back` |
+| R12 | abandon_unsubmitted releases the lock | **caught**: "assertion failed: s.abandon_unsubmitted(&record.nullifiers[0].0) && s.is_locked(sel.positions[0])" | |
+| N1 | (new code) the embargo base is the first confirmed height (the W-17 rule) | **caught**: "seed 86: the embargo ends at confirmed height 991 while an earlier transaction is valid until 1082 (first confirmed 863, true height 1063)" | |
+| N2 | (new code) a view-only state is not refused by the builders and offers its notes | **caught**: "seed 1 after the worker scans with the viewing key: a view-only state offers a note" | |
+| N3 | (new code) payment to self decided by pk alone; the mixed address is not refused | **caught**: "seed 2: a payment to the wallet's own pk under another encryption key was built" | |
+| N4 | (new code) the restore embargo is not enforced by the builders | **caught**: "seed 22: the core lets a restored state spend while an earlier transaction can still be mined (expiry 71, true height 47)" | |
+| N5 | (new code) a scan writes the listing's leaf position into the pending entry (the RW4-5 code) and validation requires distinct positions | **caught**: "an older format is migrated: State("a pending transaction is malformed")" | |
+
+**46 of 47 are caught by the property test**, every one of the review's sixteen among
+them — 13 of those by an invariant of the model, three (A3, D1, E1; and M10 of the earlier
+table) by the core's own refusal to return a state that does not read back, which is itself the
+RW4-5 fix at work. The one miss:
+
+* **R11** (locks held by position). Positions are now DERIVED from the commitments after every
+  change, so while a state holds an entry's notes "held by position" and "held by commitment"
+  are the same lock. The mutant differs only in the middle of a rescan, where the stale
+  position of a note the state does not hold can lock an unrelated note — a spurious lock,
+  which violates no guarantee and which the property test's random listings did not produce in
+  120 seeds. The rescan fuzz does produce it, and
+  `rw4r_f5_fuzz_rescans_with_forged_entries_…` asserts that a locked note is one a pending
+  entry spends.
+
+N5 puts the reviewed code of RW4-5 back (the scan writes the listing's leaf into the entry,
+validation requires distinct positions): the property test fails on it at once.
+
+### Commands, as run on the final tree
+
+Each as `systemd-run --user --scope -q -p MemoryMax=2500M -p MemorySwapMax=0 -p CPUWeight=10 nice
+-n 19 cargo … --release --locked --offline -j 1`, one at a time, after checking that no `cargo`
+or `rustc` process was running (`cargo tree` takes no `--release` / `-j`: it was run with
+`--locked --offline` under the same limits).
+
+| Command | Result |
+|---|---|
+| `cargo test -p quantum-vault-shield-v2-wallet --features test-vectors -p quantum-vault-shield-v2-wasm … --no-fail-fast -- --test-threads=1` | **114 tests, 0 failed, 0 ignored.** Wallet 107: unit 22, `review_wallet_1` 14, `review_wallet_2` 14, `review_wallet_3` 17, `review_wallet_4` 19 (the six `rw4_f*` among them), `review_wallet_4_resolution` 11, `settlement_properties` 1, `vectors` 3, `wallet_flow` 6. wasm 7: `api` 2, `review_wallet_1` 4, `review_wallet_3` 1 |
+| the property test at the two extended configurations | above |
+| `cargo build -p quantum-vault-shield-v2-wasm --target wasm32-unknown-unknown …` | finished; 2,845,907 bytes |
+| `cargo test -p quantum-vault-daemon … -- node::shield_v2_wallet_interop_tests --test-threads=1` | 4 passed, 294 filtered out |
+| `cargo test -p quantum-vault-daemon … -- node::shield_v2_daemon_tests --test-threads=1` | 11 passed, 287 filtered out |
+| `cargo tree -p quantum-vault-shield-v2-wasm -e normal,features -i quantum-vault-shield-v2-wallet` | `feature "default"` only |
+| `cargo tree -p quantum-vault-daemon -e normal,build,features` | neither wallet crate in the daemon's normal or build graph |
+| `NOBLE_ROOT=… node core/shield-v2-wallet/tests/noble_crosscheck.mjs` | 53 of 53 checks passed |
+| the mutation driver (47 mutations, 52 property-test runs, 6 suite runs) | table above |
+
+`core/target/` was deleted afterwards.
+
+### The conditions of section 8, line by line
+
+**Core**
+
+1. *RW4-5: no call returns a state that `from_json` refuses; a rescan with a two-input entry
+   pending survives any listing; the property test on 700 × 280 and 250 × 700 with RW4-6
+   corrected; the CI range widened or randomised.* — **Met.** `rw4_f5_…` passes;
+   `rw4r_f5_fuzz_…`; the property test reads back every state every call returns and passes
+   at both configurations (below); CI runs 200 seeds and a second, randomly placed range of 60
+   with the base printed.
+2. *RW4-4: a recipient with the wallet's `pk` and another `ek` is refused.* — **Met.**
+   `rw4_f4_…` passes (the builder refuses); `rw4r_f4_…`; mutation N3.
+3. *RW4-1: (a) the embargo restated so that `rw4_f1_…`, `rw4_f1b_…` pass — maximum expiry 64,
+   base not the first confirmed height alone; (b) enforced by the core or tested in each
+   client; the property test's client uses the rule as written and its world has honest nodes
+   more than 64 blocks behind.* — **Met, with one deviation that is deliberate.** Both tests
+   pass; the base is `min(Tm, Tq + 256)` / `Tq + 256`; the core enforces it; the property
+   test's world has honest nodes up to 200 blocks behind and a stale-quorum adversary, and its
+   client has no embargo logic at all. **The maximum expiry stays 128, not 64**: `rw4_f1b`
+   itself builds with `MAX_EXPIRY_OFFSET` and requires that build to succeed, and the
+   condition's purpose — a margin between the longest expiry and the embargo — is met from the
+   other side: the embargo is 128 blocks above a base that carries up to 256 blocks of lag,
+   and the property test exercises the 128-block expiry against it. What is NOT met, because
+   it cannot be: G1 across a restore without any assumption (see "The embargo" above).
+4. *RW4-3: `summary` says when a state holds notes without a nullifier; `rw4_f3_…` passes.* —
+   **Met.** `unverified_spends`, `received_spend_unknown`, `view_only_since`, and
+   `spend.reason = "view_only"`.
+5. *RW4-2: `rw4_f2_…` passes.* — **Met** (canonical IPv6, canonical or refused IPv4).
+
+**UI / client layer** — not code in this repository; each is now either enforced by the core
+or documented where a client author reads it:
+
+6. *Node ids: https only (loopback excepted), one id per host, an odd number ≥ 3 of different
+   operators; shown; changed only explicitly.* — the first two are **enforced by `set_nodes`**;
+   the rest: `NOTES.md` §6 item 4, spec §5.4 (W-18).
+7. *The loop of section 2.8.* — `NOTES.md` §6 "The client loop (normative)"; spec §5.5 (W-19)
+   as a SHOULD; executed by the property test's client.
+8. *Durable write before the submit, compare-and-swap on the LOADED revision, opaque state,
+   authenticated at rest.* — `NOTES.md` §6 item 3 and the loop's step 5; the compare-and-swap
+   key is `revision_id`; that the state text is one the core reads back is enforced by
+   `to_json`. Durability itself is the client's.
+9. *The envelope stored with the state; retry = the same envelope.* — the loop's step 5;
+   `NOTES.md` §6 item 7.
+10. *Never a balance or a payment from a state last scanned with the viewing key.* —
+    **enforced by the core** (RW4-3).
+11. *No shield below `min_note_value`; no recipient with the wallet's own `pk`.* — **enforced
+    by the core** (`note_below_minimum:` unless allowed; `recipient_mixed_address:`).
+12. *Bounds in blocks; the embargo and its reason shown after `new_state`.* — `spend_status`
+    gives every bound in blocks and the reason; showing it: `NOTES.md` §6 item 7.
+13. *Deployment: every configured node reports `ciphertext_acc`.* — not something this branch
+    can do; a node that does not is now NAMED (`outdated_nodes`), `NOTES.md` §6 item 4.
+
+**Inherent without a light client** — stated, not fixed: a majority of the configured nodes is
+believed in everything (spec §5.4; `NOTES.md` §6 item 4, §7); a second live device has no
+locks, and the embargo of a restored one is a margin (spec §5.5 W-19, "The assumption that
+remains"; `WalletState::spend_embargo`; `NOTES.md` §13); confirmation needs a quorum at ONE
+height (spec §5.5, last paragraph of W-19; the loop keeps the reports of three rounds); every
+bound is a number of blocks on a chain without a block time (the same paragraph; `NOTES.md` §6
+item 7; `SpendStatus`).
+
+### Not done
+
+* No second reading of any of this.
+* The wasm surface keeps the numeric `expected_revision`; the identity is returned by every
+  call and checked by `expect_revision_id`, not passed into each call.
+* A `report?height=h` on the node (RW4-9's suggestion) — a node change, out of scope here.
+* The expiry window itself (64 / 128 blocks against the block interval, RW4-8) is a consensus
+  figure (O-8) and is unchanged.
+* Nothing was built or run as WebAssembly beyond the `wasm32-unknown-unknown` release build;
+  GitHub Actions was not run.
+* The daemon modules `shield_v2_review_node_1_tests`, `shield_v2::tests` and the rest of the
+  daemon suite were not re-run (no node source changed; one line of test set-up did).

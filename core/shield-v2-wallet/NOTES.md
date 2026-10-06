@@ -548,7 +548,7 @@ What the loop guarantees, given a strict majority of honest configured nodes: G2
 settlement rules always; G1 on one device with durable writes, and across a restore under the
 assumption stated in §13 (RW4-1); G3 / G4 — with the honest majority reachable at the tip, the
 loop ends with nothing pending and the tip confirmed within `4·nodes + 8` rounds (the property
-test's bound; the most it measured is 6). Two deliberate differences from the loop as the review
+test's bound; the most it measured is 8). Two deliberate differences from the loop as the review
 wrote it: the listing node is changed when the confirmed height stays below the quorum's tip
 after a full sync **whether or not this round matched** (a lying node that serves a true but
 short listing never produces a match at its own height, and "wait" would then wait for ever);
