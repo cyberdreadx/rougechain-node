@@ -396,7 +396,9 @@
     "openWallet": "打开钱包",
     "viewInExplorer": "在区块浏览器中查看",
     "lock": "锁定",
-    "setPassword": "设置密码以启用锁定"
+    "setPassword": "设置密码以启用锁定",
+    "disconnect": "断开连接",
+    "disconnected": "钱包已断开连接"
   },
   "incoming": {
     "title": "已收到转账",

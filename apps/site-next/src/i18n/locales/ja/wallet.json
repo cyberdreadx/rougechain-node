@@ -396,7 +396,9 @@
     "openWallet": "ウォレットを開く",
     "viewInExplorer": "エクスプローラーで見る",
     "lock": "ロック",
-    "setPassword": "ロックを使うにはパスワードを設定"
+    "setPassword": "ロックを使うにはパスワードを設定",
+    "disconnect": "接続を解除",
+    "disconnected": "ウォレットの接続を解除しました"
   },
   "incoming": {
     "title": "送金を受け取りました",

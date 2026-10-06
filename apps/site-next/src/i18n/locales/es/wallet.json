@@ -399,7 +399,9 @@
     "openWallet": "Abrir billetera",
     "viewInExplorer": "Ver en el explorador",
     "lock": "Bloquear",
-    "setPassword": "Establece una contraseña para poder bloquear"
+    "setPassword": "Establece una contraseña para poder bloquear",
+    "disconnect": "Desconectar",
+    "disconnected": "Billetera desconectada"
   },
   "incoming": {
     "title": "Transferencia recibida",
