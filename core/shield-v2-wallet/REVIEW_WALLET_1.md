@@ -408,3 +408,52 @@ Every cargo command ran as `systemd-run --user --scope -q -p MemoryMax=2500M -p 
 | `cargo test -p quantum-vault-daemon -- node::shield_v2_wallet_interop_tests --test-threads=1` | 4 pass (the node accepts the wallet's transactions, refuses every changed body field, reads the committed vectors) |
 | `cargo test -p quantum-vault-daemon -- shield_v2::tests:: --test-threads=1` | 6 pass (the node's envelope and body rules, including the pinned signer-less envelope) |
 | `node core/shield-v2-wallet/tests/noble_crosscheck.mjs` | 53 of 53 |
+
+---
+
+## Resolution (2026-10-06)
+
+Written by the author of the fixes, not by the reviewer. Everything above is the review as it was
+delivered and describes `abab9a8`; where it says a test "fails" or "passes: design limit", that is
+the state it found. **The fixes below have not been reviewed by a second person.**
+
+| Finding | Resolution | Commit | Test now |
+|---|---|---|---|
+| F-7 | Pending transactions are in the state (nullifiers, input notes, expected change, expiry). Inputs are locked from `mark_pending` until the scanned chain shows a nullifier (mined) or a scanned height at or above `expiry_height` without one (`resolve`). A node's "rejected" sets a hint only. The builders require `anchor_height < expiry_height ≤ anchor_height + 128`, default `+ 64`; `mark_pending` re-checks the bound against the scanned height. `ReleasePolicy::Confirmed` releases only at a height a quorum confirmed. State format 2, format 1 migrated | `b96f480` (core), `6975c2c` (wasm), `539fb55` (node interop) | `rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_either_way` (was `rw1_demo_f7_…`), `rw1_f7_a_format_1_state_is_migrated_with_its_local_marks_kept_as_locks` |
+| F-1 | Not fixable in the wallet alone: one node's listing cannot be authenticated without a light client. Reduced: notes are `unverified` until `confirm_roots` matches the wallet's root against a caller-set quorum of distinct nodes (default 2; one node ⇒ unverified); confirmed and unverified balances are separate; coin selection ignores unverified notes unless asked. Spec §5.4 has the normative UI rule; `NOTES.md` no longer says "cannot forge" | `b96f480`, `6975c2c`, `539fb55`, `d2a8fa5` (spec) | `rw1_f1_a_forged_incoming_note_stays_unverified_and_is_not_spent_by_default` (was `rw1_demo_f1_…`), `rw1_f1_two_agreeing_nodes_confirm_notes_up_to_the_matched_height_only` |
+| F-2 | Address text = bech32m(`rshield`, `0x02 ‖ pk ‖ ek ‖ check`), 1,974 characters; `check` = 8 bytes of domain-tagged SHA-256, verified on decode; the first form is refused by name. `keys.json` regenerated | `b5fe565` | `rw1_f2_…` passes |
+| F-3 | Both directions: nullifiers seen while a note has none are remembered (≤ 1,024) and applied when `nk` arrives; if more appeared, `scan` returns `RescanRequired` and changes nothing | `b96f480` | `rw1_f3_a_note_found_…` passes; `rw1_f3_spends_seen_without_nk_are_applied_when_the_full_key_arrives_or_a_rescan_is_demanded` |
+| F-4 | `tx_hash` must be 64 lowercase hex, `tx_type` a V2 type, before anything is stored; page ≤ 32 MiB / 4,096 transactions; `tip_height` required (I-6) | `b96f480` | `rw1_f4_…` passes (extended) |
+| F-5 | One hedged generator per transaction (HMAC-SHA256 keyed by 32 OS bytes over tag, counter, `sk`, the transaction's inputs and outputs; HKDF-Expand per label, slot, draw number). Entropy failure is still an error. The §3.4 note-key derivation is unchanged (the review's second suggestion was not taken: it would change the format) | `b96f480` | `rw1_f5_a_repeating_generator_no_longer_reuses_the_note_key_or_r`, `rw1_f5_a_repeating_generator_no_longer_gives_the_payee_the_r_of_the_change_note` (were `rw1_demo_f5_…`) |
+| F-6 | No error text quotes input: fixed sentences; JSON failures give category, line, column | `b96f480` (core), `6975c2c` (wasm) | `rw1_f6_an_error_message_must_not_quote_secret_input` passes; `rw1_f6_no_error_of_the_surface_ever_contains_a_marker_from_its_input` |
+| I-1 | `BuiltTx` has no witness; `UnprovenTx.witness` is private and dropped when the prover returns. `SpendWitness` is still `Clone` (not changed) | `b96f480` | — |
+| I-2 | No heap buffer holds a witness; seed passed by reference to `prove_trace_seeded`; `ScanKey` wipes `nk`; the wasm surface wipes the decoded and hex `dk`. Not wiped: the by-value seed inside `production_config`/`rngs` (shared with the node's verifier, not touched) and the library's generators | `b041a81`, `b96f480`, `6975c2c` | — |
+| I-3 | Redacted `Debug` for `OutputRecord`, `OwnedNote`, `PendingTx`, `PendingChange`; the wasm result still returns `r` (documented as secret) | `b96f480` | in `rw1_sound_every_byte_…` |
+| I-4 | `max_fee` on the three builders; default 10 × the minimum fee | `b96f480` | `builder_refusals` |
+| I-5 | Not fixable (`nk` and `pk` are unrelated one-way images); documented on `ScanKey` | — | — |
+| I-6 | `tip_height` required; `next_height` may not exceed tip + 1 | `b96f480` | `rw1_f4_…` |
+| I-7 | `scan` validates, then applies in place (no clone); wasm serialises the state once and has `scan_pages`; zero-value notes are not stored. Non-zero dust is still stored | `b96f480`, `6975c2c` | — |
+| I-8, I-10 | Unchanged | — | — |
+| I-9 | Documented: spec §5.8, `NOTES.md` §10. Nothing enforced except the default expiry offset | `d2a8fa5` | — |
+| (asked with the fixes) | Compile-time guard: the daemon does not compile with the `prover` feature unified in | `b041a81` | `cargo check -p quantum-vault-daemon -p quantum-vault-shield-v2-wallet` fails at the assertion |
+
+**Commands run after the fixes**, each as `systemd-run --user --scope -q -p MemoryMax=2500M -p
+MemorySwapMax=0 -p CPUWeight=10 nice -n 19 cargo … --release --locked --offline -j 1`:
+
+| Command | Result |
+|---|---|
+| `cargo test -p quantum-vault-shield-v2-wallet --features test-vectors --no-fail-fast -- --test-threads=1` | 40 passed, 0 failed, 0 ignored (17 unit incl. 3 `rw1_*`; `review_wallet_1` 14; `vectors` 3; `wallet_flow` 6) |
+| `cargo test -p quantum-vault-shield-v2-wasm --no-fail-fast -- --test-threads=1` | 6 passed, 0 failed, 0 ignored (`api` 2; `review_wallet_1` 4) |
+| `cargo test -p quantum-vault-shield-v2 -- --test-threads=1` | 35 passed, 0 failed |
+| `cargo test -p quantum-vault-shield-v2 --features test-prover -- --test-threads=1` | 71 passed, 0 failed, 1 ignored (the timing measurement, as before) |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_wallet_interop_tests --test-threads=1` | 4 passed |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_daemon_tests --test-threads=1` | 9 passed |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_review_node_1_tests --test-threads=1` | 5 passed |
+| `cargo test -p quantum-vault-daemon -- shield_v2::tests --test-threads=1` | 6 passed |
+| `cargo build --target wasm32-unknown-unknown -p quantum-vault-shield-v2-wasm` | builds; 2,432,370 bytes |
+| `cargo build -p quantum-vault-daemon` | builds |
+| `cargo tree -p quantum-vault-daemon -e normal,build,features -i quantum-vault-shield-v2` | `default` only |
+| `NOBLE_ROOT=… node core/shield-v2-wallet/tests/noble_crosscheck.mjs` | 53 of 53 |
+
+The shield-v2 and daemon runs were made on the working tree just before the last edit to the
+wallet crate's `Debug` output for pending records; the wallet and wasm suites were re-run after it.
