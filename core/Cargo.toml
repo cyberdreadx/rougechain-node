@@ -12,4 +12,5 @@ members = [
   "finality",
   "cli",
   "wasm-prover",
+  "shield-v2",
 ]

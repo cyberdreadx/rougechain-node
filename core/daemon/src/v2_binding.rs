@@ -251,15 +251,15 @@ pub fn is_cli_envelope(p: &Value) -> bool {
 /// mempool and producer use [`verify_v2_binding_at`].
 #[cfg(test)]
 pub fn verify_v2_binding(tx: &TxV1) -> Result<(), String> {
-    verify_binding(tx, false)
+    verify_binding(tx, false, false)
 }
 
 /// Binding check for a transaction judged in the block at `height`.
 pub fn verify_v2_binding_at(tx: &TxV1, height: u64) -> Result<(), String> {
-    verify_binding(tx, crate::node::token_minting_active(height))
+    verify_binding(tx, crate::node::token_minting_active(height), crate::shield_v2::shield_v2_active(height))
 }
 
-fn verify_binding(tx: &TxV1, token_minting: bool) -> Result<(), String> {
+fn verify_binding(tx: &TxV1, token_minting: bool, shield_v2: bool) -> Result<(), String> {
     let Some(sp) = tx.signed_payload.as_deref() else { return Ok(()) };
     let p: Value = serde_json::from_str(sp).map_err(|e| format!("signed_payload is not valid JSON: {}", e))?;
     if !p.is_object() { return Err("signed_payload is not a JSON object".into()); }
@@ -272,7 +272,14 @@ fn verify_binding(tx: &TxV1, token_minting: bool) -> Result<(), String> {
         if p["tx_type"].as_str() != Some(tx.tx_type.as_str()) { return Err("signed envelope tx_type does not match".into()); }
         if p.get("nonce").and_then(|v| v.as_u64()) != Some(tx.nonce) { return Err("signed envelope nonce does not match".into()); }
         if p.get("fee").and_then(|v| v.as_f64()) != Some(tx.fee) { return Err("signed envelope fee does not match".into()); }
-        let payload: TxPayload = serde_json::from_value(p["payload"].clone()).map_err(|e| format!("signed envelope payload: {}", e))?;
+        let mut payload: TxPayload = serde_json::from_value(p["payload"].clone()).map_err(|e| format!("signed envelope payload: {}", e))?;
+        if !shield_v2 {
+            // SHIELD_V2 (R1-1): before activation the previous release's `TxPayload` has no
+            // `shield_v2_*` fields, so its parse of the envelope drops them; mirror that, or an
+            // envelope carrying them would bind on an old node and fail here.
+            payload.shield_v2_body = None;
+            payload.shield_v2_proof = None;
+        }
         if tx.payload != payload { return Err(format!("{} payload does not match its signed envelope", tx.tx_type)); }
         return Ok(());
     }
