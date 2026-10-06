@@ -1559,6 +1559,8 @@ question.
 
 **4. A fork made by breaking locks across rounds cannot be punished (F3)**
 
+*DECIDED by the owner 2026-10-07: accept the restated guarantee for now. The justification-round remedy (§4.1.1) is to be written up as its own design and tested in the simulator; the owner takes the yes-or-no decision on it before the format of the new votes is frozen for stage B.*
+
 *What was found.* The design promised that anyone who helps create two conflicting blocks can be proved
 guilty and lose their stake. Testing showed this is true only when both blocks are approved in the same
 voting round. If the attackers approve one block in one round and a different block in a later round, each
