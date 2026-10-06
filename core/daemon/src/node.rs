@@ -52,6 +52,12 @@ const UNBONDING_BLOCKS: u64 = 500;
 // or is auto-slashed/jailed for them any more.
 const MISSED_BLOCK_SLASH_THRESHOLD: u64 = 50;
 const MAX_MEMPOOL: usize = 2000;
+/// SHIELD_V2 (R1-5, node-local): at most this many V2 transactions queued at once. A V2 entry is
+/// about 405 KB (body + proof in hexadecimal), so `MAX_MEMPOOL` alone would allow ~800 MB; 64 × 405 KB
+/// ≈ 26 MB, eight blocks' worth of the per-block limit.
+pub(crate) const MAX_MEMPOOL_SHIELD_V2: usize = 64;
+/// SHIELD_V2 (R1-7): `/api/shield-v2/notes` lists at most this many transactions per call.
+pub(crate) const SHIELD_V2_NOTES_MAX_TXS: usize = 512;
 
 // EIP-1559 dynamic fee constants. The base fee is consensus state — it sets each
 // block's burn — so it is stored and updated in integer **quanta**. The old f64
@@ -1465,6 +1471,15 @@ impl L1Node {
 
     /// Import a block from a peer (for P2P sync)
     pub fn import_block(&self, block: BlockV1) -> Result<(), String> {
+        // SHIELD_V2, R1-1: below activation this node must accept, apply and store exactly what
+        // the previous release does. That release's `TxPayload` has no `shield_v2_*` fields, so
+        // its deserialisation drops them on arrival; do the same before any rule reads the block.
+        let mut block = block;
+        let stripped = shield_v2::strip_fields_before_activation(&mut block);
+        if stripped > 0 {
+            eprintln!("[shield_v2] block {}: dropped the shield_v2 payload fields of {} transaction(s) — SHIELD_V2 is not active at this height (consensus = previous release)", block.header.height, stripped);
+        }
+        let block = block;
         let tip = self.store.get_tip()?;
         
         // Only accept blocks that extend our chain
@@ -1522,15 +1537,17 @@ impl L1Node {
         // Verify all transaction signatures in parallel
         {
             use rayon::prelude::*;
+            // SHIELD_V2 (spec §3.1): from activation a shielded_transfer_v2 / unshield_v2 has no
+            // public sender — the proof is the authorization — so no account signature is
+            // verified for it. The envelope rule below (shield_v2_tx_rule, check 2) rejects the
+            // block if such a tx is not exactly the signer-less shape. Before activation there is
+            // no exemption (R1-1: an old node has none). Evaluated once, outside the worker threads.
+            let v2_signerless_exempt = shield_v2_active(block.header.height);
             let invalid_count = block
                 .txs
                 .par_iter()
                 .filter(|tx| {
-                    // SHIELD_V2 (spec §3.1): a shielded_transfer_v2 / unshield_v2 has no public
-                    // sender — the proof is the authorization — so no account signature is
-                    // verified for it. The envelope rule below (shield_v2_tx_rule, check 2)
-                    // rejects the block if such a tx is not exactly the signer-less shape.
-                    if shield_v2::skips_account_signature(tx) {
+                    if v2_signerless_exempt && shield_v2::is_signerless_envelope(tx) {
                         return false; // valid (no signature to check)
                     }
                     // V2 transactions carry the original signed payload
@@ -1591,14 +1608,16 @@ impl L1Node {
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
             monetary_integrity_tx_rule(tx, block.header.height)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
-            // SHIELD_V2: envelope, body and lengths (spec §3.6 checks 1–12); a *_v2 tx or either
-            // payload field before activation invalidates the block.
+            // SHIELD_V2: envelope, body and lengths (spec §3.6 checks 1–12) from activation; before
+            // it the rule is silent, like the previous release's (R1-1).
             shield_v2_tx_rule(tx, block.header.height, &self.opts.chain.chain_id)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
         }
-        // SHIELD_V2 check 13: at most 8 V2 transactions per block (spec §4.7).
-        shield_v2::check_block_limit(&block.txs)
-            .map_err(|e| format!("block {} rejected: {}", block.header.height, e))?;
+        // SHIELD_V2 check 13: at most 8 V2 transactions per block (spec §4.7), from activation.
+        if shield_v2_active(block.header.height) {
+            shield_v2::check_block_limit(&block.txs)
+                .map_err(|e| format!("block {} rejected: {}", block.header.height, e))?;
+        }
         // Proposer selection (consensus rule from PROPOSER_SELECTION_ACTIVATION_HEIGHT): judged
         // against the validator state after H-1 = the store as it is right now, before any
         // state of this block is applied.
@@ -2520,8 +2539,10 @@ impl L1Node {
         use quantum_vault_types::encode_tx_for_signing;
 
         // SECURITY: Verify the ML-DSA-65 signature before accepting P2P broadcast txs
-        // (SHIELD_V2: a signer-less V2 type has none; the rule in insert_tx_to_mempool checks it)
-        let sig_valid = if shield_v2::skips_account_signature(&tx) {
+        // (SHIELD_V2: from activation a signer-less V2 type has none; the rule in
+        // insert_tx_to_mempool checks its shape)
+        let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        let sig_valid = if shield_v2::skips_account_signature(&tx, next_height) {
             true
         } else if let Some(ref sp) = tx.signed_payload {
             pqc_verify(&tx.from_pub_key, sp.as_bytes(), &tx.sig).ok() == Some(true)
@@ -2543,12 +2564,20 @@ impl L1Node {
     }
 
     /// Shared mempool insertion logic (nonce check, dedup, cap, notify).
+    ///
+    /// Order (R1-2): every cheap check — nonce, binding, the stateless rules, replay, already
+    /// mined, duplicate, mempool full, and for a SHIELD_V2 transaction the pool rules, the funding
+    /// shadow, the queue cap and the nullifier scan — BEFORE the one expensive step, the proof
+    /// verification, which is the last thing before insertion.
     fn insert_tx_to_mempool(&self, tx: TxV1) -> Result<(), String> {
         use quantum_vault_crypto::{sha256, bytes_to_hex};
         use quantum_vault_types::encode_tx_v1;
 
-        // SHIELD_V2 (spec §3.1): no account nonce is read for the two signer-less types.
-        if !shield_v2::skips_account_signature(&tx) {
+        let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+
+        // SHIELD_V2 (spec §3.1): from activation no account nonce is read for the two signer-less
+        // types.
+        if !shield_v2::skips_account_signature(&tx, next_height) {
             self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
         }
 
@@ -2558,7 +2587,6 @@ impl L1Node {
         // of the (gap-tolerant) nonce check above.
         // V2 binding (node-local, always on): the executable fields must be the canonical
         // derivation of the signed payload, or an outsider could re-point a signed intent.
-        let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
         crate::v2_binding::verify_v2_binding_at(&tx, next_height)?;
         game_ready_tx_rule(&tx, next_height)?;
         token_minting_tx_rule(&tx, next_height)?;
@@ -2568,11 +2596,12 @@ impl L1Node {
         if tx.tx_type == "mint_tokens" && token_minting_active(next_height) {
             self.check_token_mint_now(&tx)?;
         }
-        // SHIELD_V2 (spec §4.6, mempool): every check of §3.6 against the current tip, no
-        // nullifier shared with a queued V2 transaction, the proof verified once (cached).
-        if let Some(parsed) = shield_v2_tx_rule(&tx, next_height, &self.opts.chain.chain_id)? {
-            self.shield_v2_admission_checks(&tx, &parsed, next_height)?;
-        }
+        // SHIELD_V2 (R1-1, node-local): before activation this node admits no V2 type and no
+        // transaction carrying either field, although a block with one is valid for it (as for an
+        // old node). From activation: the stateless rule (spec §3.6 checks 1–12), decoded once.
+        shield_v2::shield_v2_local_rule(&tx, next_height)?;
+        let shield_v2_parsed = shield_v2_tx_rule(&tx, next_height, &self.opts.chain.chain_id)?;
+
         let identity = quantum_vault_types::tx_identity(&tx);
         if let Some(h) = self.tx_included_at(&identity) {
             return Err(format!("transaction {} already included in block {}", &identity[..16], h));
@@ -2584,30 +2613,52 @@ impl L1Node {
                 return Ok(());
             }
         }
-        
-        let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
-        
-        if mempool.contains_key(&tx_hash) {
-            return Ok(());
-        }
 
-        // SECURITY: Enforce mempool cap with fee-priority eviction
-        if mempool.len() >= MAX_MEMPOOL {
-            if let Some(evict_id) = mempool.iter()
+        // Duplicate and mempool-full are JUDGED here, before anything expensive; the eviction
+        // itself is made at insertion below (the lock is not held across the proof verification,
+        // so the judgement is repeated there).
+        let judge_capacity = |mempool: &HashMap<String, TxV1>| -> Result<Option<String>, String> {
+            if mempool.len() < MAX_MEMPOOL {
+                return Ok(None);
+            }
+            // SECURITY: mempool cap with fee-priority eviction
+            let evict_id = mempool.iter()
                 .min_by(|a, b| a.1.fee.partial_cmp(&b.1.fee).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(k, _)| k.clone())
-            {
-                let min_fee = mempool.get(&evict_id).map(|t| t.fee).unwrap_or(0.0);
+                .map(|(k, _)| k.clone());
+            if let Some(ref id) = evict_id {
+                let min_fee = mempool.get(id).map(|t| t.fee).unwrap_or(0.0);
                 if tx.fee <= min_fee {
                     return Err("Mempool full: tx fee too low".to_string());
                 }
-                mempool.remove(&evict_id);
             }
+            Ok(evict_id)
+        };
+        {
+            let mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
+            if mempool.contains_key(&tx_hash) {
+                return Ok(());
+            }
+            judge_capacity(&mempool)?;
         }
-        
+
+        // SHIELD_V2 (spec §4.6, mempool): the pool's checks against the current tip, the funding
+        // shadow and queue cap (R1-5), no nullifier shared with a queued V2 transaction, and —
+        // last, the only expensive step — the proof, verified once (both outcomes cached, R1-2).
+        if let Some(parsed) = shield_v2_parsed.as_ref() {
+            self.shield_v2_admission_checks(&tx, parsed, next_height)?;
+        }
+
+        let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
+        if mempool.contains_key(&tx_hash) {
+            return Ok(());
+        }
+        if let Some(evict_id) = judge_capacity(&mempool)? {
+            mempool.remove(&evict_id);
+        }
+
         // Mark as verified so mine_pending skips re-verification
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash.clone());
-        
+
         mempool.insert(tx_hash, tx);
         drop(mempool);
         self.mine_notify.notify_one();
@@ -3733,13 +3784,16 @@ impl L1Node {
         }
         let tx_entries: Vec<(String, TxV1)> = mempool.drain().collect();
         drop(mempool);
+        let producing_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        // SHIELD_V2: the signer-less exemption, from activation only (once, outside the workers)
+        let v2_signerless_exempt = shield_v2_active(producing_height);
         let mut verified_set = self.verified_tx_ids.lock().map_err(|_| "verified lock")?;
         // Verify signatures in parallel; skip re-verification for pre-verified (v2 API) txs
         let verified_entries: Vec<(String, TxV1)> = {
             use rayon::prelude::*;
             tx_entries.into_par_iter()
                 .filter(|(id, tx)| {
-                    if verified_set.contains(id) || shield_v2::skips_account_signature(tx) {
+                    if verified_set.contains(id) || (v2_signerless_exempt && shield_v2::is_signerless_envelope(tx)) {
                         return true;
                     }
                     let bytes = encode_tx_for_signing(tx);
@@ -3751,7 +3805,6 @@ impl L1Node {
         drop(verified_set);
         // C1: never include a tx the chain already accepted (replay), whatever its nonce says.
         // GAME_READY: never include a contract tx the next block's rule would reject.
-        let producing_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
         let verified_entries: Vec<(String, TxV1)> = verified_entries.into_iter()
             .filter(|(_, tx)| !self.tx_already_included(&quantum_vault_types::tx_identity(tx)))
             .filter(|(_, tx)| game_ready_tx_rule(tx, producing_height).is_ok())
@@ -3761,13 +3814,24 @@ impl L1Node {
             .filter(|(_, tx)| nft_royalty_cap_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| fee_and_type_sanity(tx).is_ok() && monetary_integrity_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| crate::v2_binding::verify_v2_binding_at(tx, producing_height).is_ok())
-            // SHIELD_V2: an ordinary type must not carry the V2 payload fields (the V2 types are
-            // judged by the selection below)
+            // SHIELD_V2 (R1-1, node-local): before activation this node produces no V2 type and
+            // no transaction carrying either field; from activation an ordinary type must not
+            // carry the fields (the V2 types are judged by the selection below)
+            .filter(|(_, tx)| shield_v2::shield_v2_local_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| shield_v2::is_shield_v2_type(&tx.tx_type) || !shield_v2::has_shield_v2_fields(&tx.payload))
             .collect();
         // SHIELD_V2: V2 transactions in order against the evolving pool state; failing ones are
-        // left out (spec §4.6), at most 8 per block.
-        let verified_entries = self.shield_v2_select_for_block(verified_entries, producing_height);
+        // left out (spec §4.6), at most 8 per block — the valid ones beyond the limit go straight
+        // back to the mempool for the next block (R1-3).
+        let (verified_entries, beyond_limit) = self.shield_v2_select_for_block(verified_entries, producing_height);
+        if !beyond_limit.is_empty() {
+            if let (Ok(mut mempool), Ok(mut verified)) = (self.mempool.lock(), self.verified_tx_ids.lock()) {
+                for (id, tx) in beyond_limit {
+                    verified.insert(id.clone());
+                    mempool.insert(id, tx);
+                }
+            }
+        }
         if verified_entries.is_empty() {
             return Ok(None);
         }
@@ -4807,8 +4871,9 @@ impl L1Node {
             let mut seen_nonce: HashSet<&str> = HashSet::new();
             let mut seen_addr: HashSet<&str> = HashSet::new();
             for tx in &block.txs {
-                // SHIELD_V2: signer-less types have no nonce and no sender to index (spec §3.1)
-                if shield_v2::skips_account_signature(tx) { continue; }
+                // SHIELD_V2: from activation, signer-less types have no nonce and no sender to
+                // index (spec §3.1)
+                if shield_v2::skips_account_signature(tx, block.header.height) { continue; }
                 if seen_nonce.insert(tx.from_pub_key.as_str()) {
                     let key = tx.from_pub_key.as_bytes().to_vec();
                     let prev = self.nonce_db.get(&key).map_err(|e| format!("nonce_db get: {}", e))?
@@ -5643,6 +5708,7 @@ impl L1Node {
             "max_tx_per_block": quantum_vault_shield_v2::pool::SHIELD_V2_MAX_TX_PER_BLOCK,
             "anchor_window": quantum_vault_shield_v2::pool::SHIELD_V2_ANCHOR_WINDOW,
             "verified_proof_cache": self.shield_v2_verified.len(),
+            "refused_proof_cache": self.shield_v2_verified.refused_len(),
         });
         let stored = match self.shield_v2_store.meta()? {
             Some(m) => Some(shield_v2::decode_stored_pool(&m)?),
@@ -5668,9 +5734,19 @@ impl L1Node {
     }
 
     /// Wallet-facing listing (spec §5.4): for every accepted V2 transaction of the blocks
-    /// `since..` (at most `max_blocks` blocks, ≤ 256), in chain order: height, position, type, the
-    /// two nullifiers, the two output commitments with their leaf positions, and the two
-    /// `(kem_ct, note_ct)` pairs. `next_height` tells the wallet where to continue.
+    /// `since..` (at most `max_blocks` blocks, ≤ 256, and at most `SHIELD_V2_NOTES_MAX_TXS`
+    /// transactions, R1-7), in chain order: height, position, type, the two nullifiers, the two
+    /// output commitments with their leaf positions, and the two `(kem_ct, note_ct)` pairs.
+    /// `next_height` tells the wallet where to continue — the first height NOT fully listed, so a
+    /// call cut short by the transaction cap ends at a block boundary.
+    ///
+    /// Cost (R1-7, unauthenticated GET): one chain-store block read per height in range (a block
+    /// is ≤ 16 MiB on the wire, ≤ 3.3 MB with eight V2 transactions), plus per listed transaction
+    /// one 5,092-character body decode and one `compute_single_tx_hash` (a JSON encoding and
+    /// SHA-256 of the whole transaction, ≈ 400 KB, released before the next) — the proof string is
+    /// never hex-decoded or validated (`shield_v2::listing_fields`). Per call: ≤ 256 block reads,
+    /// ≤ 512 body decodes (≈ 1.3 MB) and ≤ 512 transaction encodings (≈ 200 MB in sequence, one
+    /// live at a time); response ≈ 1.2 MB at most. Before activation the handler returns at once.
     pub fn shield_v2_notes_since(&self, since: u64, max_blocks: u64) -> Result<serde_json::Value, String> {
         let tip = self.store.get_tip()?.height;
         let max_blocks = max_blocks.clamp(1, 256);
@@ -5680,23 +5756,27 @@ impl L1Node {
         let mut h = start;
         while h <= end {
             if let Some(block) = self.store.get_block(h)? {
+                let v2_in_block = block.txs.iter().filter(|t| shield_v2::is_shield_v2_type(&t.tx_type)).count();
+                if v2_in_block > 0 && txs.len() + v2_in_block > SHIELD_V2_NOTES_MAX_TXS {
+                    break; // the cap: this block is listed by the next call
+                }
                 let range = self.shield_v2_store.block_leaf_range(h)?;
                 let have_range = range.is_some();
                 let mut leaf = range.map(|(first, _)| first).unwrap_or(0);
                 for (i, tx) in block.txs.iter().enumerate() {
                     if !shield_v2::is_shield_v2_type(&tx.tx_type) { continue; }
-                    let Some(p) = shield_v2_tx_rule(tx, h, &self.opts.chain.chain_id).ok().flatten() else { continue };
-                    let b = &p.body;
+                    // the block was accepted by consensus: read the body, never the proof (R1-7)
+                    let Some(f) = shield_v2::listing_fields(tx) else { continue };
                     txs.push(serde_json::json!({
                         "height": h,
                         "index": i,
                         "tx_hash": compute_single_tx_hash(tx),
                         "tx_type": tx.tx_type,
-                        "nf1": hex::encode(b.nf[0]),
-                        "nf2": hex::encode(b.nf[1]),
+                        "nf1": hex::encode(f.nf[0]),
+                        "nf2": hex::encode(f.nf[1]),
                         "outputs": [
-                            { "cm_out": hex::encode(b.cm_out[0]), "leaf": have_range.then_some(leaf), "kem_ct": hex::encode(p.kem_ct(0)), "note_ct": hex::encode(p.note_ct(0)) },
-                            { "cm_out": hex::encode(b.cm_out[1]), "leaf": have_range.then_some(leaf + 1), "kem_ct": hex::encode(p.kem_ct(1)), "note_ct": hex::encode(p.note_ct(1)) },
+                            { "cm_out": hex::encode(f.cm_out[0]), "leaf": have_range.then_some(leaf), "kem_ct": hex::encode(&f.kem_ct[0]), "note_ct": hex::encode(&f.note_ct[0]) },
+                            { "cm_out": hex::encode(f.cm_out[1]), "leaf": have_range.then_some(leaf + 1), "kem_ct": hex::encode(&f.kem_ct[1]), "note_ct": hex::encode(&f.note_ct[1]) },
                         ],
                     }));
                     leaf += 2;
@@ -5704,69 +5784,94 @@ impl L1Node {
             }
             h += 1;
         }
-        let next_height = if end >= start { end + 1 } else { start };
+        // `h` is the first height not listed (end + 1 when the range was exhausted)
+        let next_height = h.max(start);
         Ok(serde_json::json!({ "active": true, "tip_height": tip, "from_height": start, "next_height": next_height, "txs": txs }))
     }
 
     // ── SHIELD_V2: mempool and producer (node-local) ────────────────────────────────────────
-    /// Mempool admission of a decoded V2 transaction for the next block: pool checks 15–18 against
-    /// the tip's pool state, 19 against the current balances, no nullifier in common with a queued
-    /// V2 transaction, and the proof (20; cached for block apply).
+    /// Mempool admission of a decoded V2 transaction for the next block, cheap checks first
+    /// (R1-2): pool checks 15–18 against the tip's pool state; the queue cap and, for a shield,
+    /// 19 against the current balance net of the shields already queued from the same account
+    /// (R1-5); no nullifier in common with a queued V2 transaction; and last the proof (20; both
+    /// outcomes cached, the accept for block apply).
     fn shield_v2_admission_checks(&self, tx: &TxV1, parsed: &ShieldV2Tx, next_height: u64) -> Result<(), String> {
         use quantum_vault_shield_v2::pool::TxKind;
         let pool = self.shield_v2_pool()?;
         pool.validate_block(next_height, &[parsed.pool_tx()]).map_err(|e| format!("shield_v2: refused by the pool rules: {:?}", e))?;
-        if parsed.body.kind == TxKind::Shield {
-            let bal = self.balances.lock().map_err(|_| "balance lock")?.get(&canon_addr(&tx.from_pub_key)).copied().unwrap_or(0);
-            if bal < parsed.body.v_in as u128 {
-                return Err(format!("shield_v2: funding account balance {} quanta is below v_in {}", bal, parsed.body.v_in));
-            }
-        }
-        {
+        let (queued_v2, queued_v_in) = {
             let mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
+            let mut queued_v2 = 0usize;
+            let mut queued_v_in: u128 = 0;
             for queued in mempool.values() {
+                if !shield_v2::is_shield_v2_type(&queued.tx_type) { continue; }
+                queued_v2 += 1;
                 if let Some(nf) = shield_v2::quick_nullifiers(queued) {
                     if nf.iter().any(|n| parsed.body.nf.contains(n)) {
                         return Err("shield_v2: a queued transaction already spends one of these nullifiers".to_string());
                     }
                 }
+                if parsed.body.kind == TxKind::Shield && queued.from_pub_key == tx.from_pub_key {
+                    queued_v_in = queued_v_in.saturating_add(shield_v2::quick_shield_v_in(queued).unwrap_or(0) as u128);
+                }
+            }
+            (queued_v2, queued_v_in)
+        };
+        // R1-5: a V2 entry is ~405 KB; the count cap bounds the bytes a peer can park here
+        if queued_v2 >= MAX_MEMPOOL_SHIELD_V2 {
+            return Err(format!("shield_v2: mempool already holds {} V2 transactions (the limit is {})", queued_v2, MAX_MEMPOOL_SHIELD_V2));
+        }
+        if parsed.body.kind == TxKind::Shield {
+            let bal = self.balances.lock().map_err(|_| "balance lock")?.get(&canon_addr(&tx.from_pub_key)).copied().unwrap_or(0);
+            // 19 against the balance, net of what the queued shields of this account already claim
+            // (R1-5): only as many shields as the account can fund are held and relayed
+            let available = bal.saturating_sub(queued_v_in);
+            if available < parsed.body.v_in as u128 {
+                return Err(format!("shield_v2: funding account balance {} quanta ({} already claimed by queued shields) is below v_in {}", bal, queued_v_in, parsed.body.v_in));
             }
         }
-        shield_v2::verify_proof(&self.shield_v2_verified, &compute_single_tx_hash(tx), parsed)
+        shield_v2::verify_proof_admission(&self.shield_v2_verified, &compute_single_tx_hash(tx), parsed)
     }
 
     /// Block production (spec §4.6): evaluate the drained V2 transactions in order against the
     /// evolving pool state and leave out every one that fails — a second spend of a nullifier, an
     /// expired or badly shaped transaction, a shield its account cannot fund, a refused proof —
     /// and never more than the per-block limit. Ordinary transactions pass through untouched.
-    fn shield_v2_select_for_block(&self, entries: Vec<(String, TxV1)>, height: u64) -> Vec<(String, TxV1)> {
+    /// Returns `(selected, beyond_limit)`: the second list holds the V2 transactions that were
+    /// left out ONLY because the limit was reached (R1-3) — valid as far as the producer can tell,
+    /// to be requeued for the next block — in their original order. Before activation every V2
+    /// type is left out and nothing is requeued (R1-1, node-local: this node produces none).
+    fn shield_v2_select_for_block(&self, entries: Vec<(String, TxV1)>, height: u64) -> (Vec<(String, TxV1)>, Vec<(String, TxV1)>) {
         use quantum_vault_shield_v2::pool::{PoolTx, TxKind, SHIELD_V2_MAX_TX_PER_BLOCK};
         if !entries.iter().any(|(_, t)| shield_v2::is_shield_v2_type(&t.tx_type)) {
-            return entries;
+            return (entries, Vec::new());
         }
         if !shield_v2_active(height) {
-            return entries.into_iter().filter(|(_, t)| !shield_v2::is_shield_v2_type(&t.tx_type)).collect();
+            return (entries.into_iter().filter(|(_, t)| !shield_v2::is_shield_v2_type(&t.tx_type)).collect(), Vec::new());
         }
         let pool = match self.shield_v2_pool() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("[shield_v2] producer: {} — leaving every V2 transaction out", e);
-                return entries.into_iter().filter(|(_, t)| !shield_v2::is_shield_v2_type(&t.tx_type)).collect();
+                return (entries.into_iter().filter(|(_, t)| !shield_v2::is_shield_v2_type(&t.tx_type)).collect(), Vec::new());
             }
         };
         let balances = self.balances.lock().map(|b| b.clone()).unwrap_or_default();
         let mut debited: HashMap<String, u128> = HashMap::new();
         let mut kept: Vec<PoolTx> = Vec::new();
         let mut out = Vec::with_capacity(entries.len());
+        let mut beyond_limit = Vec::new();
         for (id, tx) in entries {
             if !shield_v2::is_shield_v2_type(&tx.tx_type) {
                 out.push((id, tx));
                 continue;
             }
+            if kept.len() >= SHIELD_V2_MAX_TX_PER_BLOCK {
+                // R1-3: not an invalidity — the entry waits for the next block
+                beyond_limit.push((id, tx));
+                continue;
+            }
             let verdict = (|| -> Result<(), String> {
-                if kept.len() >= SHIELD_V2_MAX_TX_PER_BLOCK {
-                    return Err("per-block limit reached".into());
-                }
                 let parsed = shield_v2_tx_rule(&tx, height, &self.opts.chain.chain_id)?.ok_or("not a V2 transaction")?;
                 let mut trial = kept.clone();
                 trial.push(parsed.pool_tx());
@@ -5779,7 +5884,7 @@ impl L1Node {
                     }
                     *debited.entry(payer).or_insert(0) += parsed.body.v_in as u128;
                 }
-                shield_v2::verify_proof(&self.shield_v2_verified, &compute_single_tx_hash(&tx), &parsed)?;
+                shield_v2::verify_proof_admission(&self.shield_v2_verified, &compute_single_tx_hash(&tx), &parsed)?;
                 kept.push(parsed.pool_tx());
                 Ok(())
             })();
@@ -5788,7 +5893,10 @@ impl L1Node {
                 Err(e) => eprintln!("[shield_v2] producer left out a {} at height {}: {}", tx.tx_type, height, e),
             }
         }
-        out
+        if !beyond_limit.is_empty() {
+            eprintln!("[shield_v2] producer: {} V2 transaction(s) beyond the per-block limit of {} at height {} — requeued for the next block", beyond_limit.len(), SHIELD_V2_MAX_TX_PER_BLOCK, height);
+        }
+        (out, beyond_limit)
     }
 
     // ── SHIELD_V2: block apply helpers ───────────────────────────────────────────────────────
@@ -14800,36 +14908,56 @@ mod shield_v2_daemon_tests {
         for ty in shield_v2::SHIELD_V2_TX_TYPES { assert!(!SUSPENDED_TX_TYPES.contains(ty), "{ty}"); }
     }
 
-    /// Before activation (and with activation `None`) a block with a V2 transaction, or with an
-    /// ordinary transaction carrying a V2 payload field, is rejected on the real import path and
-    /// leaves both nodes exactly as they were. The identical block is accepted at activation.
+    /// Before activation (and with activation `None`) a block with a V2 transaction is judged by
+    /// the previous release's rules and nothing else (R1-1): the real shield — signed over an
+    /// encoding that includes the two fields an old node never sees — fails the ordinary signature
+    /// check once the fields are dropped, as it does on an old node; the signer-less transfer and
+    /// unshield fail it too (no exemption before activation); none of them is refused for being
+    /// "not active". An ordinary transaction whose fields a relay injected AFTER signing is
+    /// accepted, stored without them, and both nodes agree on the root. The pool store is never
+    /// touched. The identical shield block is accepted at activation. (The full model of the old
+    /// rule set, with the bare type names, is `shield_v2_review_node_1_tests::review_r1_1_*`.)
     #[test]
-    fn before_activation_a_block_with_a_v2_transaction_or_field_is_rejected() {
+    fn before_activation_a_block_with_a_v2_transaction_is_judged_by_the_previous_release_rules() {
         let n = net(1_000.0);
         let f = fixture();
         for _ in 1..A {
             let before = (fingerprint(&n.x), fingerprint(&n.y));
-            // a V2 type, alone and after an ordinary transaction
+            // a V2 type, alone and after an ordinary transaction: refused by the SIGNATURE rule
+            // (the only rule an old node has for them), never by a V2 rule
             for txs in [vec![f.shield.clone()], vec![n.ordinary(), f.shield.clone()], vec![f.transfer.clone()], vec![f.unshield.clone()]] {
                 let b = n.block_any_root(&n.x, txs);
                 let e = n.x.import_block(b.clone()).unwrap_err();
-                assert!(e.contains(NOT_ACTIVE_ERROR), "{e}");
-                assert!(n.y.import_block(b).unwrap_err().contains(NOT_ACTIVE_ERROR));
+                assert!(e.contains("invalid tx signatures"), "{e}");
+                assert!(!e.contains("shield_v2"), "no V2 rule speaks before activation: {e}");
+                assert!(n.y.import_block(b).unwrap_err().contains("invalid tx signatures"));
             }
-            // an ordinary type carrying a field
+            // an ordinary type carrying a field INSIDE its signed bytes: an old node drops the field
+            // and the signature no longer verifies — refused on both, as the signature rule
             let mut t = n.ordinary();
             t.payload.shield_v2_proof = Some("ab".into());
             t.sig = String::new();
             let t = signed(t, &n.other.secret_key_hex);
-            assert!(n.x.import_block(n.block_any_root(&n.x, vec![t])).unwrap_err().contains(FOREIGN_FIELDS_ERROR));
-            // with activation None the same shapes are refused at this height too
+            let e = n.x.import_block(n.block_any_root(&n.x, vec![t])).unwrap_err();
+            assert!(e.contains("invalid tx signatures") && !e.contains(FOREIGN_FIELDS_ERROR), "{e}");
+            // with activation None the same shapes are judged the same way
             set_test_shield_v2(None);
-            assert!(n.x.import_block(n.block_any_root(&n.x, vec![f.shield.clone()])).unwrap_err().contains(NOT_ACTIVE_ERROR));
+            let e = n.x.import_block(n.block_any_root(&n.x, vec![f.shield.clone()])).unwrap_err();
+            assert!(e.contains("invalid tx signatures") && !e.contains(NOT_ACTIVE_ERROR), "{e}");
             set_test_shield_v2(Some(A));
             assert_eq!((fingerprint(&n.x), fingerprint(&n.y)), before, "nothing changed");
             assert!(n.x.shield_v2_store.is_empty(), "the pool store is untouched before activation");
-            let b = n.block(&n.x, vec![n.ordinary()]);
+            // an ordinary transaction whose field was injected AFTER signing (what an old node
+            // sees is the signed, field-less transaction): accepted, stored without the field
+            let mut t = n.ordinary();
+            t.payload.shield_v2_proof = Some("ab".into());
+            let b = n.block(&n.x, vec![t]);
+            assert!(b.txs[0].payload.shield_v2_proof.is_some(), "the relayed block carries the field");
             n.import_both(b);
+            let stored = n.x.get_block(n.x.tip_height().unwrap()).unwrap().unwrap();
+            assert_eq!(stored.txs.len(), 1);
+            assert!(!shield_v2::has_shield_v2_fields(&stored.txs[0].payload), "stored as an old node stores it");
+            assert!(n.x.shield_v2_store.is_empty());
         }
         // at A the shield is accepted
         let b = n.block(&n.x, vec![f.shield.clone()]);
@@ -15210,16 +15338,17 @@ mod shield_v2_daemon_tests {
 // SHIELD_V2 — REVIEW_NODE_1 (core/shield-v2/REVIEW_NODE_1.md): regression tests next to the
 // findings they belong to. No proof is made here: where a finding is about what happens AROUND
 // check 20, `shield_v2_verified` is primed with the transaction hash so that `verify_proof` is a
-// cache hit, exactly as it is for a transaction this node admitted earlier. Tests named
-// `review_r1_*` that FAIL do so on purpose: they assert the behaviour the finding asks for.
+// cache hit, exactly as it is for a transaction this node admitted earlier. The `review_r1_*`
+// tests assert the behaviour each finding asked for; all of them pass since the findings were
+// fixed (see the "Resolution" section of the review).
 // ─────────────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod shield_v2_review_node_1_tests {
     use super::*;
-    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, signed};
-    use crate::shield_v2::{set_test_shield_v2, SHIELD_TX_TYPE};
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, signed};
+    use crate::shield_v2::{set_test_shield_v2, SHIELD_TX_TYPE, TRANSFER_TX_TYPE};
     use quantum_vault_shield_v2::pool::{empty_tree_root, SHIELD_V2_MIN_FEE_QUANTA};
-    use quantum_vault_types::encode_tx_for_signing;
+    use quantum_vault_types::{encode_tx_for_signing, encode_tx_v1};
 
     /// Activation at height 1: a freshly initialised node (tip 0) is active for its next block.
     const A: u64 = 1;
@@ -15263,15 +15392,14 @@ mod shield_v2_review_node_1_tests {
         node.shield_v2_verified.insert(compute_single_tx_hash(tx));
     }
 
-    /// R1-1 (Medium; documenting test, passes). A transaction whose TYPE NAME is one of the three
-    /// V2 names but that carries neither payload field passes every rule a pre-stage-2 node
-    /// applies — signature, fee/type sanity, MONETARY_INTEGRITY (the V2 names are not suspended),
-    /// GAME_READY, TOKEN_MINTING, the royalty cap, the signed-payload binding — and
-    /// `apply_balance_tx_inner` has no arm for it (`_ => {}`): such a block is VALID today and is
-    /// applied as a no-op. The stage-2 rule refuses the block at every height while activation is
-    /// `None`. Until every validator runs stage 2, one validly signed bare-type transaction in a
-    /// block splits upgraded from non-upgraded nodes. (The payload FIELDS do not have this
-    /// problem in the same way: see the report.)
+    /// R1-1 (Medium), FIXED. A transaction whose TYPE NAME is one of the three V2 names but that
+    /// carries neither payload field passes every rule a pre-stage-2 node applies — signature,
+    /// fee/type sanity, MONETARY_INTEGRITY (the V2 names are not suspended), GAME_READY,
+    /// TOKEN_MINTING, the royalty cap, the signed-payload binding — and `apply_balance_tx_inner`
+    /// has no arm for it (`_ => {}`): such a block is VALID for an old node and is applied as a
+    /// no-op. Since the fix the stage-2 consensus rule is silent before activation too (and only
+    /// the node-local admission rule refuses the type), so there is nothing an old node accepts
+    /// that this build refuses, or the reverse.
     #[test]
     fn review_r1_1_bare_v2_type_names_pass_every_pre_stage_2_rule() {
         let user = pqc_keygen();
@@ -15284,18 +15412,229 @@ mod shield_v2_review_node_1_tests {
             assert!(game_ready_tx_rule(&t, u64::MAX).is_ok() && token_minting_tx_rule(&t, u64::MAX).is_ok() && nft_royalty_cap_tx_rule(&t, u64::MAX).is_ok(), "{ty}");
             assert!(crate::v2_binding::verify_v2_binding_at(&t, u64::MAX).is_ok(), "{ty}");
             assert!(!SUSPENDED_TX_TYPES.contains(ty));
-            // only the stage-2 rule refuses it — and it refuses the whole block
-            assert_eq!(shield_v2_tx_rule(&t, 0, "test").unwrap_err(), shield_v2::NOT_ACTIVE_ERROR, "{ty}");
-            assert_eq!(shield_v2_tx_rule(&t, u64::MAX, "test").unwrap_err(), shield_v2::NOT_ACTIVE_ERROR, "{ty}");
+            // the stage-2 consensus rule is silent for it before activation (activation `None`)
+            assert_eq!(shield_v2_tx_rule(&t, 0, "test").unwrap(), None, "{ty}");
+            assert_eq!(shield_v2_tx_rule(&t, u64::MAX, "test").unwrap(), None, "{ty}");
+            // the node-local rule (mempool, producer) refuses it
+            assert_eq!(shield_v2::shield_v2_local_rule(&t, u64::MAX).unwrap_err(), shield_v2::NOT_ACTIVE_ERROR, "{ty}");
         }
     }
 
-    /// R1-2 (Medium). `insert_tx_to_mempool` runs `shield_v2_admission_checks` — which ends with
-    /// the proof verification (≤ 14 ms, up to 4.5 MiB) — BEFORE the replay check, the mined-hash
-    /// check, the mempool dedup and the mempool-full check. A V2 transaction has envelope fee 0.0
-    /// and can never enter a full mempool (`tx.fee <= min_fee`), so with a full mempool every
-    /// garbage-proof V2 transaction an unauthenticated peer sends costs a verification for
-    /// nothing. Expected: the cheap refusals first. This test FAILS until they are.
+    /// The previous release (origin/main, 1.6.3) as a model, for the test below.
+    ///
+    /// (1) What its deserialisation makes of a relayed block: `TxPayload` has no `shield_v2_*`
+    ///     fields and no `deny_unknown_fields`, so they are dropped — `old_view` re-encodes the
+    ///     block and removes them, exactly as serde does there.
+    /// (2) Its per-transaction rules at import (`import_block` of 1.6.3): the account signature in
+    ///     its three formats (`signed_payload`, `encode_tx_for_signing`, legacy full encoding),
+    ///     then — for every tx — GAME_READY, TOKEN_MINTING, the royalty cap, MONETARY_INTEGRITY,
+    ///     and the signed-payload binding of the uniqueness rule. No rule reads the type name
+    ///     otherwise (`fee_and_type_sanity` refuses only `slash`; the V2 names are not suspended).
+    /// (3) Its apply of a type it does not know: `apply_balance_tx_inner`'s `_ => {}` arm — a
+    ///     no-op that still writes the nonce and indexes the sender, charges no fee, and counts as
+    ///     one transaction of the block. `old_twin` makes the same transaction under a type name
+    ///     NEITHER build knows, re-signed by the same key with the same nonce and fee, so that a
+    ///     stage-2 node applying the twin shows the root the old node computes for the original.
+    fn old_view(block: &BlockV1) -> BlockV1 {
+        let mut b: BlockV1 = serde_json::from_str(&serde_json::to_string(block).unwrap()).unwrap();
+        for tx in &mut b.txs { tx.payload.shield_v2_body = None; tx.payload.shield_v2_proof = None; }
+        b
+    }
+    fn old_sig_ok(tx: &TxV1) -> bool {
+        if let Some(sp) = tx.signed_payload.as_deref() {
+            if pqc_verify(&tx.from_pub_key, sp.as_bytes(), &tx.sig).ok() == Some(true) { return true; }
+        }
+        if pqc_verify(&tx.from_pub_key, &encode_tx_for_signing(tx), &tx.sig).ok() == Some(true) { return true; }
+        let mut legacy = tx.clone();
+        legacy.sig = String::new();
+        legacy.signed_payload = None;
+        pqc_verify(&tx.from_pub_key, &encode_tx_v1(&legacy), &tx.sig).ok() == Some(true)
+    }
+    /// Accept/refuse of the old rule set for a relayed block at `height` (activation `None`, so
+    /// every stage-2 rule called here is in its pre-activation, i.e. old, state).
+    fn old_rules_accept(block: &BlockV1, height: u64) -> Result<(), String> {
+        let b = old_view(block);
+        for (i, tx) in b.txs.iter().enumerate() {
+            if !old_sig_ok(tx) { return Err(format!("tx #{i}: invalid tx signature")); }
+            game_ready_tx_rule(tx, height).map_err(|e| format!("tx #{i}: {e}"))?;
+            token_minting_tx_rule(tx, height).map_err(|e| format!("tx #{i}: {e}"))?;
+            nft_royalty_cap_tx_rule(tx, height).map_err(|e| format!("tx #{i}: {e}"))?;
+            monetary_integrity_tx_rule(tx, height).map_err(|e| format!("tx #{i}: {e}"))?;
+            crate::v2_binding::verify_v2_binding_at(tx, height).map_err(|e| format!("tx #{i}: {e}"))?;
+        }
+        Ok(())
+    }
+    const UNKNOWN_TYPE: &str = "review_r1_1_type_nobody_knows";
+    /// The old node's no-op under a type name neither build knows (same key, nonce, fee, payload).
+    fn old_twin(tx: &TxV1, sk: &str) -> TxV1 {
+        let mut t = tx.clone();
+        t.tx_type = UNKNOWN_TYPE.into();
+        t.payload.shield_v2_body = None;
+        t.payload.shield_v2_proof = None;
+        if let Some(sp) = t.signed_payload.as_deref() {
+            // a CLI envelope: the type is inside the signed bytes
+            let mut env: serde_json::Value = serde_json::from_str(sp).unwrap();
+            env["tx_type"] = serde_json::Value::String(UNKNOWN_TYPE.into());
+            let sp = serde_json::to_string(&env).unwrap();
+            t.sig = pqc_sign(sk, sp.as_bytes()).unwrap();
+            t.signed_payload = Some(sp);
+            t
+        } else {
+            t.sig = String::new();
+            signed(t, sk)
+        }
+    }
+
+    /// R1-1 (Medium), FIXED — the block-level statement. With activation `None`, and again with
+    /// activation scheduled above the tip, a block that carries a validly signed transaction of a
+    /// V2 type, or whose payload carries the new fields, is accepted or refused by the stage-2
+    /// import path (a) exactly as by the model of the previous release (b): same verdict for
+    /// every probe, same state root and same stored block for every accepted one, and the
+    /// refusals are the OLD rules' (the signature), never a V2 rule's. Probes: the three bare
+    /// type names signed by an account (alone, after an ordinary transfer, nine in one block —
+    /// above the V2 per-block limit, which an old node does not have); a signer-less envelope
+    /// (no signature → refused by both); a `shield_v2` with body and proof signed INSIDE its
+    /// bytes (dropped by an old node → signature fails → refused by both); an ordinary transfer
+    /// with a field injected after signing (accepted by both, stored without the field); the
+    /// same with the field signed (refused by both); a CLI-envelope `shield_v2` whose signed
+    /// envelope carries the fields (accepted by both: an old node parses the envelope payload
+    /// without them, so the binding holds). Then the pool store is still empty and the node-local
+    /// rule still refuses every V2 shape for the mempool.
+    #[test]
+    fn review_r1_1_before_activation_import_equals_the_previous_release_verdict_and_root() {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0))); // header state root committed + verified
+        let user = pqc_keygen();
+        let other = pqc_keygen();
+        let proposer = pqc_keygen();
+        /// A block on `n`'s tip carrying `txs` with the correct post-state root (probe + rollback).
+        fn sealed_with_root(n: &L1Node, proposer: &PQKeypair, txs: Vec<TxV1>, h: u64) -> BlockV1 {
+            let probe = sealed_block(n, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), None, h);
+            let snap = n.capture_pre_apply_snapshot(&probe).unwrap();
+            let _ = n.apply_balance_block(&probe).unwrap();
+            let root = n.compute_state_root_for_height(probe.header.height).unwrap();
+            n.restore_pre_apply_snapshot(snap).unwrap();
+            sealed_block(n, &proposer.public_key_hex, &proposer.secret_key_hex, txs, Some(root), h)
+        }
+        let run = |activation: Option<u64>| {
+            set_test_shield_v2(activation);
+            // (a) the stage-2 node; (b) a second stage-2 node fed the old node's view of every
+            // accepted block (for the root — the verdict comes from `old_rules_accept`)
+            let (_da, a, _) = node_with_store();
+            let (_db, b, _) = node_with_store();
+            for n in [&a, &b] { fund_xrge(n, &user.public_key_hex, 1_000.0); fund_xrge(n, &other.public_key_hex, 1_000.0); }
+            let mut nonce_user = 0u64;
+            let mut nonce_other = 0u64;
+            let mut probes: Vec<(&str, Vec<TxV1>, Vec<TxV1>, bool)> = Vec::new(); // (name, block for (a), block for (b), old accepts)
+            let bare = |ty: &str, nonce: u64| signed(TxV1 { version: 1, tx_type: ty.into(), from_pub_key: user.public_key_hex.clone(), nonce,
+                payload: TxPayload::default(), fee: 0.1, sig: String::new(), signed_payload: None }, &user.secret_key_hex);
+            let ordinary = |nonce: u64| signed(TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: other.public_key_hex.clone(), nonce,
+                payload: TxPayload { to_pub_key_hex: Some("bb".repeat(32)), amount: Some(1), ..Default::default() }, fee: 0.1, sig: String::new(), signed_payload: None }, &other.secret_key_hex);
+            // 1–3: the bare names, alone
+            for ty in shield_v2::SHIELD_V2_TX_TYPES {
+                nonce_user += 1;
+                let t = bare(ty, nonce_user);
+                probes.push((*ty, vec![t.clone()], vec![old_twin(&t, &user.secret_key_hex)], true));
+            }
+            // 4: after an ordinary transfer
+            nonce_user += 1; nonce_other += 1;
+            let (o, t) = (ordinary(nonce_other), bare(SHIELD_TX_TYPE, nonce_user));
+            probes.push(("ordinary + bare shield_v2", vec![o.clone(), t.clone()], vec![o, old_twin(&t, &user.secret_key_hex)], true));
+            // 5: nine bare V2 types in one block — the V2 limit does not exist for an old node
+            let mut nine = Vec::new(); let mut twins = Vec::new();
+            for _ in 0..9 { nonce_user += 1; let t = bare(SHIELD_TX_TYPE, nonce_user); twins.push(old_twin(&t, &user.secret_key_hex)); nine.push(t); }
+            probes.push(("nine bare shield_v2", nine, twins, true));
+            // 6: a signer-less envelope — no signature to verify, so an old node refuses
+            let sl = TxV1 { version: 1, tx_type: TRANSFER_TX_TYPE.into(), from_pub_key: String::new(), nonce: 0,
+                payload: TxPayload { shield_v2_body: Some(hex::encode(body(2, 1, 0, 0, SHIELD_V2_MIN_FEE_QUANTA, [0u8; 32]))), shield_v2_proof: Some("ab".into()), ..Default::default() },
+                fee: 0.0, sig: String::new(), signed_payload: None };
+            probes.push(("signer-less transfer", vec![sl], vec![], false));
+            // 7: a real shield shape, signed with the fields inside the signed bytes
+            nonce_user += 1;
+            probes.push(("shield_v2 signed with fields", vec![shield_tx(&user, 7, 10 * Q, nonce_user)], vec![], false));
+            // 8: an ordinary transfer with a field injected after signing
+            nonce_other += 1;
+            let mut inj = ordinary(nonce_other);
+            let clean = inj.clone();
+            inj.payload.shield_v2_proof = Some("ab".into());
+            probes.push(("transfer + injected field", vec![inj], vec![clean], true));
+            // 9: the same with the field inside the signed bytes
+            nonce_other += 1;
+            let mut sf = ordinary(nonce_other);
+            sf.payload.shield_v2_proof = Some("ab".into());
+            sf.sig = String::new();
+            let sf = signed(sf, &other.secret_key_hex);
+            probes.push(("transfer with a signed field", vec![sf], vec![], false));
+            // 10: a CLI-envelope shield_v2 with the fields inside the signed envelope
+            nonce_user += 1;
+            let body_hex = hex::encode(body(1, 10, 10 * Q, 0, SHIELD_V2_MIN_FEE_QUANTA, sha256(&hex::decode(&user.public_key_hex).unwrap()).try_into().unwrap()));
+            let payload = TxPayload { shield_v2_body: Some(body_hex), shield_v2_proof: Some("ab".repeat(32)), ..Default::default() };
+            let env = serde_json::json!({ "tx_type": SHIELD_TX_TYPE, "from": user.public_key_hex, "nonce": nonce_user, "fee": 0.0, "payload": payload });
+            let sp = serde_json::to_string(&env).unwrap();
+            let cli = TxV1 { version: 1, tx_type: SHIELD_TX_TYPE.into(), from_pub_key: user.public_key_hex.clone(), nonce: nonce_user, payload,
+                fee: 0.0, sig: pqc_sign(&user.secret_key_hex, sp.as_bytes()).unwrap(), signed_payload: Some(sp) };
+            {
+                // an old node parses the envelope's payload without the two fields and compares it
+                // with the (field-less) transaction it deserialised: the binding holds there
+                let mut as_old = cli.clone();
+                as_old.payload.shield_v2_body = None;
+                as_old.payload.shield_v2_proof = None;
+                assert!(crate::v2_binding::verify_v2_binding_at(&as_old, 1).is_ok(), "the envelope binds on an old node");
+            }
+            probes.push(("CLI-envelope shield_v2 with fields", vec![cli.clone()], vec![old_twin(&cli, &user.secret_key_hex)], true));
+
+            for (name, txs_a, txs_b, old_ok) in probes {
+                let h = a.tip_height().unwrap() + 1;
+                // the relayed (P2P) shape of the block for (a)
+                let blk: BlockV1 = serde_json::from_str(&serde_json::to_string(&sealed_with_root(&a, &proposer, txs_a, h)).unwrap()).unwrap();
+                let model = old_rules_accept(&blk, h);
+                assert_eq!(model.is_ok(), old_ok, "{name} ({activation:?}): the model's verdict is the expected one: {model:?}");
+                let before_a = (a.get_state_root().unwrap(), a.tip_height().unwrap());
+                let got = a.import_block(blk.clone());
+                assert_eq!(got.is_ok(), model.is_ok(), "{name} ({activation:?}): (a) {got:?} vs the previous release {model:?}");
+                if let Err(e) = &got {
+                    assert!(e.contains("invalid tx signatures"), "{name}: refused by the old signature rule, not a V2 rule: {e}");
+                    assert!(!e.contains("shield_v2"), "{name}: {e}");
+                    assert_eq!((a.get_state_root().unwrap(), a.tip_height().unwrap()), before_a, "{name}: nothing applied");
+                    continue;
+                }
+                // (b): the old node's view / twin of the same block
+                let blk_b = sealed_with_root(&b, &proposer, txs_b, h);
+                b.import_block(blk_b.clone()).unwrap_or_else(|e| panic!("{name}: (b) refused the old view: {e}"));
+                assert_eq!(blk.header.state_root, blk_b.header.state_root, "{name} ({activation:?}): the header root (a) committed is the previous release's");
+                assert_eq!(a.get_state_root().unwrap(), b.get_state_root().unwrap(), "{name} ({activation:?}): state root of (a) = the previous release's");
+                assert_eq!(a.tip_height().unwrap(), b.tip_height().unwrap());
+                // (a) stored what an old node stores: the field-less transactions
+                let stored = a.get_block(h).unwrap().unwrap();
+                let expected = old_view(&blk);
+                assert_eq!(serde_json::to_string(&stored.txs).unwrap(), serde_json::to_string(&expected.txs).unwrap(), "{name}: stored block = the old node's view");
+                assert!(stored.txs.iter().all(|t| !shield_v2::has_shield_v2_fields(&t.payload)));
+                // the old no-op: the sender's nonce advanced (to the last one of the block), no
+                // fee charged, pool untouched
+                if let Some(last) = stored.txs.iter().filter(|t| shield_v2::is_shield_v2_type(&t.tx_type)).map(|t| t.nonce).max() {
+                    assert_eq!(a.nonce_db.get(user.public_key_hex.as_bytes()).unwrap().map(|v| u64::from_be_bytes(v.as_ref().try_into().unwrap())), Some(last), "{name}: nonce written as for any account tx");
+                }
+                assert!(a.shield_v2_store.is_empty() && b.shield_v2_store.is_empty(), "{name}: the pool store is never touched before activation");
+            }
+            assert_eq!(a.get_balance(&user.public_key_hex).unwrap(), 1_000.0, "{activation:?}: no V2 no-op charged the user anything");
+            // the node-local rule still keeps every V2 shape out of THIS node's mempool
+            nonce_user += 1;
+            for t in [bare(SHIELD_TX_TYPE, nonce_user), shield_tx(&user, 99, 10 * Q, nonce_user)] {
+                let e = a.add_tx_to_mempool(t).unwrap_err();
+                assert!(e.contains(shield_v2::NOT_ACTIVE_ERROR), "{activation:?}: {e}");
+            }
+            set_test_shield_v2(None);
+        };
+        run(None);
+        run(Some(1_000));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(None));
+    }
+
+    /// R1-2 (Medium), FIXED. `insert_tx_to_mempool` used to run `shield_v2_admission_checks` —
+    /// which ends with the proof verification (≤ 14 ms, up to 4.5 MiB) — BEFORE the replay check,
+    /// the mined-hash check, the mempool dedup and the mempool-full check. A V2 transaction has
+    /// envelope fee 0.0 and can never enter a full mempool (`tx.fee <= min_fee`), so with a full
+    /// mempool every garbage-proof V2 transaction an unauthenticated peer sent cost a verification
+    /// for nothing. Now the cheap refusals come first, and a refused proof is remembered.
     #[test]
     fn review_r1_2_mempool_full_is_judged_only_after_the_proof_was_verified() {
         set_test_shield_v2(Some(A));
@@ -15310,17 +15649,32 @@ mod shield_v2_review_node_1_tests {
                 mp.insert(format!("id{i}"), t);
             }
         }
-        // a funded, well-formed shield whose 32-byte proof is garbage; NOT primed: check 20 runs
+        // a funded, well-formed shield whose 32-byte proof is garbage; NOT primed: check 20 would run
         let t = shield_tx(&user, 1, 10 * Q, 1);
-        let e = node.add_tx_to_mempool(t).unwrap_err();
-        set_test_shield_v2(None);
+        let e = node.add_tx_to_mempool(t.clone()).unwrap_err();
         assert!(e.contains("Mempool full"), "R1-2: a V2 transaction cannot enter a full mempool (envelope fee 0.0), so it must be refused before its proof is verified; the node reported instead: {e}");
+        assert!(!node.shield_v2_verified.is_refused(&compute_single_tx_hash(&t)), "the verifier did not run");
+        // the negative cache: with room in the mempool the garbage proof is verified once and
+        // refused; the same transaction again is refused from the cache
+        node.mempool.lock().unwrap().clear();
+        let e = node.add_tx_to_mempool(t.clone()).unwrap_err();
+        assert!(e.contains("proof refused") && !e.contains("cached"), "{e}");
+        assert!(node.shield_v2_verified.is_refused(&compute_single_tx_hash(&t)));
+        let e = node.add_tx_to_mempool(t.clone()).unwrap_err();
+        assert!(e.contains("cached refusal"), "{e}");
+        // a duplicate of a queued transaction is answered before any V2 work as well
+        let primed = shield_tx(&user, 2, 10 * Q, 1);
+        prime(&node, &primed);
+        node.add_tx_to_mempool(primed.clone()).expect("admitted");
+        node.add_tx_to_mempool(primed).expect("a duplicate is Ok(()) without re-checking");
+        assert_eq!(node.mempool.lock().unwrap().len(), 1);
+        set_test_shield_v2(None);
     }
 
-    /// R1-3 (Low). The producer drains the whole mempool; `shield_v2_select_for_block` keeps at
-    /// most 8 V2 transactions and the rest are neither sealed nor requeued — valid, admitted
-    /// transactions (each ~400 KB and 3–7 s of wallet proving) silently disappear from this node.
-    /// Expected: the ninth is requeued for the next block. This test FAILS until it is.
+    /// R1-3 (Low), FIXED. The producer drains the whole mempool; `shield_v2_select_for_block`
+    /// keeps at most 8 V2 transactions and the rest used to be neither sealed nor requeued —
+    /// valid, admitted transactions (each ~400 KB and 3–7 s of wallet proving) silently
+    /// disappeared from this node. Now the ninth is requeued for the next block.
     #[test]
     fn review_r1_3_producer_drops_valid_v2_transactions_beyond_the_block_limit() {
         TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
@@ -15342,11 +15696,11 @@ mod shield_v2_review_node_1_tests {
         assert_eq!(left, 1, "R1-3: the ninth valid, admitted V2 transaction must be requeued for the next block, not dropped");
     }
 
-    /// R1-5 (Low; documenting test, passes). Admission check 19 is made against the tip's balance
-    /// without a shadow for shields already queued from the same account: an account holding 10
-    /// XRGE gets any number of 10-XRGE shields admitted (each ~400 KB in the mempool and on every
-    /// peer's), although at most one can ever be mined. The producer's shadow and block apply
-    /// are correct; the cost is mempool and relay bytes.
+    /// R1-5 (Low), FIXED. Admission check 19 used to be made against the tip's balance without a
+    /// shadow for shields already queued from the same account: an account holding 10 XRGE got
+    /// any number of 10-XRGE shields admitted (each ~400 KB in the mempool and on every peer's),
+    /// although at most one could ever be mined. Now the queued shields of the account are
+    /// subtracted first, and the number of queued V2 transactions is capped.
     #[test]
     fn review_r1_5_mempool_admits_shields_beyond_the_funding_balance() {
         set_test_shield_v2(Some(A));
@@ -15354,12 +15708,38 @@ mod shield_v2_review_node_1_tests {
         let user = pqc_keygen();
         fund_xrge(&node, &user.public_key_hex, 10.0);
         let mut admitted = 0;
+        let mut last_err = String::new();
         for i in 1..=3u64 {
             let t = shield_tx(&user, i as u32, 10 * Q, i);
             prime(&node, &t);
-            if node.add_tx_to_mempool(t).is_ok() { admitted += 1; }
+            match node.add_tx_to_mempool(t) { Ok(()) => admitted += 1, Err(e) => last_err = e }
         }
+        assert_eq!(admitted, 1, "R1-5: one 10-XRGE shield against a 10-XRGE balance, the queued one counted");
+        assert!(last_err.contains("already claimed by queued shields"), "{last_err}");
+        // a smaller second shield that the remaining balance covers is admitted (shadow = sum of v_in)
+        let (_d2, node2, _) = node_with_store();
+        fund_xrge(&node2, &user.public_key_hex, 10.0);
+        for (i, v) in [(1u64, 6 * Q), (2, 4 * Q)] {
+            let t = shield_tx(&user, i as u32, v, i);
+            prime(&node2, &t);
+            node2.add_tx_to_mempool(t).expect("6 + 4 XRGE fit in 10");
+        }
+        let t = shield_tx(&user, 3, Q, 3);
+        prime(&node2, &t);
+        assert!(node2.add_tx_to_mempool(t).unwrap_err().contains("already claimed by queued shields"));
+        // the queue cap: the 65th V2 transaction is refused however well funded
+        let (_d3, node3, _) = node_with_store();
+        fund_xrge(&node3, &user.public_key_hex, 1_000.0);
+        for i in 1..=MAX_MEMPOOL_SHIELD_V2 as u64 {
+            let t = shield_tx(&user, 100 + i as u32, Q, i);
+            prime(&node3, &t);
+            node3.add_tx_to_mempool(t).unwrap_or_else(|e| panic!("shield {i}: {e}"));
+        }
+        let t = shield_tx(&user, 1_000, Q, MAX_MEMPOOL_SHIELD_V2 as u64 + 1);
+        prime(&node3, &t);
+        let e = node3.add_tx_to_mempool(t).unwrap_err();
+        assert!(e.contains("already holds 64 V2 transactions"), "{e}");
+        assert_eq!(node3.mempool.lock().unwrap().len(), MAX_MEMPOOL_SHIELD_V2);
         set_test_shield_v2(None);
-        assert_eq!(admitted, 3, "documents today's behaviour: three 10-XRGE shields admitted against a 10-XRGE balance");
     }
 }
