@@ -1540,6 +1540,8 @@ could be enough to jail it. Nothing breaks; the rule is simply unpredictable.
 
 **3. The 100,000 XRGE minimum removes both small validators after 30 days (F8)**
 
+*DECIDED by the owner 2026-10-07: keep 100,000 XRGE. Every validator that is meant to stay is topped up, or told the date and amount, before stage A is given an activation height; "all intended validators are at or above the minimum" is a condition for scheduling stage A.*
+
 *What was found.* The two small validators hold 10,000 and 9,000 XRGE. The decided minimum is 100,000 with a
 30-day grace. If nothing else happens, both leave the active set when the grace ends and the chain is back
 to **one validator**. (A new rule in this amendment guarantees that the last validator can never be removed,
