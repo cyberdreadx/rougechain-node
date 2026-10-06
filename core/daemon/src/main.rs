@@ -23,6 +23,7 @@ mod fork;
 mod fork_tables;
 mod v2_binding;
 mod regen_votes;
+mod shield_v2;
 mod upgrades;
 
 use std::collections::{HashMap, VecDeque};
@@ -422,10 +423,10 @@ async fn main() -> Result<(), String> {
     };
     // Protocol upgrade heights for this network (mainnet / testnet), before any block is applied.
     let schedule = upgrades::select(&chain.chain_id)?;
-    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}, token minting {:?}, contract NFT royalty {:?}, monetary integrity {:?}",
+    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}, token minting {:?}, contract NFT royalty {:?}, monetary integrity {:?}, shield v2 {:?}",
         schedule.network, chain.chain_id, schedule.tx_uniqueness, schedule.proposer_selection, schedule.finality_v2,
         schedule.game_ready, schedule.game_ready_2, schedule.game_ready_3, schedule.payable_calls, schedule.token_minting,
-        schedule.contract_nft_royalty, schedule.monetary_integrity);
+        schedule.contract_nft_royalty, schedule.monetary_integrity, schedule.shield_v2);
     let data_dir_clone = data_dir.clone();
     let bridge_withdraw_store = std::sync::Arc::new(
         BridgeWithdrawStore::new(&data_dir_clone).map_err(|e| format!("bridge withdraw store: {}", e))?
@@ -1084,6 +1085,10 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/shielded/unshield", post(v2_unshield))
         .route("/api/shielded/stats", get(shielded_stats))
         .route("/api/shielded/nullifier/:hash", get(shielded_nullifier_check))
+        // Shielded pool V2 (SHIELD_V2, not active on any network): read-only views. Transactions
+        // enter through the existing broadcast / mempool path only.
+        .route("/api/shield-v2/stats", get(shield_v2_stats))
+        .route("/api/shield-v2/notes", get(shield_v2_notes))
         .route("/api/bridge/config", get(bridge_config))
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
@@ -2979,8 +2984,13 @@ async fn get_address_transactions(
     let mut items: Vec<serde_json::Value> = Vec::new();
     for block in &blocks {
         for tx in &block.txs {
-            let is_sender = tx.from_pub_key == public_key || canon(&tx.from_pub_key) == me;
-            let is_recipient = tx.payload.to_pub_key_hex.as_deref().map(|to| to == public_key || canon(to) == me).unwrap_or(false);
+            // SHIELD_V2: a signer-less V2 tx has no sender; an unshield_v2 credits the address in
+            // its body, not `to_pub_key_hex`.
+            let is_sender = !tx.from_pub_key.is_empty() && (tx.from_pub_key == public_key || canon(&tx.from_pub_key) == me);
+            let is_recipient = tx.payload.to_pub_key_hex.as_deref().map(|to| to == public_key || canon(to) == me).unwrap_or(false)
+                || (tx.tx_type == shield_v2::UNSHIELD_TX_TYPE
+                    && shield_v2::shield_v2_tx_rule(tx, block.header.height, &node.chain_id()).ok().flatten()
+                        .and_then(|p| p.unshield_recipient()).as_deref() == Some(me.as_str()));
             if is_sender || is_recipient {
                 let tx_id = quantum_vault_crypto::bytes_to_hex(
                     &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
@@ -9794,6 +9804,35 @@ async fn shielded_stats(
         "nullifier_count": nullifier_count,
         "active_notes": commitment_count.saturating_sub(nullifier_count)
     }))
+}
+
+/// Read-only: SHIELD_V2 pool statistics (balance, note count, root, anchor window, nullifiers).
+async fn shield_v2_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
+    match state.node.shield_v2_stats() {
+        Ok(mut v) => { v["success"] = serde_json::Value::Bool(true); Json(v) }
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+#[derive(Deserialize)]
+struct ShieldV2NotesQuery {
+    /// First block height to list (clamped to the activation height).
+    since: Option<u64>,
+    /// How many blocks to scan (1..=256, default 64).
+    blocks: Option<u64>,
+}
+
+/// Read-only, wallet-facing (spec §5.4): the encrypted outputs and output commitments of every
+/// accepted V2 transaction from height `since`, with leaf positions, in chain order.
+async fn shield_v2_notes(State(state): State<AppState>, Query(q): Query<ShieldV2NotesQuery>) -> Json<serde_json::Value> {
+    let node = state.node.clone();
+    let (since, blocks) = (q.since.unwrap_or(0), q.blocks.unwrap_or(64));
+    match tokio::task::spawn_blocking(move || node.shield_v2_notes_since(since, blocks)).await
+        .unwrap_or_else(|e| Err(format!("task failed: {}", e)))
+    {
+        Ok(mut v) => { v["success"] = serde_json::Value::Bool(true); Json(v) }
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
 }
 
 /// Read-only: Check if a nullifier has been spent

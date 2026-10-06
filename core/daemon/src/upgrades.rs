@@ -3,7 +3,8 @@
 //!
 //! Every upgrade check in the node (`tx_uniqueness_rule_active`, `proposer_selection_active`,
 //! `finality_v2_active`, `game_ready_active`, `game_ready_2_active`, `game_ready_3_active`,
-//! `payable_calls_active`, `token_minting_active`, `contract_nft_royalty_active`, `monetary_integrity_active`) reads its height from the schedule selected here at startup by chain id.
+//! `payable_calls_active`, `token_minting_active`, `contract_nft_royalty_active`, `monetary_integrity_active`,
+//! `shield_v2::shield_v2_active`) reads its height from the schedule selected here at startup by chain id.
 //!
 //! * **Mainnet** (`rougechain-mainnet-1`) keeps the heights it activated at. They are history now:
 //!   changing any of them would make a node reject mainnet's own blocks. `mainnet_schedule_is_pinned`
@@ -42,6 +43,12 @@ pub struct UpgradeSchedule {
     /// `faucet_mint` allows it, no suspended transaction types). Mainnet 245
     /// (`node::MONETARY_INTEGRITY_ACTIVATION_HEIGHT`), testnet 1390.
     pub monetary_integrity: Option<u64>,
+    /// SHIELD_V2 (the shielded pool V2, `docs/SHIELDED_POOL_V2_SPEC.md`): the three `*_v2`
+    /// transaction types, the pool state and its state-root section. **Not scheduled on any
+    /// network** (`None` here and in `shield_v2::SHIELD_V2_ACTIVATION_HEIGHT`, spec §1.3); before
+    /// activation a block carrying a `*_v2` transaction or either `shield_v2_*` payload field is
+    /// invalid. The height is a compiled constant, never an operator setting.
+    pub shield_v2: Option<u64>,
     /// Whether this network has a faucet (a mint signed by a genesis validator key). Judged in
     /// consensus from MONETARY_INTEGRITY; mainnet has none.
     pub faucet_mint: bool,
@@ -75,6 +82,7 @@ pub const MAINNET: UpgradeSchedule = UpgradeSchedule {
     token_minting: crate::node::TOKEN_MINTING_ACTIVATION_HEIGHT,
     contract_nft_royalty: crate::node::CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT,
     monetary_integrity: crate::node::MONETARY_INTEGRITY_ACTIVATION_HEIGHT,
+    shield_v2: crate::shield_v2::SHIELD_V2_ACTIVATION_HEIGHT,
     faucet_mint: false,
     validator_retirement: None,
 };
@@ -94,6 +102,7 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     token_minting: Some(1360),
     contract_nft_royalty: Some(1360),
     monetary_integrity: Some(1390),
+    shield_v2: None,
     faucet_mint: true,
     validator_retirement: Some(ValidatorRetirement { height: 1240, validators: &[TESTNET_RETIRED_VALIDATOR] }),
 };
@@ -148,6 +157,7 @@ mod tests {
             token_minting: Some(235),
             contract_nft_royalty: Some(235),
             monetary_integrity: Some(245),
+            shield_v2: None,
             faucet_mint: false,
             validator_retirement: None,
         });
@@ -167,6 +177,19 @@ mod tests {
         }
         assert_eq!(TESTNET.token_minting, Some(1360), "TOKEN_MINTING activates on testnet at 1360");
         assert_eq!(TESTNET.contract_nft_royalty, Some(1360), "CONTRACT_NFT_ROYALTY activates on testnet at 1360");
+        assert_eq!(TESTNET.shield_v2, None, "SHIELD_V2 is not scheduled on testnet (spec §1.3)");
+    }
+
+    /// Spec §1.3: SHIELD_V2 is `None` on every network until the owner schedules it.
+    #[test]
+    fn shield_v2_is_unscheduled_everywhere() {
+        assert_eq!(crate::shield_v2::SHIELD_V2_ACTIVATION_HEIGHT, None);
+        assert_eq!(MAINNET.shield_v2, None);
+        assert_eq!(TESTNET.shield_v2, None);
+        for id in [MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, "test", ""] {
+            assert_eq!(schedule_for(id).shield_v2, None, "{id}");
+        }
+        assert!(!crate::shield_v2::shield_v2_active(0) && !crate::shield_v2::shield_v2_active(u64::MAX));
     }
 
     #[test]

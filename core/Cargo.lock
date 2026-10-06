@@ -2363,6 +2363,7 @@ dependencies = [
  "quantum-vault-consensus",
  "quantum-vault-crypto",
  "quantum-vault-finality",
+ "quantum-vault-shield-v2",
  "quantum-vault-storage",
  "quantum-vault-types",
  "quantum-vault-vm",
