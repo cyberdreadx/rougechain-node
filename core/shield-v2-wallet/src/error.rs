@@ -1,4 +1,9 @@
-//! One error type for the whole crate. No variant carries key or note material.
+//! One error type for the whole crate. No variant carries key or note material, and **no error
+//! text quotes caller input** (REVIEW_WALLET_1 F-6): the texts are fixed strings; where a JSON
+//! argument does not parse, the text is a fixed sentence plus the parser's category and the line
+//! and column of the failure ([`json_error`]) — never the parser's own message, which quotes the
+//! offending value. The only variable parts of any text are numbers the chain or the wallet
+//! computed (heights, counts, consensus limits).
 
 use core::fmt;
 
@@ -16,6 +21,14 @@ pub enum WalletError {
     Request(String),
     /// The fee is below `SHIELD_V2_MIN_FEE_QUANTA`.
     FeeBelowMinimum { fee: u64, min: u64 },
+    /// The fee is above the caller's ceiling (`max_fee`; default 10 × the minimum fee).
+    FeeAboveMaximum { fee: u64, max: u64 },
+    /// The note is an input of a transaction that is still pending: it stays locked until the
+    /// scan sees that transaction mined or its expiry height passed.
+    NoteLocked,
+    /// The state holds notes found without `nk` and cannot tell which of them were spent since:
+    /// rebuild it by scanning from an empty state with the full scan key.
+    RescanRequired,
     /// The selected notes do not cover amount + fee.
     InsufficientFunds { have: u128, need: u128 },
     /// The payment needs more than two input notes: merge first (`plan_merge`), `merges` times.
@@ -42,10 +55,13 @@ impl fmt::Display for WalletError {
             WalletError::Key(e) => write!(f, "key derivation: {e}"),
             WalletError::Address(e) => write!(f, "address: {e}"),
             WalletError::Request(e) => write!(f, "request: {e}"),
-            WalletError::FeeBelowMinimum { fee, min } => write!(f, "fee {fee} quanta is below the minimum of {min}"),
-            WalletError::InsufficientFunds { have, need } => {
-                write!(f, "insufficient shielded funds: have {have} quanta, need {need}")
-            }
+            WalletError::FeeBelowMinimum { min, .. } => write!(f, "the fee is below the minimum of {min} quanta"),
+            WalletError::FeeAboveMaximum { .. } => f.write_str("the fee is above the caller's ceiling (max_fee; default 10 x the minimum fee)"),
+            WalletError::NoteLocked => f.write_str("the note is an input of a pending transaction (locked until it is mined or expired)"),
+            WalletError::RescanRequired => f.write_str(
+                "the state was scanned without nk and spends may have been missed: rescan from an empty state with the full scan key",
+            ),
+            WalletError::InsufficientFunds { .. } => f.write_str("insufficient shielded funds"),
             WalletError::NeedsMerge { merges } => write!(
                 f,
                 "the payment needs more than two notes: make {merges} self-merge transaction(s) first"
@@ -63,6 +79,20 @@ impl fmt::Display for WalletError {
 }
 
 impl std::error::Error for WalletError {}
+
+/// The text for a JSON argument that does not parse: what it was meant to be (a fixed word of
+/// this crate), the parser's error category and the position. The parser's message is dropped on
+/// purpose — for a value of the wrong type it quotes the value, and the value may be a key or a
+/// whole wallet state.
+pub fn json_error(what: &'static str, e: &serde_json::Error) -> String {
+    let category = match e.classify() {
+        serde_json::error::Category::Io => "io",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "data",
+        serde_json::error::Category::Eof => "eof",
+    };
+    format!("{what}: malformed JSON ({category} error at line {}, column {})", e.line(), e.column())
+}
 
 impl From<ProveError> for WalletError {
     fn from(e: ProveError) -> Self {

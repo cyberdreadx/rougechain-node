@@ -6,7 +6,8 @@
 
 use quantum_vault_shield_v2::pool::{MemoryPoolStore, Pool, PoolState, PoolTx, TxKind as PoolKind};
 use quantum_vault_shield_v2_wallet::body::{Body, TxKind, OFF_KEM, OFF_NOTE};
-use quantum_vault_shield_v2_wallet::{ListingPage, ShieldedKeys, TxContext};
+use quantum_vault_shield_v2_wallet::{ListingPage, RootReport, ShieldedKeys, TxContext, WalletState, DEFAULT_CONFIRM_QUORUM};
+use sha2::{Digest as _, Sha256};
 
 pub const Q: u64 = 1_000_000_000;
 pub const CHAIN: &str = "rougechain-devnet-1";
@@ -62,7 +63,19 @@ impl Chain {
     /// What a wallet reads from `/api/shield-v2/stats` before building: the latest anchor, and an
     /// expiry inside the anchor's validity.
     pub fn ctx(&self) -> TxContext {
-        TxContext { chain_id: CHAIN.to_string(), anchor: self.state().tree_root, expiry_height: self.height + 100 }
+        TxContext { chain_id: CHAIN.to_string(), anchor: self.state().tree_root, anchor_height: self.height, expiry_height: self.height + 100 }
+    }
+
+    /// What two independent nodes report for the tip: `(node, height, root)` each.
+    pub fn root_reports(&self) -> Vec<RootReport> {
+        ["node-a", "node-b"].iter().map(|id| RootReport { node_id: id.to_string(), height: self.height, root: self.state().tree_root }).collect()
+    }
+
+    /// Empty blocks until the chain's height is `height`.
+    pub fn advance_to(&mut self, height: u64) {
+        while self.height < height {
+            self.block(&[]).unwrap();
+        }
     }
 
     /// Applies one block with these bodies through the pool rules (spec §4) and lists them.
@@ -82,7 +95,7 @@ impl Chain {
                 })
             };
             self.listed.push(serde_json::json!({
-                "height": h, "index": i, "tx_hash": format!("tx-{h}-{i}"),
+                "height": h, "index": i, "tx_hash": hex::encode(Sha256::digest(body)),
                 "tx_type": Body::decode(body).unwrap().kind.tx_type(),
                 "nf1": hex::encode(&body[74..106]), "nf2": hex::encode(&body[106..138]),
                 "outputs": [out(0), out(1)],
@@ -102,4 +115,13 @@ impl Chain {
         });
         ListingPage::from_json(&json.to_string()).unwrap()
     }
+}
+
+/// The root check of a wallet that has scanned to the tip against two nodes that agree
+/// (`WalletState::confirm_roots`, default quorum): every note of the state becomes confirmed.
+pub fn confirm(chain: &Chain, state: &mut WalletState) {
+    assert_eq!(state.next_height(), chain.height + 1, "confirm() is for a state scanned to the tip");
+    let report = state.confirm_roots(&chain.root_reports(), DEFAULT_CONFIRM_QUORUM).unwrap();
+    assert_eq!(report.matched_height, Some(chain.height));
+    assert!(!report.diverged);
 }

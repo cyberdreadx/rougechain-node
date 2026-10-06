@@ -34,8 +34,14 @@ pub struct MergePlan {
     pub fee: u64,
 }
 
-fn spendable(state: &WalletState) -> Vec<&OwnedNote> {
-    let mut v: Vec<&OwnedNote> = state.unspent().filter(|n| n.value > 0 && state.tree().path(n.position).is_some()).collect();
+/// The notes coin selection may use: unspent, non-zero, with a Merkle path, **not locked by a
+/// pending transaction** (REVIEW_WALLET_1 F-7) and — unless `allow_unverified` — **confirmed**
+/// by `WalletState::confirm_roots` (F-1).
+fn spendable(state: &WalletState, allow_unverified: bool) -> Vec<&OwnedNote> {
+    let mut v: Vec<&OwnedNote> = state
+        .unspent()
+        .filter(|n| n.value > 0 && (allow_unverified || n.confirmed) && !state.is_locked(n.position) && state.tree().path(n.position).is_some())
+        .collect();
     // ascending by value, then by position: deterministic
     v.sort_by_key(|n| (n.value, n.position));
     v
@@ -48,9 +54,19 @@ fn spendable(state: &WalletState) -> Vec<&OwnedNote> {
 /// 2. otherwise the pair with the smallest total that covers it;
 /// 3. otherwise, if the wallet could cover it by merging notes first (each merge costs `fee`):
 ///    `Err(NeedsMerge { merges })`; if not even then: `Err(InsufficientFunds)`.
+///
+/// Only confirmed notes that no pending transaction locks are considered. A note known from one
+/// node's listing only may not exist; spending it is [`select_inputs_with`]`(…, true)`, an
+/// explicit decision of the caller.
 pub fn select_inputs(state: &WalletState, amount: u64, fee: u64) -> Result<Selection, WalletError> {
+    select_inputs_with(state, amount, fee, false)
+}
+
+/// [`select_inputs`]; with `allow_unverified` it also uses notes that `confirm_roots` has not
+/// confirmed. Locked notes are never used.
+pub fn select_inputs_with(state: &WalletState, amount: u64, fee: u64, allow_unverified: bool) -> Result<Selection, WalletError> {
     let need = amount as u128 + fee as u128;
-    let notes = spendable(state);
+    let notes = spendable(state, allow_unverified);
     let have: u128 = notes.iter().map(|n| n.value as u128).sum();
     let done = |picked: &[&OwnedNote]| -> Result<Selection, WalletError> {
         let total: u128 = picked.iter().map(|n| n.value as u128).sum();
@@ -97,9 +113,14 @@ pub fn select_inputs(state: &WalletState, amount: u64, fee: u64) -> Result<Selec
 /// Plans one self-merge of the two largest spendable notes. Needs two notes whose total exceeds
 /// the fee.
 pub fn plan_merge(state: &WalletState, fee: u64) -> Result<MergePlan, WalletError> {
-    let notes = spendable(state);
+    plan_merge_with(state, fee, false)
+}
+
+/// [`plan_merge`]; with `allow_unverified` it also uses unconfirmed notes.
+pub fn plan_merge_with(state: &WalletState, fee: u64, allow_unverified: bool) -> Result<MergePlan, WalletError> {
+    let notes = spendable(state, allow_unverified);
     if notes.len() < 2 {
-        return Err(WalletError::Request("a merge needs at least two unspent notes".into()));
+        return Err(WalletError::Request("a merge needs at least two spendable notes".into()));
     }
     let (a, b) = (notes[notes.len() - 1], notes[notes.len() - 2]);
     let total = a.value as u128 + b.value as u128;

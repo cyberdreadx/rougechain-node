@@ -9,7 +9,10 @@
 //!    of ciphertext and the 16-byte tag.
 //!
 //! The key is used for exactly one message (a fresh encapsulation per output), which is what
-//! makes the fixed nonce safe.
+//! makes the fixed nonce safe. The encapsulation randomness `m` is a labelled draw of the
+//! transaction's hedged generator (`entropy.rs`): its label carries the output slot, so the two
+//! outputs of one transaction can never share `m` — and therefore a key — even to the same `ek`
+//! under a generator that repeats (REVIEW_WALLET_1 F-5).
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -19,7 +22,6 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::entropy::{self, Entropy};
 use crate::error::WalletError;
 use crate::keys::{KEM_CT_BYTES, KEM_EK_BYTES};
 
@@ -81,17 +83,17 @@ fn seal(ss: &[u8; 32], cm: &[u8; 32], value: u64, r: &[u8; 32]) -> Result<[u8; N
     ct.as_slice().try_into().map_err(|_| WalletError::Internal("note ciphertext length"))
 }
 
-/// Encrypts `(value, r)` of the output whose commitment is `cm` to `ek`. Fresh encapsulation
-/// randomness is drawn from `ent` for every call.
+/// Encrypts `(value, r)` of the output whose commitment is `cm` to `ek`, with the ML-KEM
+/// encapsulation randomness `m` (a fresh labelled draw per output; wiped here).
 pub(crate) fn encrypt_note(
     ek: &[u8; KEM_EK_BYTES],
     cm: &[u8; 32],
     value: u64,
     r: &[u8; 32],
-    ent: &mut dyn Entropy,
+    m: [u8; 32],
 ) -> Result<([u8; KEM_CT_BYTES], [u8; NOTE_CT_BYTES]), WalletError> {
+    let mut rng = OneShot { m, used: false };
     let ek = ml_kem_768::EncapsKey::try_from_bytes(*ek).map_err(|_| WalletError::Address("not a valid ML-KEM-768 encapsulation key"))?;
-    let mut rng = OneShot { m: entropy::bytes32(ent)?, used: false };
     let (ss, ct) = ek.try_encaps_with_rng(&mut rng).map_err(|_| WalletError::Entropy("ML-KEM encapsulation failed".into()))?;
     let mut ss = ss.into_bytes();
     let sealed = seal(&ss, cm, value, r);
@@ -100,19 +102,21 @@ pub(crate) fn encrypt_note(
 }
 
 /// Spec §3.4, last rule: an output without a recipient is encrypted the same way, to a freshly
-/// generated ML-KEM-768 key that is discarded, so that both slots of every transaction look alike.
+/// generated ML-KEM-768 key (`KeyGen_internal(d, z)`) that is discarded, so that both slots of
+/// every transaction look alike.
 pub(crate) fn encrypt_to_nobody(
     cm: &[u8; 32],
     value: u64,
     r: &[u8; 32],
-    ent: &mut dyn Entropy,
+    mut d: [u8; 32],
+    mut z: [u8; 32],
+    m: [u8; 32],
 ) -> Result<([u8; KEM_CT_BYTES], [u8; NOTE_CT_BYTES]), WalletError> {
-    let (mut d, mut z) = (entropy::bytes32(ent)?, entropy::bytes32(ent)?);
     let (ek, dk) = ml_kem_768::KG::keygen_from_seed(d, z);
     d.zeroize();
     z.zeroize();
     drop(dk); // zeroized by the library
-    encrypt_note(&ek.into_bytes(), cm, value, r, ent)
+    encrypt_note(&ek.into_bytes(), cm, value, r, m)
 }
 
 /// Trial decryption (spec §5.4): `Some((value, r))` iff the tag verifies under the key this
@@ -152,17 +156,7 @@ pub fn encrypt_note_with_kem_randomness(
     r: &[u8; 32],
     m: [u8; 32],
 ) -> Result<([u8; KEM_CT_BYTES], [u8; NOTE_CT_BYTES], [u8; 32]), WalletError> {
-    struct Fixed([u8; 32]);
-    impl Entropy for Fixed {
-        fn fill(&mut self, b: &mut [u8]) -> Result<(), WalletError> {
-            if b.len() != 32 {
-                return Err(WalletError::Internal("fixed KEM randomness is 32 bytes"));
-            }
-            b.copy_from_slice(&self.0);
-            Ok(())
-        }
-    }
-    let (kem_ct, note_ct) = encrypt_note(ek, cm, value, r, &mut Fixed(m))?;
+    let (kem_ct, note_ct) = encrypt_note(ek, cm, value, r, m)?;
     // the shared secret, for the vector file: recomputed the same way
     let ekk = ml_kem_768::EncapsKey::try_from_bytes(*ek).map_err(|_| WalletError::Address("not a valid ML-KEM-768 encapsulation key"))?;
     let (ss, _) = ekk.try_encaps_with_rng(&mut OneShot { m, used: false }).map_err(|_| WalletError::Internal("encaps"))?;
@@ -180,8 +174,13 @@ pub fn decrypt_note_with_key(dk: &[u8], kem_ct: &[u8; KEM_CT_BYTES], note_ct: &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entropy::{DeterministicEntropy, FailingEntropy, OsEntropy};
     use crate::keys::ShieldedKeys;
+
+    fn os() -> [u8; 32] {
+        let mut b = [0u8; 32];
+        getrandom::getrandom(&mut b).unwrap();
+        b
+    }
 
     fn keys(n: u8) -> ShieldedKeys {
         ShieldedKeys::from_seed(&[n; 64]).unwrap()
@@ -192,7 +191,7 @@ mod tests {
         let (alice, bob) = (keys(1), keys(2));
         let cm = [9u8; 32];
         let r = [3u8; 32];
-        let (kem, note) = encrypt_note(&alice.address().ek, &cm, 123_456_789_012, &r, &mut OsEntropy).unwrap();
+        let (kem, note) = encrypt_note(&alice.address().ek, &cm, 123_456_789_012, &r, os()).unwrap();
         let dk = alice.scan_key().decaps_key().unwrap();
         assert_eq!(decrypt_note(&dk, &kem, &note, &cm), Some((123_456_789_012, r)));
         // another wallet's key: no decryption
@@ -213,18 +212,16 @@ mod tests {
             assert_eq!(decrypt_note(&dk, &kem, &n, &cm), None);
         }
         // a fresh encapsulation every time
-        let (kem2, note2) = encrypt_note(&alice.address().ek, &cm, 123_456_789_012, &r, &mut OsEntropy).unwrap();
+        let (kem2, note2) = encrypt_note(&alice.address().ek, &cm, 123_456_789_012, &r, os()).unwrap();
         assert_ne!(kem.to_vec(), kem2.to_vec());
         assert_ne!(note, note2);
     }
 
     #[test]
-    fn nobody_can_read_a_dummy_and_entropy_failure_is_an_error() {
+    fn nobody_can_read_a_dummy() {
         let alice = keys(1);
-        let (kem, note) = encrypt_to_nobody(&[1u8; 32], 0, &[2u8; 32], &mut OsEntropy).unwrap();
+        let (kem, note) = encrypt_to_nobody(&[1u8; 32], 0, &[2u8; 32], os(), os(), os()).unwrap();
         assert_eq!(decrypt_note(&alice.scan_key().decaps_key().unwrap(), &kem, &note, &[1u8; 32]), None);
-        assert!(matches!(encrypt_note(&alice.address().ek, &[1; 32], 1, &[2; 32], &mut FailingEntropy), Err(WalletError::Entropy(_))));
-        assert!(matches!(encrypt_to_nobody(&[1; 32], 0, &[2; 32], &mut FailingEntropy), Err(WalletError::Entropy(_))));
     }
 
     #[test]
@@ -233,8 +230,7 @@ mod tests {
         let a = encrypt_note_with_kem_randomness(&alice.address().ek, &[4; 32], 5, &[6; 32], [7; 32]).unwrap();
         let b = encrypt_note_with_kem_randomness(&alice.address().ek, &[4; 32], 5, &[6; 32], [7; 32]).unwrap();
         assert_eq!((a.0.to_vec(), a.1, a.2), (b.0.to_vec(), b.1, b.2));
-        let mut e = DeterministicEntropy::new("t");
-        let c = encrypt_note(&alice.address().ek, &[4; 32], 5, &[6; 32], &mut e).unwrap();
+        let c = encrypt_note(&alice.address().ek, &[4; 32], 5, &[6; 32], [8; 32]).unwrap();
         assert_ne!(a.0.to_vec(), c.0.to_vec());
     }
 }

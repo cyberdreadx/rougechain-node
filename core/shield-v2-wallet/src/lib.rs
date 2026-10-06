@@ -6,9 +6,11 @@
 //! * [`note_enc`] — encrypted notes (spec §3.4): ML-KEM-768 + HKDF-SHA256 + AES-256-GCM;
 //! * [`body`] — the 2,546-byte transaction body (spec §3.2);
 //! * [`tx`] — [`build_shield`], [`build_transfer`], [`build_unshield`]: body, binding, public
-//!   inputs, witness, proof and the envelope of spec §3.1;
-//! * [`store`] — what a wallet persists per note, the incremental note tree, and
-//!   [`WalletState::scan`] over the node's `/api/shield-v2/notes` listing (spec §5.4);
+//!   inputs, proof and the envelope of spec §3.1 (the witness never leaves the module);
+//! * [`store`] — what a wallet persists per note, the incremental note tree,
+//!   [`WalletState::scan`] over the node's `/api/shield-v2/notes` listing (spec §5.4), the
+//!   pending transactions (`mark_pending` / `pending` / `resolve`) and the root check against a
+//!   quorum of nodes (`confirm_roots`);
 //! * [`select`] — coin selection for two inputs, and the self-merge plan when a payment needs
 //!   more.
 //!
@@ -32,13 +34,16 @@ pub mod store;
 pub mod tx;
 
 pub use body::{Body, TxKind, BODY_BYTES};
-pub use error::WalletError;
+pub use error::{json_error, WalletError};
 pub use keys::{account_from_address, address_from_account, bip39_seed, ScanKey, ShieldedAddress, ShieldedKeys};
-pub use select::{plan_merge, select_inputs, MergePlan, Selection};
-pub use store::{ListingPage, OwnedNote, ScanReport, SpendInput, TreeTracker, WalletState};
+pub use select::{plan_merge, plan_merge_with, select_inputs, select_inputs_with, MergePlan, Selection};
+pub use store::{
+    Balances, ConfirmReport, ListingPage, OwnedNote, PendingChange, PendingStatus, PendingTx, ReleasePolicy, Resolution,
+    RootReport, ScanReport, SpendInput, TreeTracker, WalletState, DEFAULT_CONFIRM_QUORUM, STATE_VERSION,
+};
 pub use tx::{
     build_shield, build_transfer, build_unshield, BuiltTx, OutputRecord, OutputRole, ShieldRequest, TransferRequest,
-    TxContext, UnprovenTx, UnshieldRequest,
+    TxContext, UnprovenTx, UnshieldRequest, DEFAULT_EXPIRY_OFFSET, DEFAULT_MAX_FEE_QUANTA, MAX_EXPIRY_OFFSET,
 };
 
 /// The chain's transaction structure: the envelope of spec §3.1.

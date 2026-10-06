@@ -195,9 +195,9 @@ fn tx_and_state_vectors() -> (Value, Value) {
         let public = [tx.body[42..226].to_vec(), tx.binding.to_vec()].concat();
         assert_eq!(PublicInputs::from_bytes(&public).unwrap(), tx.public);
         // the witness satisfies the statement for these public inputs
-        quantum_vault_shield_v2::prover::check_statement(&tx.witness, &tx.public).expect("statement");
+        quantum_vault_shield_v2::prover::check_statement(tx.witness_for_vectors(), &tx.public).expect("statement");
         let nf = tx.public.nf;
-        for (i, inp) in tx.witness.inputs.iter().enumerate() {
+        for (i, inp) in tx.witness_for_vectors().inputs.iter().enumerate() {
             assert_eq!(nullifier(&derive_nk(&inp.sk), &inp.rho), nf[i]);
         }
         let height = chain.height + 1;
@@ -223,7 +223,7 @@ fn tx_and_state_vectors() -> (Value, Value) {
                 "slot": o.slot, "role": format!("{:?}", o.role).to_lowercase(), "value": o.value.to_string(), "r": hx(&o.r), "cm": hx(&o.cm),
             })).collect::<Vec<_>>(),
             "readable_by": reads,
-            "witness": witness_json(&tx.witness, &nf),
+            "witness": witness_json(tx.witness_for_vectors(), &nf),
             "body": hx(&tx.body),
             "body_sha256": hx(&Sha256::digest(&tx.body)),
             "binding": hx(&tx.binding),
@@ -238,7 +238,7 @@ fn tx_and_state_vectors() -> (Value, Value) {
 
     // 1. shield: 10 XRGE from the account, fee 1, a 9 XRGE note for wallet-1
     let shield = deterministic::shield(
-        &ShieldRequest { ctx: chain.ctx(), from_pub_key: &account_key, nonce: 1, v_in: 10 * Q, fee: Q, recipient: &w1.address() },
+        &ShieldRequest { ctx: chain.ctx(), from_pub_key: &account_key, nonce: 1, v_in: 10 * Q, fee: Q, recipient: &w1.address(), max_fee: None },
         "spec-8.4/shield",
     )
     .unwrap();
@@ -260,7 +260,7 @@ fn tx_and_state_vectors() -> (Value, Value) {
     // 2. transfer: wallet-1 pays wallet-2 5 XRGE, fee 1, change 3
     let inputs = [s1.spend_input(s1.notes()[0].position).unwrap()];
     let transfer = deterministic::transfer(
-        &TransferRequest { ctx: chain.ctx(), keys: &w1, inputs: &inputs, recipient: &w2.address(), amount: 5 * Q, fee: Q },
+        &TransferRequest { ctx: chain.ctx(), keys: &w1, inputs: &inputs, recipient: &w2.address(), amount: 5 * Q, fee: Q, max_fee: None },
         "spec-8.4/transfer",
     )
     .unwrap();
@@ -277,7 +277,7 @@ fn tx_and_state_vectors() -> (Value, Value) {
     let change = s1.unspent().find(|n| n.value == 3 * Q).unwrap().position;
     let inputs = [s1.spend_input(change).unwrap()];
     let unshield = deterministic::unshield(
-        &UnshieldRequest { ctx: chain.ctx(), keys: &w1, inputs: &inputs, to_account: recipient_account, v_out: 3 * Q / 2, fee: Q },
+        &UnshieldRequest { ctx: chain.ctx(), keys: &w1, inputs: &inputs, to_account: recipient_account, v_out: 3 * Q / 2, fee: Q, max_fee: None },
         "spec-8.4/unshield",
     )
     .unwrap();

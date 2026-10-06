@@ -157,7 +157,9 @@ impl ShieldedKeys {
     }
 
     /// The viewing key alone (spec §5.2: "a user MAY give it to an auditor"): finds incoming
-    /// notes and their values; cannot tell which were spent and cannot spend.
+    /// notes and their values; cannot tell which were spent and cannot spend. A state scanned
+    /// with it can be continued with the full key only while the state still knows every
+    /// nullifier that appeared since its first note (see `WalletState::scan`).
     pub fn incoming_viewing_key(&self) -> ScanKey {
         ScanKey { pk: field::bytes(&self.pk), nk: None, dk: self.dk.clone() }
     }
@@ -178,12 +180,23 @@ impl ShieldedKeys {
 
 /// The keys `scan` takes. `dk` is the ML-KEM-768 decapsulation key (the viewing key of spec
 /// §5.2); `pk` authenticates each decrypted note (spec §2.4.1); `nk`, if present, lets the
-/// scanner compute nullifiers and so mark notes spent.
+/// scanner compute nullifiers and so mark notes spent. Secret (`dk`, `nk`): wiped on drop; no
+/// `Debug`. `from_parts` cannot check that `nk` belongs to `pk` (both are one-way images of
+/// `sk`): a wrong `nk` finds notes and never sees them spent.
 #[derive(Clone)]
 pub struct ScanKey {
     pub pk: [u8; 32],
     pub nk: Option<[u8; 32]>,
     pub(crate) dk: Zeroizing<Vec<u8>>,
+}
+
+impl Drop for ScanKey {
+    fn drop(&mut self) {
+        if let Some(nk) = self.nk.as_mut() {
+            nk.zeroize();
+        }
+        self.nk = None;
+    }
 }
 
 impl ScanKey {
