@@ -12,9 +12,9 @@ use quantum_vault_shield_v2_wallet as wallet;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use wallet::{
-    account_from_address, json_error, plan_merge_with, select_inputs_with, BuiltTx, ListingPage, PendingTx, ScanKey,
-    ShieldRequest, ShieldedAddress, ShieldedKeys, SpendInput, StateReport, Tally, TransferRequest, TxContext, TxKind,
-    UnshieldRequest, WalletError, WalletState,
+    account_from_address, json_error, plan_merge_with, select_inputs_with, BuiltTx, ListingPage, ScanKey, ShieldRequest,
+    ShieldedAddress, ShieldedKeys, SpendOptions, StateReport, Tally, TransferParams, TxContext, TxKind, UnshieldParams,
+    WalletError, WalletState,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -31,6 +31,7 @@ fn code(e: &WalletError) -> &'static str {
         WalletError::FeeAboveMaximum { .. } => "fee_above_maximum",
         WalletError::NoteLocked => "note_locked",
         WalletError::NoteUnverified => "note_unverified",
+        WalletError::StateUnconfirmed => "state_unconfirmed",
         WalletError::StaleState => "stale_state",
         WalletError::RescanRequired => "rescan_required",
         WalletError::InsufficientFunds { .. } => "insufficient_funds",
@@ -81,7 +82,7 @@ fn out_with_state(st: &WalletState, rest: Value) -> ApiResult {
 ///
 /// Every call here is stateless: it takes a state and returns a new one. Two writers — two tabs,
 /// a page and a worker — that each load the stored state, change it and store the result drop
-/// each other's change; a dropped `mark_pending` is a dropped lock, and a dropped lock is a
+/// each other's change; a dropped pending entry is a dropped lock, and a dropped lock is a
 /// double payment waiting for a retry. So the state carries a revision that goes up with every
 /// change, every changing call returns the new one, and takes the one the caller expects:
 ///
@@ -153,9 +154,12 @@ pub fn constants() -> ApiResult {
         "default_expiry_offset": wallet::DEFAULT_EXPIRY_OFFSET,
         "max_expiry_offset": wallet::MAX_EXPIRY_OFFSET,
         "default_max_fee_quanta": wallet::DEFAULT_MAX_FEE_QUANTA.to_string(),
-        "default_confirm_quorum": wallet::DEFAULT_CONFIRM_QUORUM,
+        "min_configured_nodes": wallet::MIN_CONFIGURED_NODES,
+        "max_configured_nodes": wallet::MAX_CONFIGURED_NODES,
         "default_min_note_value": wallet::DEFAULT_MIN_NOTE_VALUE.to_string(),
-        "max_stored_notes": wallet::MAX_STORED_NOTES,
+        "default_max_unspent_notes": wallet::DEFAULT_MAX_UNSPENT_NOTES,
+        "max_unspent_notes_limit": wallet::MAX_UNSPENT_NOTES_LIMIT,
+        "max_spent_retained": wallet::MAX_SPENT_RETAINED,
         "prune_retention_blocks": wallet::PRUNE_RETENTION_BLOCKS,
         "state_version": wallet::STATE_VERSION,
         "address_version": wallet::keys::ADDRESS_VERSION,
@@ -216,14 +220,41 @@ fn scan_key(json: &str) -> Result<ScanKey, String> {
 /// An empty wallet state (revision 0) for this address. Scanning it from height 0 is the restore
 /// of spec §5.4. `min_note_value_quanta`: incoming notes below it are counted and not stored
 /// (dust: a note worth less than the fee to spend it); `""` is the default, the minimum fee
-/// (1 XRGE); `"1"` stores every non-zero note.
-pub fn new_state(address: &str, min_note_value_quanta: &str) -> ApiResult {
+/// (1 XRGE); `"1"` stores every non-zero note. `max_unspent_notes`: the cap on UNSPENT notes
+/// received from others (`0`: the default, 65,536); notes beyond it are counted in
+/// `over_capacity` and recovered by [`rescan_state`] with a higher cap. The wallet's own outputs
+/// are stored whatever their size and whatever the count.
+///
+/// The state is configured with no node: call [`set_nodes`] before anything can be confirmed.
+pub fn new_state(address: &str, min_note_value_quanta: &str, max_unspent_notes: u32) -> ApiResult {
     let addr = ShieldedAddress::decode(address).map_err(err)?;
-    let st = match min_note_value_quanta {
-        "" => WalletState::new(addr.pk),
-        s => WalletState::with_min_note_value(addr.pk, amount(s, E_MIN_NOTE)?).map_err(err)?,
+    let min = match min_note_value_quanta {
+        "" => wallet::DEFAULT_MIN_NOTE_VALUE,
+        s => amount(s, E_MIN_NOTE)?,
     };
-    st.to_json().map_err(err)
+    let cap = if max_unspent_notes == 0 { wallet::DEFAULT_MAX_UNSPENT_NOTES } else { max_unspent_notes as usize };
+    WalletState::with_limits(addr.pk, min, cap).map_err(err)?.to_json().map_err(err)
+}
+
+/// Configures the nodes the wallet asks for the pool state. `nodes_json`: a JSON array of the
+/// endpoints the user or the application configured, e.g.
+/// `["https://node-a.example", "https://node-b.example:8443", "https://node-c.example"]`.
+///
+/// Each id is canonicalised to an http(s) origin (scheme and host lower-cased, default port,
+/// path, query and trailing slash removed) and duplicates are collapsed; an id that is not an
+/// http(s) origin fails the call (`request:`). `{ state, revision, nodes, quorum }` with the
+/// canonical set and the quorum `confirm_state` will apply: a strict majority of THIS set, at
+/// least 2. It is the only call that changes the threshold. It does not un-confirm anything.
+/// With fewer than two nodes nothing can be confirmed: such a wallet shows every note as
+/// unverified and cannot build a spend.
+pub fn set_nodes(state_json: &str, nodes_json: &str, expected_revision: f64) -> ApiResult {
+    let mut st = state_for_update(state_json, expected_revision)?;
+    if nodes_json.len() > 64 << 10 {
+        return Err(bad("nodes must be at most 64 KiB"));
+    }
+    let ids: Vec<String> = serde_json::from_str(nodes_json).map_err(|e| bad_json("nodes", &e))?;
+    let nodes = st.set_nodes(&ids).map_err(err)?;
+    out_with_state(&st, json!({ "nodes": nodes, "quorum": st.quorum() }))
 }
 
 fn balances(st: &WalletState) -> Value {
@@ -274,7 +305,7 @@ pub fn scan_pages(state_json: &str, pages_json: &str, scan_key_json: &str, expec
 }
 
 /// The balances, anchor, notes and pending transactions of a state. `confirmed_balance` is what
-/// a quorum of nodes vouched for, as of `confirmed_height`; `unverified_balance` is what one
+/// a strict majority of the configured nodes vouched for, as of `confirmed_height`; `unverified_balance` is what one
 /// node's listing says and must be shown as unconfirmed; `locked_balance` is the part held by
 /// pending transactions; `expected_change` is in none of them. `below_minimum` / `over_capacity`
 /// count incoming notes that were not stored, `pruned` the spent notes dropped from the state.
@@ -284,6 +315,10 @@ pub fn summary(state_json: &str) -> ApiResult {
     v["revision"] = json!(st.revision());
     v["nullifier_acc"] = json!(hex::encode(st.nullifier_acc()));
     v["nullifier_count"] = json!(st.nullifier_count());
+    v["ciphertext_acc"] = json!(hex::encode(st.ciphertext_acc()));
+    v["nodes"] = json!(st.nodes());
+    v["quorum"] = json!(st.quorum());
+    v["max_unspent_notes"] = json!(st.max_unspent_notes());
     v["min_note_value"] = json!(st.min_note_value().to_string());
     v["below_minimum"] = tally(st.below_minimum());
     v["over_capacity"] = tally(st.over_capacity());
@@ -302,11 +337,16 @@ pub fn summary(state_json: &str) -> ApiResult {
 /// `status`: `ok` (with `selection`), `needs_merge` (with `merges`) or `insufficient_funds`.
 /// Notes locked by a pending transaction are never chosen; unverified notes only with
 /// `allow_unverified = true`.
+///
+/// The selection prefers a CLEAN change — zero, or at least the state's minimum note value: the
+/// smallest single note with a clean change, else the smallest pair with one, else whatever
+/// covers the payment. Only in that last case is `change_below_min_note_value` true (also as
+/// `selection.change_below_minimum`): the change will be a note that costs more to spend alone
+/// than it is worth. The wallet still stores it and can spend it as a second input.
 pub fn plan_payment(state_json: &str, amount_quanta: &str, fee_quanta: &str, allow_unverified: bool) -> ApiResult {
     let st = state(state_json)?;
     match select_inputs_with(&st, amount(amount_quanta, E_AMOUNT)?, amount(fee_quanta, E_FEE)?, allow_unverified) {
-        // a change note below the state's minimum note value would be counted, not stored
-        Ok(sel) => out(json!({ "status": "ok", "change_below_min_note_value": sel.change > 0 && sel.change < st.min_note_value(), "selection": sel })),
+        Ok(sel) => out(json!({ "status": "ok", "change_below_min_note_value": sel.change_below_minimum, "selection": sel })),
         Err(WalletError::NeedsMerge { merges }) => out(json!({ "status": "needs_merge", "merges": merges })),
         Err(WalletError::InsufficientFunds { have, need }) => {
             out(json!({ "status": "insufficient_funds", "have": have.to_string(), "need": need.to_string() }))
@@ -322,12 +362,12 @@ pub fn plan_self_merge(state_json: &str, fee_quanta: &str, allow_unverified: boo
     out(json!(plan_merge_with(&st, amount(fee_quanta, E_FEE)?, allow_unverified).map_err(err)?))
 }
 
+/// The context of a `shield_v2` (it spends no note of the wallet and locks nothing).
 #[derive(Deserialize)]
 struct CtxJson {
     chain_id: String,
     anchor: String,
-    /// The height whose pool state has the anchor as its root. Required for a shield (the node's
-    /// tip); for a transfer or unshield it is the state's scanned height and may be left out.
+    /// The height whose pool state has the anchor as its root: the node's tip.
     #[serde(default)]
     anchor_height: Option<u64>,
     /// Default: `anchor_height + 64`.
@@ -339,16 +379,11 @@ struct CtxJson {
 }
 
 impl CtxJson {
-    fn ctx(&self, scanned: Option<u64>) -> Result<TxContext, String> {
+    fn ctx(&self) -> Result<TxContext, String> {
         if self.chain_id.is_empty() {
             return Err(bad("chain_id is empty"));
         }
-        let anchor_height = match (self.anchor_height, scanned) {
-            (Some(h), Some(s)) if h != s => return Err(bad("anchor_height is not the state's scanned height")),
-            (Some(h), _) => h,
-            (None, Some(s)) => s,
-            (None, None) => return Err(bad("anchor_height is missing")),
-        };
+        let anchor_height = self.anchor_height.ok_or_else(|| bad("anchor_height is missing"))?;
         let mut ctx = TxContext::new(&self.chain_id, hex32(&self.anchor, "anchor must be 64 lowercase hexadecimal characters")?, anchor_height);
         if let Some(e) = self.expiry_height {
             ctx.expiry_height = e;
@@ -360,17 +395,59 @@ impl CtxJson {
     }
 }
 
+/// What a transfer or an unshield takes besides its amounts. **No height**: the anchor is the
+/// state's confirmed tree root and the expiry is measured from the state's confirmed height
+/// (REVIEW_WALLET_3 RW3-7) — neither is the caller's to say, and neither is one node's.
+#[derive(Deserialize)]
+struct SpendJson {
+    chain_id: String,
+    /// Optional cross-check: if present it must be the state's own tree root
+    /// (`anchor_mismatch:` otherwise).
+    #[serde(default)]
+    anchor: Option<String>,
+    /// leaf positions of the notes to spend (from `plan_payment`)
+    inputs: Vec<u64>,
+    /// Default `false`: an input that is not confirmed, or a tree root above the confirmed
+    /// height, is refused.
+    #[serde(default)]
+    allow_unverified: bool,
+    /// Default: the confirmed height + 64. At most the confirmed height + 128.
+    #[serde(default)]
+    expiry_height: Option<u64>,
+    /// Default: 10 x the minimum fee.
+    #[serde(default)]
+    max_fee: Option<String>,
+}
+
+impl SpendJson {
+    fn options(&self, st: &WalletState) -> Result<SpendOptions<'_>, String> {
+        if let Some(a) = &self.anchor {
+            if hex32(a, "anchor must be 64 lowercase hexadecimal characters")? != st.anchor() {
+                return Err(err(WalletError::AnchorMismatch));
+            }
+        }
+        Ok(SpendOptions {
+            chain_id: &self.chain_id,
+            inputs: &self.inputs,
+            expiry_height: self.expiry_height,
+            allow_unverified: self.allow_unverified,
+            max_fee: self.max_fee.as_deref().map(|s| amount(s, E_MAX_FEE)).transpose()?,
+        })
+    }
+}
+
 /// The JSON of a built transaction. `outputs[].r` and `.value` are the sender's record of its
 /// notes and are SECRET (whoever holds them can open the commitment): store them encrypted, never
-/// log them (I-3). `pending` is what [`mark_pending`] takes — `null` for a shield.
-fn built(tx: BuiltTx) -> ApiResult {
+/// log them (I-3). `pending` is the entry the returned state already holds for a transfer or an
+/// unshield (for display; nothing has to be done with it) — `null` for a shield.
+fn built(tx: &BuiltTx) -> Result<Value, String> {
     let role = |r: wallet::OutputRole| match r {
         wallet::OutputRole::Payment => "payment",
         wallet::OutputRole::Change => "change",
         wallet::OutputRole::Dummy => "dummy",
     };
     let nf = tx.nullifiers();
-    out(json!({
+    Ok(json!({
         "tx_type": tx.kind.tx_type(),
         "body": hex::encode(&tx.body),
         "binding": hex::encode(tx.binding),
@@ -412,7 +489,7 @@ pub fn build_shield(params_json: &str) -> ApiResult {
     let key = hex::decode(&p.from_pub_key).map_err(|_| bad("from_pub_key must be 3,904 lowercase hexadecimal characters"))?;
     let recipient = ShieldedAddress::decode(&p.recipient).map_err(err)?;
     let tx = wallet::build_shield(&ShieldRequest {
-        ctx: p.ctx.ctx(None)?,
+        ctx: p.ctx.ctx()?,
         from_pub_key: &key,
         nonce: p.nonce,
         v_in: amount(&p.v_in, E_V_IN)?,
@@ -421,7 +498,7 @@ pub fn build_shield(params_json: &str) -> ApiResult {
         recipient: &recipient,
     })
     .map_err(err)?;
-    built(tx)
+    out(built(&tx)?)
 }
 
 /// A `shield_v2` envelope with the account signature filled in.
@@ -439,101 +516,81 @@ pub fn attach_signature(envelope_json: &str, sig_hex: &str) -> ApiResult {
     serde_json::to_string(&tx).map_err(|_| "internal: result encoding".to_string())
 }
 
-/// The notes for a builder. A locked note is always refused (`note_locked:`); a note that
-/// `confirm_state` has not confirmed is refused (`note_unverified:`) unless the caller passes
-/// `allow_unverified: true` — the same decision as in `plan_payment` (REVIEW_WALLET_2 I-4).
-fn inputs(st: &WalletState, positions: &[u64], allow_unverified: bool) -> Result<Vec<SpendInput>, String> {
-    if positions.is_empty() || positions.len() > 2 {
-        return Err(bad("inputs must name one or two note positions"));
-    }
-    positions.iter().map(|&p| st.spend_input_with(p, allow_unverified).map_err(err)).collect()
-}
-
 #[derive(Deserialize)]
 struct TransferJson {
     #[serde(flatten)]
-    ctx: CtxJson,
-    /// leaf positions of the notes to spend (from `plan_payment`)
-    inputs: Vec<u64>,
-    /// Default `false`: an input that is not confirmed is refused.
-    #[serde(default)]
-    allow_unverified: bool,
+    spend: SpendJson,
     recipient: String,
     amount: String,
     fee: String,
 }
 
-/// Builds and proves a `shielded_transfer_v2`. Ready to submit.
-pub fn build_transfer(seed: &[u8], state_json: &str, params_json: &str) -> ApiResult {
+/// The transaction and the state it is locked in, as one result: `{ state, revision, …BuiltTx }`.
+fn locked(l: wallet::LockedTx) -> ApiResult {
+    out_with_state(&l.state, built(&l.tx)?)
+}
+
+/// Builds and proves a `shielded_transfer_v2` **and locks its inputs — one call**
+/// (REVIEW_WALLET_3 RW3-5). `{ state, revision, envelope_json, … }`: the returned state already
+/// holds the pending entry (nullifiers, outputs, change, expiry) and the lock on the inputs.
+///
+/// **Persist the returned state, then submit `envelope_json`.** If the state could not be
+/// persisted (a crash, a failed write, another writer got in first), do NOT submit: load the
+/// stored state and build again. There is no call that returns a submittable transfer or
+/// unshield without the state it is locked in.
+///
+/// The state must be at `expected_revision` (`stale_state:`), must have a confirmed height and —
+/// unless `allow_unverified` — its tree root must be the confirmed one (`state_unconfirmed:`:
+/// call [`set_nodes`], scan to the tip, [`confirm_state`]). The expiry is measured from the
+/// CONFIRMED height: default + 64, at most + 128. A locked input is refused (`note_locked:`), an
+/// unconfirmed one too (`note_unverified:`) unless `allow_unverified`.
+pub fn build_transfer(seed: &[u8], state_json: &str, params_json: &str, expected_revision: f64) -> ApiResult {
     let p: TransferJson = serde_json::from_str(params_json).map_err(|e| bad_json("transfer parameters", &e))?;
-    let st = state(state_json)?;
+    let st = state_for_update(state_json, expected_revision)?;
     let k = keys(seed)?;
-    if st.pk() != k.address().pk {
-        return Err(bad("this state belongs to another wallet"));
-    }
-    let notes = inputs(&st, &p.inputs, p.allow_unverified)?;
     let recipient = ShieldedAddress::decode(&p.recipient).map_err(err)?;
-    let tx = wallet::build_transfer(&TransferRequest {
-        ctx: p.ctx.ctx(Some(st.scanned_height().ok_or_else(|| bad("the state has not been scanned"))?))?,
-        keys: &k,
-        inputs: &notes,
-        recipient: &recipient,
-        amount: amount(&p.amount, E_AMOUNT)?,
-        fee: amount(&p.fee, E_FEE)?,
-        max_fee: p.ctx.max_fee()?,
-    })
-    .map_err(err)?;
-    built(tx)
+    let params = TransferParams { spend: p.spend.options(&st)?, recipient: &recipient, amount: amount(&p.amount, E_AMOUNT)?, fee: amount(&p.fee, E_FEE)? };
+    locked(wallet::build_transfer(&st, st.revision(), &k, &params).map_err(err)?)
 }
 
 #[derive(Deserialize)]
 struct UnshieldJson {
     #[serde(flatten)]
-    ctx: CtxJson,
-    inputs: Vec<u64>,
-    /// Default `false`: an input that is not confirmed is refused.
-    #[serde(default)]
-    allow_unverified: bool,
+    spend: SpendJson,
     /// the `rouge1…` address that receives `v_out`
     to: String,
     v_out: String,
     fee: String,
 }
 
-/// Builds and proves an `unshield_v2`. Ready to submit.
-pub fn build_unshield(seed: &[u8], state_json: &str, params_json: &str) -> ApiResult {
+/// Builds and proves an `unshield_v2` **and locks its inputs — one call**, exactly as
+/// [`build_transfer`]: `{ state, revision, envelope_json, … }`; persist the returned state, then
+/// submit.
+pub fn build_unshield(seed: &[u8], state_json: &str, params_json: &str, expected_revision: f64) -> ApiResult {
     let p: UnshieldJson = serde_json::from_str(params_json).map_err(|e| bad_json("unshield parameters", &e))?;
-    let st = state(state_json)?;
+    let st = state_for_update(state_json, expected_revision)?;
     let k = keys(seed)?;
-    if st.pk() != k.address().pk {
-        return Err(bad("this state belongs to another wallet"));
-    }
-    let notes = inputs(&st, &p.inputs, p.allow_unverified)?;
-    let tx = wallet::build_unshield(&UnshieldRequest {
-        ctx: p.ctx.ctx(Some(st.scanned_height().ok_or_else(|| bad("the state has not been scanned"))?))?,
-        keys: &k,
-        inputs: &notes,
+    let params = UnshieldParams {
+        spend: p.spend.options(&st)?,
         to_account: account_from_address(&p.to).map_err(err)?,
         v_out: amount(&p.v_out, E_V_OUT)?,
         fee: amount(&p.fee, E_FEE)?,
-        max_fee: p.ctx.max_fee()?,
-    })
-    .map_err(err)?;
-    built(tx)
+    };
+    locked(wallet::build_unshield(&st, st.revision(), &k, &params).map_err(err)?)
 }
 
-// ---- pending transactions (REVIEW_WALLET_1 F-7, REVIEW_WALLET_2 RW2-1..3) -------------------------
+// ---- pending transactions (REVIEW_WALLET_1 F-7, REVIEW_WALLET_2 RW2-1..3, REVIEW_WALLET_3 RW3-5) --
 
-/// Records a built transfer or unshield as pending and locks its inputs. `pending_json` is the
-/// `pending` object of the `build_*` result. Call it — and persist the returned state — BEFORE
-/// the transaction is submitted to any node. From then on the inputs are not selected and not
-/// accepted by `build_*` until [`resolve_pending`] settles the transaction on confirmed data.
-/// `{ state, revision }`.
-pub fn mark_pending(state_json: &str, pending_json: &str, expected_revision: f64) -> ApiResult {
+/// For a client that built a transaction and is CERTAIN it never handed it to any node (the user
+/// cancelled before the submit). Sets `abandoned_hint` on the pending entry with this nullifier.
+/// **It releases nothing**: the inputs stay locked until [`resolve_pending`] settles the entry as
+/// expired at the confirmed height — at most 128 blocks above the confirmed height it was built
+/// at. The core cannot check that nothing was submitted, and a wrong claim would be a double
+/// payment; so even a wrong call here is safe. `{ state, revision, found }`.
+pub fn abandon_unsubmitted(state_json: &str, nullifier_hex: &str, expected_revision: f64) -> ApiResult {
     let mut st = state_for_update(state_json, expected_revision)?;
-    let tx: PendingTx = serde_json::from_str(pending_json).map_err(|e| bad_json("pending transaction", &e))?;
-    st.mark_pending(tx).map_err(err)?;
-    out_with_state(&st, json!({}))
+    let found = st.abandon_unsubmitted(&hex32(nullifier_hex, "nullifier must be 64 lowercase hexadecimal characters")?);
+    out_with_state(&st, json!({ "found": found }))
 }
 
 /// The pending transactions of a state (a JSON array).
@@ -551,11 +608,12 @@ pub fn note_rejection(state_json: &str, nullifier_hex: &str, expected_revision: 
 }
 
 /// Settles the pending list against the CONFIRMED height (the highest height at which
-/// [`confirm_state`] matched a quorum): `{ state, revision, mined, superseded, expired,
+/// [`confirm_state`] matched a strict majority of the configured nodes): `{ state, revision, mined, superseded, expired,
 /// still_pending }`.
 ///
 /// * `mined` — a transaction at or below the confirmed height has both nullifiers and both output
-///   commitments of the entry. Its inputs are spent, its change is a confirmed note.
+///   commitments of the entry. Its inputs are spent, its change is a confirmed note (stored from
+///   the wallet's own record, not from a ciphertext).
 /// * `superseded` — a DIFFERENT transaction at or below the confirmed height spent one of its
 ///   inputs (the same phrase on another device, usually). It can never be mined: the payment did
 ///   not happen. The inputs whose own nullifier appeared are spent, the others are free.
@@ -564,14 +622,17 @@ pub fn note_rejection(state_json: &str, nullifier_hex: &str, expected_revision: 
 /// * everything else stays pending and LOCKED: seen in a listing nobody confirmed, a "rejected"
 ///   answer, a height one node claims.
 ///
-/// There is no flag and no other call that releases a lock on one node's word.
+/// Every entry built by this version settles in bounded time: its expiry is at most 128 blocks
+/// above the confirmed height it was built at, so once the confirmed height has reached it the
+/// entry is one of the three. There is no flag and no other call that releases a lock on one
+/// node's word.
 pub fn resolve_pending(state_json: &str, expected_revision: f64) -> ApiResult {
     let mut st = state_for_update(state_json, expected_revision)?;
     let r = st.resolve();
     out_with_state(&st, json!(r))
 }
 
-// ---- state confirmation (REVIEW_WALLET_1 F-1, REVIEW_WALLET_2 RW2-2, RW2-4) ------------------------
+// ---- state confirmation (REVIEW_WALLET_1 F-1, REVIEW_WALLET_2 RW2-2/4, REVIEW_WALLET_3 RW3-1/2) ----
 
 #[derive(Deserialize)]
 struct StateReportJson {
@@ -581,59 +642,75 @@ struct StateReportJson {
     nullifier_acc: String,
     note_count: u64,
     nullifier_count: u64,
+    ciphertext_acc: String,
 }
 
-/// Compares the wallet's own pool state — tree root AND nullifier hash, with both counts — with
-/// what several nodes report, and moves the confirmed height. `reports_json`:
-/// `[{ "node_id", "height", "tree_root", "nullifier_acc", "note_count", "nullifier_count" }, …]`,
-/// one entry per node: the `report` object of that node's `/api/shield-v2/stats` (one consistent
-/// read of its pool state) plus **`node_id`, which the caller sets to the endpoint it configured
-/// — never to anything the node returned**.
+/// Compares the wallet's own pool state — tree root, nullifier hash AND ciphertext hash, with
+/// both counts — with what its CONFIGURED nodes report, and moves the confirmed height.
+/// `reports_json`: `[{ "node_id", "height", "tree_root", "nullifier_acc", "note_count",
+/// "nullifier_count", "ciphertext_acc" }, …]`, one entry per node: the `report` object of that
+/// node's `/api/shield-v2/stats` plus **`node_id`, which the caller sets to the endpoint it
+/// configured — never to anything the node returned**.
 ///
-/// `quorum`: how many DISTINCT nodes must report exactly the wallet's state; `0` means the
-/// default, 2. It is raised to a strict majority of the nodes in `reports_json`. With one node
-/// and the default the notes stay unverified; a client that asks its own node passes 1.
+/// A height is confirmed iff a STRICT MAJORITY OF THE CONFIGURED SET ([`set_nodes`]) reports
+/// exactly the wallet's values at that height. There is no quorum argument: the threshold is a
+/// property of the state, and passing fewer reports can only make a confirmation harder.
 ///
-/// If any report at a height the wallet can compare differs from the wallet's state, NOTHING is
-/// confirmed and `report.diverged` is true with `report.conflicts`: the caller decides which
-/// nodes to ask again and, if its own listing is what disagrees, rebuilds with [`rescan_state`]
-/// against another node. `{ state, revision, report }`.
-pub fn confirm_state(state_json: &str, reports_json: &str, quorum: u32, expected_revision: f64) -> ApiResult {
+/// * a report under an id that is not configured is not counted (`report.not_configured`);
+/// * **an entry that is not a well-formed report is skipped and counted in `malformed`** — a node
+///   that answers garbage, or an old node whose report has no `ciphertext_acc`, costs its own
+///   vote and nothing else;
+/// * a dissenting minority does NOT block: `report.dissenting` lists `{ node_id, height }` for
+///   every configured node that contradicts the wallet ("node X disagrees");
+/// * `report.listing_refuted`: more nodes contradict the wallet than a lying minority can be —
+///   the wallet's own listing is wrong: [`rescan_state`], then scan from ANOTHER node.
+/// * `report.listing_ahead`: the listing shows pool transactions in blocks above
+///   `report.quorum_tip`, the height a quorum of the configured nodes has reached. Ask the nodes
+///   again; if it stays so, the listing node invented those blocks: the same recovery.
+///
+/// `{ state, revision, report, malformed }`.
+pub fn confirm_state(state_json: &str, reports_json: &str, expected_revision: f64) -> ApiResult {
     let mut st = state_for_update(state_json, expected_revision)?;
     if reports_json.len() > 1 << 20 {
         return Err(bad("reports must be at most 1 MiB"));
     }
-    let raw: Vec<StateReportJson> = serde_json::from_str(reports_json).map_err(|e| bad_json("state reports", &e))?;
+    let raw: Vec<Value> = serde_json::from_str(reports_json).map_err(|e| bad_json("state reports", &e))?;
     let mut reports = Vec::with_capacity(raw.len());
-    for r in raw {
-        reports.push(StateReport {
-            tree_root: hex32(&r.tree_root, "a reported tree_root must be 64 lowercase hexadecimal characters")?,
-            nullifier_acc: hex32(&r.nullifier_acc, "a reported nullifier_acc must be 64 lowercase hexadecimal characters")?,
-            node_id: r.node_id,
-            height: r.height,
-            note_count: r.note_count,
-            nullifier_count: r.nullifier_count,
+    let mut malformed = 0usize;
+    for entry in raw {
+        let parsed = serde_json::from_value::<StateReportJson>(entry).ok().and_then(|r| {
+            Some(StateReport {
+                tree_root: hex32(&r.tree_root, "").ok()?,
+                nullifier_acc: hex32(&r.nullifier_acc, "").ok()?,
+                ciphertext_acc: hex32(&r.ciphertext_acc, "").ok()?,
+                node_id: r.node_id,
+                height: r.height,
+                note_count: r.note_count,
+                nullifier_count: r.nullifier_count,
+            })
         });
+        match parsed {
+            Some(r) => reports.push(r),
+            None => malformed += 1,
+        }
     }
-    let report = st.confirm_state(&reports, (quorum != 0).then_some(quorum as usize)).map_err(err)?;
-    out_with_state(&st, json!({ "report": report }))
-}
-
-/// The former name of [`confirm_state`]; the same call. A report without `nullifier_acc` and the
-/// two counts is refused: a root alone does not commit the nullifiers (REVIEW_WALLET_2 RW2-2).
-pub fn confirm_roots(state_json: &str, reports_json: &str, quorum: u32, expected_revision: f64) -> ApiResult {
-    confirm_state(state_json, reports_json, quorum, expected_revision)
+    let report = st.confirm_state(&reports).map_err(err)?;
+    out_with_state(&st, json!({ "report": report, "malformed": malformed }))
 }
 
 /// An empty state for the same wallet that keeps the pending transactions — every one of them as
-/// pending and locked, whatever the old state had seen of it: what to scan into from height 0
-/// after a reorganisation, a `listing:` error or a `diverged` state check. `min_note_value_quanta`:
-/// `""` keeps the state's value. `{ state, revision }`.
-pub fn rescan_state(state_json: &str, min_note_value_quanta: &str, expected_revision: f64) -> ApiResult {
+/// pending and locked, whatever the old state had seen of it — and the configured nodes: what to
+/// scan into from height 0 after a reorganisation, a `listing:` error or a state check with
+/// `listing_refuted`. `min_note_value_quanta`: `""` keeps the state's value. `max_unspent_notes`:
+/// `0` keeps the state's cap; **a higher cap recovers the notes counted in `over_capacity`**.
+/// `{ state, revision }`.
+pub fn rescan_state(state_json: &str, min_note_value_quanta: &str, max_unspent_notes: u32, expected_revision: f64) -> ApiResult {
     let st = state_for_update(state_json, expected_revision)?;
-    let fresh = match min_note_value_quanta {
-        "" => st.fresh_for_rescan(),
-        s => st.fresh_for_rescan_with_min_note_value(amount(s, E_MIN_NOTE)?).map_err(err)?,
+    let min = match min_note_value_quanta {
+        "" => None,
+        s => Some(amount(s, E_MIN_NOTE)?),
     };
+    let cap = (max_unspent_notes != 0).then_some(max_unspent_notes as usize);
+    let fresh = st.fresh_for_rescan_with(min, cap).map_err(err)?;
     out_with_state(&fresh, json!({}))
 }

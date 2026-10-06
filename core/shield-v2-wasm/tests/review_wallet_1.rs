@@ -27,8 +27,18 @@ fn rev(state: &str) -> f64 {
 /// `/api/shield-v2/stats`), under the id the caller gives it.
 fn report_for(state: &str, id: &str) -> Value {
     let s: Value = serde_json::from_str(&api::summary(state).expect("a state")).unwrap();
-    json!({ "node_id": id, "height": s["scanned_height"], "tree_root": s["anchor"], "nullifier_acc": s["nullifier_acc"],
-        "note_count": s["note_count"], "nullifier_count": s["nullifier_count"] })
+    json!({ "node_id": format!("https://{id}.example"), "height": s["scanned_height"], "tree_root": s["anchor"], "nullifier_acc": s["nullifier_acc"],
+        "note_count": s["note_count"], "nullifier_count": s["nullifier_count"], "ciphertext_acc": s["ciphertext_acc"] })
+}
+
+/// The two nodes every state of these tests is configured with (`report_for(state, "a")` is the
+/// report of `https://a.example`).
+const NODES: &str = r#"["https://a.example", "https://b.example"]"#;
+
+/// `new_state` and `set_nodes`: an empty state configured with [`NODES`] (revision 1).
+fn fresh_state(address: &str) -> String {
+    let s = api::new_state(address, "", 0).unwrap();
+    parse(api::set_nodes(&s, NODES, 0.0))["state"].to_string()
 }
 
 fn account_key() -> Vec<u8> {
@@ -75,7 +85,7 @@ fn page_with_one_shield(seed: &[u8], value: u64) -> String {
 #[test]
 fn rw1_f6_an_error_message_must_not_quote_secret_input() {
     let address = parse(api::shielded_address(&SEED))["address"].as_str().unwrap().to_string();
-    let state = api::new_state(&address, "").unwrap();
+    let state = api::new_state(&address, "", 0).unwrap();
     let page = page_with_one_shield(&SEED, 2 * Q);
     let key = api::export_scan_key(&SEED, true).unwrap();
     let key_v: Value = serde_json::from_str(&key).unwrap();
@@ -114,7 +124,7 @@ fn rw1_f6_an_error_message_must_not_quote_secret_input() {
 fn rw1_f6_no_error_of_the_surface_ever_contains_a_marker_from_its_input() {
     const MARKER: &str = "S3CR3T-marker-7f3a9c";
     let address = parse(api::shielded_address(&SEED))["address"].as_str().unwrap().to_string();
-    let state0 = api::new_state(&address, "").unwrap();
+    let state0 = fresh_state(&address);
     let page = page_with_one_shield(&SEED, 2 * Q);
     let key = api::export_scan_key(&SEED, true).unwrap();
     let scanned = parse(api::scan(&state0, &page, &key, rev(&state0)));
@@ -125,9 +135,7 @@ fn rw1_f6_no_error_of_the_surface_ever_contains_a_marker_from_its_input() {
     let unshield = json!({ "chain_id": "test", "anchor": anchor, "inputs": [0], "to": "rouge1qqqq", "v_out": "1", "fee": "1000000000" });
     let shield = json!({ "chain_id": "test", "anchor": anchor, "anchor_height": 1, "from_pub_key": "ab".repeat(1952), "nonce": 1,
         "v_in": "3000000000", "fee": "1000000000", "recipient": address });
-    let pending = json!({ "tx_type": "shielded_transfer_v2", "nullifiers": ["00".repeat(32), "11".repeat(32)], "outputs": ["22".repeat(32), "33".repeat(32)],
-        "inputs": [0], "input_cms": [], "input_total": "1", "change": { "cm": "22".repeat(32), "value": "1" }, "expiry_height": 5, "status": "pending",
-        "seen_height": null, "rejected_hint": false, "legacy": false });
+    let nodes = json!(["https://a.example", "https://b.example:8443/path"]);
     let reports = json!([report_for(&state, "a")]);
 
     // every way of planting the marker in one valid JSON argument
@@ -195,13 +203,14 @@ fn rw1_f6_no_error_of_the_surface_ever_contains_a_marker_from_its_input() {
         check("pending", api::pending(&s));
         check("plan_payment/state", api::plan_payment(&s, "1", "1000000000", true));
         check("plan_self_merge/state", api::plan_self_merge(&s, "1000000000", true));
-        check("build_transfer/state", api::build_transfer(&SEED, &s, &json!({}).to_string()));
-        check("build_unshield/state", api::build_unshield(&SEED, &s, &unshield.to_string()));
-        check("mark_pending/state", api::mark_pending(&s, &pending.to_string(), rev(&s)));
+        check("build_transfer/state", api::build_transfer(&SEED, &s, &json!({}).to_string(), rev(&s)));
+        check("build_unshield/state", api::build_unshield(&SEED, &s, &unshield.to_string(), rev(&s)));
+        check("set_nodes/state", api::set_nodes(&s, &nodes.to_string(), rev(&s)));
+        check("abandon_unsubmitted/state", api::abandon_unsubmitted(&s, &"00".repeat(32), rev(&s)));
         check("resolve_pending", api::resolve_pending(&s, rev(&s)));
         check("note_rejection/state", api::note_rejection(&s, &"00".repeat(32), rev(&s)));
-        check("confirm_roots/state", api::confirm_state(&s, &reports.to_string(), 1, rev(&s)));
-        check("rescan_state", api::rescan_state(&s, "", rev(&s)));
+        check("confirm_roots/state", api::confirm_state(&s, &reports.to_string(), rev(&s)));
+        check("rescan_state", api::rescan_state(&s, "", 0, rev(&s)));
         check("scan_pages/state", api::scan_pages(&s, "[]", &key, rev(&s)));
     }
     for k in variants(&key_v) {
@@ -218,25 +227,25 @@ fn rw1_f6_no_error_of_the_surface_ever_contains_a_marker_from_its_input() {
     let mut transfer_no_note = transfer.clone();
     transfer_no_note["inputs"] = json!([7]);
     for t in variants(&transfer_no_note) {
-        check("build_transfer/params", api::build_transfer(&SEED, &state, &t));
+        check("build_transfer/params", api::build_transfer(&SEED, &state, &t, rev(&state)));
     }
     for u in variants(&unshield) {
-        check("build_unshield/params", api::build_unshield(&SEED, &state, &u));
+        check("build_unshield/params", api::build_unshield(&SEED, &state, &u, rev(&state)));
     }
     let mut shield_bad = shield.clone();
     shield_bad["v_in"] = json!("1");
     for s in variants(&shield_bad) {
         check("build_shield", api::build_shield(&s));
     }
-    for p in variants(&pending) {
-        check("mark_pending/record", api::mark_pending(&state, &p, rev(&state)));
+    for n in variants(&nodes) {
+        check("set_nodes/nodes", api::set_nodes(&state, &n, rev(&state)));
     }
     for r in variants(&reports) {
-        check("confirm_roots/reports", api::confirm_state(&state, &r, 0, rev(&state)));
+        check("confirm_roots/reports", api::confirm_state(&state, &r, rev(&state)));
     }
     for a in variants(&json!(address)) {
         check("parse_address", api::parse_address(&a));
-        check("new_state", api::new_state(&a, ""));
+        check("new_state", api::new_state(&a, "", 0));
         check("note_rejection/nullifier", api::note_rejection(&state, &a, rev(&state)));
         check("plan_payment/amount", api::plan_payment(&state, &a, "1", true));
         check("plan_payment/fee", api::plan_payment(&state, "1", &a, true));
@@ -248,19 +257,19 @@ fn rw1_f6_no_error_of_the_surface_ever_contains_a_marker_from_its_input() {
     // clipboard may hold anything)
     for a in [format!("{address}{MARKER}"), format!("{MARKER}{address}"), format!("rshield1{MARKER}"), address.replace("rshield1", &format!("{MARKER}1"))] {
         check("parse_address", api::parse_address(&a));
-        check("new_state", api::new_state(&a, ""));
+        check("new_state", api::new_state(&a, "", 0));
         let mut t = transfer_no_note.clone();
         t["recipient"] = json!(a);
-        check("build_transfer/recipient", api::build_transfer(&SEED, &state, &t.to_string()));
+        check("build_transfer/recipient", api::build_transfer(&SEED, &state, &t.to_string(), rev(&state)));
         let mut u = unshield.clone();
         u["to"] = json!(a);
-        check("build_unshield/to", api::build_unshield(&SEED, &state, &u.to_string()));
+        check("build_unshield/to", api::build_unshield(&SEED, &state, &u.to_string(), rev(&state)));
     }
     // a seed that is not a seed
     for seed in [MARKER.as_bytes().to_vec(), [MARKER.as_bytes(), &[0u8; 64][..]].concat()] {
         check("shielded_address", api::shielded_address(&seed));
         check("export_scan_key", api::export_scan_key(&seed, true));
-        check("build_transfer/seed", api::build_transfer(&seed, &state, &transfer.to_string()));
+        check("build_transfer/seed", api::build_transfer(&seed, &state, &transfer.to_string(), rev(&state)));
     }
     // random damage: bytes of valid arguments overwritten with pieces of the marker
     let mut x = 0x2545_f491_4f6c_dd1du64;
@@ -283,14 +292,14 @@ fn rw1_f6_no_error_of_the_surface_ever_contains_a_marker_from_its_input() {
             String::from_utf8_lossy(&b).into_owned()
         };
         let (s, p, k) = (damage(&small_state), damage(&page), damage(&key));
-        let (t, pd, rp) = (damage(&transfer_no_note.to_string()), damage(&pending.to_string()), damage(&reports.to_string()));
+        let (t, pd, rp) = (damage(&transfer_no_note.to_string()), damage(&nodes.to_string()), damage(&reports.to_string()));
         check("fuzz scan/state", api::scan(&s, &page, &key, rev(&s)));
         check("fuzz scan/page", api::scan(&small_state, &p, &key, rev(&small_state)));
         check("fuzz scan/key", api::scan(&small_state, &page, &k, rev(&small_state)));
         check("fuzz summary", api::summary(&s));
-        check("fuzz build_transfer", api::build_transfer(&SEED, &state, &t));
-        check("fuzz mark_pending", api::mark_pending(&state, &pd, rev(&state)));
-        check("fuzz confirm_roots", api::confirm_state(&state, &rp, 0, rev(&state)));
+        check("fuzz build_transfer", api::build_transfer(&SEED, &state, &t, rev(&state)));
+        check("fuzz set_nodes", api::set_nodes(&state, &pd, rev(&state)));
+        check("fuzz confirm_roots", api::confirm_state(&state, &rp, rev(&state)));
         check("fuzz parse_address", api::parse_address(&damage(&address)));
     }
     assert!(errors > 5_000, "the inputs exercised the error paths ({errors} errors)");
@@ -311,7 +320,7 @@ fn rw1_sound_no_key_material_in_states_results_or_built_transactions() {
     };
     let address = parse(api::shielded_address(&SEED))["address"].as_str().unwrap().to_string();
     clean("shielded_address", &api::shielded_address(&SEED).unwrap());
-    let state = api::new_state(&address, "").unwrap();
+    let state = fresh_state(&address);
     let key = api::export_scan_key(&SEED, true).unwrap();
     // the viewing key alone carries no nk
     let ivk = api::export_scan_key(&SEED, false).unwrap();
@@ -321,24 +330,28 @@ fn rw1_sound_no_key_material_in_states_results_or_built_transactions() {
     let scanned_text = api::scan(&state, &page_with_one_shield(&SEED, 5 * Q), &key, rev(&state)).unwrap();
     clean("scan", &scanned_text);
     let scanned: Value = serde_json::from_str(&scanned_text).unwrap();
-    let st = scanned["state"].to_string();
+    let unconfirmed = scanned["state"].to_string();
+    let confirmed_text = api::confirm_state(&unconfirmed, &json!([report_for(&unconfirmed, "a"), report_for(&unconfirmed, "b")]).to_string(), rev(&unconfirmed)).unwrap();
+    clean("confirm_state", &confirmed_text);
+    let st = parse(Ok(confirmed_text))["state"].to_string();
     clean("summary", &api::summary(&st).unwrap());
     clean("plan_payment", &api::plan_payment(&st, "1000000000", "1000000000", true).unwrap());
 
     let params = json!({ "chain_id": "test", "anchor": scanned["anchor"], "expiry_height": 50, "inputs": [parse(api::summary(&st))["notes"][0]["position"]],
         "allow_unverified": true, "recipient": address, "amount": "2000000000", "fee": "1000000000" });
-    let built = api::build_transfer(&SEED, &st, &params.to_string()).unwrap();
+    let built = api::build_transfer(&SEED, &st, &params.to_string(), rev(&st)).unwrap();
     clean("build_transfer", &built);
-    // the pending calls, the root check and the rescan state carry no key either
+    // the state the build returned, the pending calls, the state check and the rescan state
+    // carry no key either
     let b0: Value = serde_json::from_str(&built).unwrap();
-    let marked = api::mark_pending(&st, &b0["pending"].to_string(), rev(&st)).unwrap();
-    clean("mark_pending", &marked);
-    let marked = parse(Ok(marked))["state"].to_string();
+    let marked = b0["state"].to_string();
+    clean("abandon_unsubmitted", &api::abandon_unsubmitted(&marked, b0["nullifiers"][0].as_str().unwrap(), rev(&marked)).unwrap());
+    clean("set_nodes", &api::set_nodes(&marked, NODES, rev(&marked)).unwrap());
     clean("pending", &api::pending(&marked).unwrap());
     clean("resolve_pending", &api::resolve_pending(&marked, rev(&marked)).unwrap());
     clean("note_rejection", &api::note_rejection(&marked, b0["nullifiers"][1].as_str().unwrap(), rev(&marked)).unwrap());
-    clean("confirm_roots", &api::confirm_state(&marked, &json!([report_for(&marked, "n")]).to_string(), 1, rev(&marked)).unwrap());
-    clean("rescan_state", &api::rescan_state(&marked, "", rev(&marked)).unwrap());
+    clean("confirm_roots", &api::confirm_state(&marked, &json!([report_for(&marked, "n")]).to_string(), rev(&marked)).unwrap());
+    clean("rescan_state", &api::rescan_state(&marked, "", 0, rev(&marked)).unwrap());
     let b: Value = serde_json::from_str(&built).unwrap();
     assert_eq!(b["needs_account_signature"], json!(false));
     // the envelope is the signer-less shape; nothing but the two V2 payload fields is set
@@ -346,10 +359,10 @@ fn rw1_sound_no_key_material_in_states_results_or_built_transactions() {
     assert_eq!((env["from_pub_key"].as_str(), env["sig"].as_str(), env["nonce"].as_u64(), env["version"].as_u64()), (Some(""), Some(""), Some(0), Some(1)));
     assert!(env.get("signed_payload").is_none_or(Value::is_null));
     // every error of the spending calls: no secret either (wrong state, wrong anchor, bad params)
-    let other = api::new_state(&parse(api::shielded_address(&[0x22; 64]))["address"].as_str().unwrap().to_string(), "").unwrap();
+    let other = api::new_state(&parse(api::shielded_address(&[0x22; 64]))["address"].as_str().unwrap().to_string(), "", 0).unwrap();
     for (s, p) in [(&other, params.to_string()), (&st, "{}".to_string()), (&st, json!({ "chain_id": "test", "anchor": "00".repeat(32), "expiry_height": 5,
         "inputs": [0], "recipient": address, "amount": "1", "fee": "1000000000" }).to_string())] {
-        let e = api::build_transfer(&SEED, s, &p).expect_err("refused");
+        let e = api::build_transfer(&SEED, s, &p, rev(s)).expect_err("refused");
         clean("a build_transfer error", &e);
     }
 }
@@ -359,7 +372,7 @@ fn rw1_sound_no_key_material_in_states_results_or_built_transactions() {
 #[test]
 fn rw1_sound_foreign_or_mixed_scan_keys_credit_nothing() {
     let address = parse(api::shielded_address(&SEED))["address"].as_str().unwrap().to_string();
-    let state = api::new_state(&address, "").unwrap();
+    let state = api::new_state(&address, "", 0).unwrap();
     let page = page_with_one_shield(&SEED, 2 * Q);
     let mine: Value = serde_json::from_str(&api::export_scan_key(&SEED, true).unwrap()).unwrap();
     let theirs: Value = serde_json::from_str(&api::export_scan_key(&[0x22; 64], true).unwrap()).unwrap();
