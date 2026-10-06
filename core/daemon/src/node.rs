@@ -15247,6 +15247,38 @@ mod shield_v2_daemon_tests {
         set_test_shield_v2(None);
     }
 
+    /// REVIEW_WALLET_3 RW3-6 (Low) — **fails on purpose until fixed.** The `report` of
+    /// `/api/shield-v2/stats` is one read of the pool record, and the pool record is written by
+    /// the SPECULATIVE apply of a block, before the block's state root is compared and before the
+    /// block is stored. The handler takes no lock against block application. While a block that
+    /// is then REJECTED is being applied, an honest node reports `(height H, pool state after
+    /// that block)` — a state no chain ever had at height H — and a wallet's `confirm_state`
+    /// counts it as this node's word for height H. Shown with the same explicit apply / restore
+    /// the test above uses.
+    #[test]
+    fn rw3_f6_the_stats_report_shows_a_block_that_is_applied_speculatively_and_then_rejected() {
+        let n = net(1_000.0);
+        let f = fixture();
+        n.reach_activation();
+        let b = n.block(&n.x, vec![f.shield.clone()]);
+        n.import_both(b);
+        let tip = n.x.tip_height().unwrap();
+        let before = n.x.shield_v2_stats().unwrap();
+        assert_eq!(before["report"]["height"].as_u64(), Some(tip));
+        let probe = n.block_any_root(&n.x, vec![f.transfer.clone()]);
+        let snap = n.x.capture_pre_apply_snapshot(&probe).unwrap();
+        n.x.apply_balance_block(&probe).unwrap();
+        let during = n.x.shield_v2_stats().unwrap(); // what a client gets in this window
+        n.x.restore_pre_apply_snapshot(snap).unwrap();
+        let after = n.x.shield_v2_stats().unwrap();
+        set_test_shield_v2(None);
+        assert_eq!(after["report"], before["report"], "the rollback restored the report");
+        println!("tip {tip}; report before {}; report while the rejected block was applied {} (tip_height in the same answer: {})",
+            before["report"], during["report"], during["tip_height"]);
+        assert_eq!(during["report"], before["report"],
+            "an honest node must not report a pool state for a height whose block it has not accepted");
+    }
+
     /// Boundaries judged BEFORE any proof is looked at (so garbage proofs suffice): the minimum fee
     /// (check 11) and the pool cap (check 18) at the daemon level, with the exact boundary values.
     #[test]
