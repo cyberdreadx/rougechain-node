@@ -6,7 +6,15 @@
 //!
 //! * every export returns `Result<string, Error>` to JavaScript — a JSON string on success, an
 //!   `Error` whose message starts with a stable code (`fee_below_minimum: …`, `needs_merge: …`,
-//!   `entropy: …`) on failure. Nothing returns a bare value that could be mistaken for success;
+//!   `entropy: …`, `note_locked: …`) on failure. Nothing returns a bare value that could be
+//!   mistaken for success. **No error message quotes an argument**: a message is a code, a fixed
+//!   sentence and at most a line and column — safe to log;
+//! * a note found by `scan` is `confirmed: false` until `confirm_roots` has matched the wallet's
+//!   tree root against a quorum of nodes; `confirmed_balance` and `unverified_balance` are
+//!   separate and an incoming payment MUST be shown as unconfirmed until then (spec §5.4);
+//! * a built transfer or unshield is recorded with `mark_pending` BEFORE it is submitted; its
+//!   inputs stay locked until `scan` shows it mined or `resolve_pending` finds its expiry height
+//!   passed in the scanned chain. A node's "rejected" is `note_rejection`: a hint, never a release;
 //! * amounts are decimal strings of quanta (a JavaScript number cannot hold a u64);
 //! * 32-byte values, bodies, proofs and keys are lowercase hexadecimal;
 //! * the BIP-39 seed (64 bytes) is passed as a `Uint8Array` to the calls that spend; this module
@@ -30,27 +38,35 @@ export type Quanta = string;
 /** Lowercase hexadecimal. */
 export type Hex = string;
 
-export interface ShieldConstants { min_fee_quanta: Quanta; pool_cap_quanta: Quanta; anchor_window: number; max_proof_bytes: number; body_bytes: number; quanta_per_xrge: Quanta; }
+export interface ShieldConstants { min_fee_quanta: Quanta; pool_cap_quanta: Quanta; anchor_window: number; max_proof_bytes: number; body_bytes: number; quanta_per_xrge: Quanta; default_expiry_offset: number; max_expiry_offset: number; default_max_fee_quanta: Quanta; default_confirm_quorum: number; state_version: number; address_version: number; }
 export interface AddressInfo { address: string; pk: Hex; fingerprint: Hex; }
-/** `nk: null` is the viewing key alone: finds notes, cannot see spends. Neither can spend. */
+/** `nk: null` is the viewing key alone: finds notes, cannot see spends. Neither can spend. SECRET. */
 export interface ScanKey { pk: Hex; nk: Hex | null; dk: Hex; }
-export interface OwnedNote { value: Quanta; r: Hex; rho: Hex; position: number; cm: Hex; nullifier: Hex | null; spent: boolean; spent_height: number | null; height: number; tx_hash: string; output_index: 0 | 1; }
+/** `confirmed: false` = known from one node's listing only (show as unconfirmed). SECRET (`value`, `r`). */
+export interface OwnedNote { value: Quanta; r: Hex; rho: Hex; position: number; cm: Hex; nullifier: Hex | null; spent: boolean; spent_height: number | null; height: number; tx_hash: Hex | ""; output_index: 0 | 1; confirmed: boolean; }
 /** Opaque to the client: persist it (encrypted) and pass it back. */
 export type WalletState = object;
-export interface ScanReport { txs: number; received: number[]; spent: number[]; next_height: number; at_tip: boolean; }
-export interface ScanResult { state: WalletState; report: ScanReport; anchor: Hex; balance: Quanta; }
-export interface StateSummary { balance: Quanta; anchor: Hex; next_height: number; note_count: number; notes: OwnedNote[]; }
+export interface Balances { confirmed_balance: Quanta; unverified_balance: Quanta; locked_balance: Quanta; spendable_balance: Quanta; }
+export interface ScanReport { txs: number; received: number[]; spent: number[]; pending_mined: number; next_height: number; at_tip: boolean; }
+export interface ScanResult extends Balances { state: WalletState; report: ScanReport; anchor: Hex; scanned_height: number | null; }
+export interface ScanPagesResult extends Balances { state: WalletState; report: ScanReport[]; anchor: Hex; scanned_height: number | null; }
+export interface PendingTx { tx_type: "shielded_transfer_v2" | "unshield_v2" | ""; nullifiers: Hex[]; inputs: number[]; input_total: Quanta; change: { cm: Hex; value: Quanta } | null; expiry_height: number | null; status: "pending" | "mined" | "expired"; mined_height: number | null; rejected_hint: boolean; }
+export interface StateSummary extends Balances { anchor: Hex; next_height: number; scanned_height: number | null; confirmed_height: number | null; note_count: number; notes: OwnedNote[]; pending: PendingTx[]; }
 export interface Selection { positions: number[]; total: Quanta; change: Quanta; }
 export type PaymentPlan =
   | { status: "ok"; selection: Selection }
   | { status: "needs_merge"; merges: number }
   | { status: "insufficient_funds"; have: Quanta; need: Quanta };
 export interface MergePlan { positions: number[]; amount: Quanta; fee: Quanta; }
-/** From `GET /api/shield-v2/stats`: the chain id, `pool.latest_anchor`, and a height you choose. */
-export interface TxContext { chain_id: string; anchor: Hex; expiry_height: number; }
-export interface ShieldParams extends TxContext { from_pub_key: Hex; nonce: number; v_in: Quanta; fee: Quanta; recipient: string; }
+/** From `GET /api/shield-v2/stats`: the chain id, `pool.latest_anchor` and the height it belongs to.
+ *  `anchor_height`: required for a shield (the node's tip); for a transfer or unshield it is the state's scanned height and may be omitted.
+ *  `expiry_height`: default `anchor_height + 64`; must be above `anchor_height` and at most 128 above it.
+ *  `max_fee`: default 10 x the minimum fee; a fee above it is refused. */
+export interface TxContext { chain_id: string; anchor: Hex; anchor_height?: number; expiry_height?: number; max_fee?: Quanta; }
+export interface ShieldParams extends TxContext { anchor_height: number; from_pub_key: Hex; nonce: number; v_in: Quanta; fee: Quanta; recipient: string; }
 export interface TransferParams extends TxContext { inputs: number[]; recipient: string; amount: Quanta; fee: Quanta; }
 export interface UnshieldParams extends TxContext { inputs: number[]; to: string; v_out: Quanta; fee: Quanta; }
+/** SECRET: `value` and `r` open the note's commitment. */
 export interface BuiltOutput { slot: 0 | 1; role: "payment" | "change" | "dummy"; value: Quanta; r: Hex; cm: Hex; }
 export interface BuiltTx {
   tx_type: "shield_v2" | "shielded_transfer_v2" | "unshield_v2";
@@ -62,8 +78,15 @@ export interface BuiltTx {
   needs_account_signature: boolean;
   nullifiers: [Hex, Hex];
   spent_positions: number[];
+  expiry_height: number;
+  /** Pass to `mark_pending` BEFORE submitting. `null` for a shield. */
+  pending: PendingTx | null;
   outputs: [BuiltOutput, BuiltOutput];
 }
+export interface Resolution { state: WalletState; mined: PendingTx[]; expired: PendingTx[]; still_pending: number; }
+export interface RootReport { node_id: string; height: number; root: Hex; }
+export interface ConfirmReport { quorum: number; matched_height: number | null; confirmed_height: number | null; newly_confirmed: number[]; agreeing: number; not_comparable: number; diverged: boolean; }
+export interface ConfirmResult { state: WalletState; report: ConfirmReport; }
 "#;
 
 fn js(r: api::ApiResult) -> Result<String, JsError> {
@@ -116,16 +139,22 @@ pub fn summary(state_json: &str) -> Result<String, JsError> {
     js(api::summary(state_json))
 }
 
-/// JSON `PaymentPlan`.
+/// Applies several pages (a JSON array) in one call; JSON `ScanPagesResult`.
 #[wasm_bindgen]
-pub fn plan_payment(state_json: &str, amount_quanta: &str, fee_quanta: &str) -> Result<String, JsError> {
-    js(api::plan_payment(state_json, amount_quanta, fee_quanta))
+pub fn scan_pages(state_json: &str, pages_json: &str, scan_key_json: &str) -> Result<String, JsError> {
+    js(api::scan_pages(state_json, pages_json, scan_key_json))
+}
+
+/// JSON `PaymentPlan`. Unverified notes are used only with `allow_unverified = true`.
+#[wasm_bindgen]
+pub fn plan_payment(state_json: &str, amount_quanta: &str, fee_quanta: &str, allow_unverified: bool) -> Result<String, JsError> {
+    js(api::plan_payment(state_json, amount_quanta, fee_quanta, allow_unverified))
 }
 
 /// JSON `MergePlan`.
 #[wasm_bindgen]
-pub fn plan_self_merge(state_json: &str, fee_quanta: &str) -> Result<String, JsError> {
-    js(api::plan_self_merge(state_json, fee_quanta))
+pub fn plan_self_merge(state_json: &str, fee_quanta: &str, allow_unverified: bool) -> Result<String, JsError> {
+    js(api::plan_self_merge(state_json, fee_quanta, allow_unverified))
 }
 
 /// `params_json`: `ShieldParams`. JSON `BuiltTx`. Proves: seconds; run in a worker.
@@ -156,8 +185,39 @@ pub fn build_unshield(mut seed: Vec<u8>, state_json: &str, params_json: &str) ->
     js(r)
 }
 
-/// Marks (`spent = true`) or releases (`false`) notes of a pending transaction; JSON `WalletState`.
+/// Records a built transfer or unshield (`BuiltTx.pending`) and locks its inputs. Call it, and
+/// persist the result, BEFORE submitting. JSON `WalletState`.
 #[wasm_bindgen]
-pub fn mark_pending(state_json: &str, positions_json: &str, spent: bool) -> Result<String, JsError> {
-    js(api::mark_pending(state_json, positions_json, spent))
+pub fn mark_pending(state_json: &str, pending_json: &str) -> Result<String, JsError> {
+    js(api::mark_pending(state_json, pending_json))
+}
+
+/// JSON `PendingTx[]`.
+#[wasm_bindgen]
+pub fn pending(state_json: &str) -> Result<String, JsError> {
+    js(api::pending(state_json))
+}
+
+/// A node answered "rejected": a hint for the UI, the inputs stay locked. JSON `{ state, found }`.
+#[wasm_bindgen]
+pub fn note_rejection(state_json: &str, nullifier_hex: &str) -> Result<String, JsError> {
+    js(api::note_rejection(state_json, nullifier_hex))
+}
+
+/// Settles pending transactions against the scanned chain; JSON `Resolution`.
+#[wasm_bindgen]
+pub fn resolve_pending(state_json: &str, require_confirmed: bool) -> Result<String, JsError> {
+    js(api::resolve_pending(state_json, require_confirmed))
+}
+
+/// `reports_json`: `RootReport[]`; `quorum = 0` means the default (2). JSON `ConfirmResult`.
+#[wasm_bindgen]
+pub fn confirm_roots(state_json: &str, reports_json: &str, quorum: u32) -> Result<String, JsError> {
+    js(api::confirm_roots(state_json, reports_json, quorum))
+}
+
+/// An empty state for the same wallet that keeps the pending transactions; JSON `WalletState`.
+#[wasm_bindgen]
+pub fn rescan_state(state_json: &str) -> Result<String, JsError> {
+    js(api::rescan_state(state_json))
 }

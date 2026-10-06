@@ -1,8 +1,8 @@
 //! REVIEW_WALLET_1 — the JavaScript-facing surface (see
 //! `core/shield-v2-wallet/REVIEW_WALLET_1.md`). Run natively through `api`, as `tests/api.rs`.
 //!
-//! * `rw1_fN_…` — regression tests of confirmed defects; they FAIL on the reviewed commit
-//!   (abab9a8) on purpose.
+//! * `rw1_fN_…` — regression tests of confirmed defects; they failed on the reviewed commit
+//!   (abab9a8) and pass since the fix.
 //! * `rw1_sound_…` — attacks that were tried and do not work; they pass.
 
 use quantum_vault_shield_v2_wallet::tx::deterministic;
@@ -26,12 +26,13 @@ fn page_with_one_shield(seed: &[u8], value: u64) -> String {
     let key = account_key();
     let tx = deterministic::shield(
         &ShieldRequest {
-            ctx: TxContext { chain_id: "test".into(), anchor: WalletState::new([0; 32]).anchor(), expiry_height: 100 },
+            ctx: TxContext { chain_id: "test".into(), anchor: WalletState::new([0; 32]).anchor(), anchor_height: 36, expiry_height: 100 },
             from_pub_key: &key,
             nonce: 1,
             v_in: value + Q,
             fee: Q,
             recipient: &keys.address(),
+            max_fee: None,
         },
         "rw1-wasm",
     )
@@ -41,7 +42,7 @@ fn page_with_one_shield(seed: &[u8], value: u64) -> String {
         json!({ "cm_out": hex::encode(&b[138 + 32 * j..170 + 32 * j]), "leaf": j, "kem_ct": hex::encode(&b[kem..kem + 1088]), "note_ct": hex::encode(&b[note..note + 56]) })
     };
     json!({ "active": true, "tip_height": 1, "from_height": 1, "next_height": 2, "txs": [{
-        "height": 1, "index": 0, "tx_hash": "h", "tx_type": "shield_v2",
+        "height": 1, "index": 0, "tx_hash": "cd".repeat(32), "tx_type": "shield_v2",
         "nf1": hex::encode(&b[74..106]), "nf2": hex::encode(&b[106..138]),
         "outputs": [out(0, 258, 1346), out(1, 1402, 2490)],
     }] })
@@ -55,7 +56,8 @@ fn page_with_one_shield(seed: &[u8], value: u64) -> String {
 /// whole scan key (the viewing key `dk` and `nk`) into an error message, and a twice-encoded state
 /// turns every note's value and `r` into one.
 ///
-/// FAILS on abab9a8: the error message contains the viewing key.
+/// Failed on abab9a8 (the error message contained the viewing key). Since the fix no error of the
+/// surface forwards a parser message: a code, a fixed sentence, a line and a column.
 #[test]
 fn rw1_f6_an_error_message_must_not_quote_secret_input() {
     let address = parse(api::shielded_address(&SEED))["address"].as_str().unwrap().to_string();
@@ -86,6 +88,198 @@ fn rw1_f6_an_error_message_must_not_quote_secret_input() {
     );
 }
 
+/// F-6, the general property: whatever is passed, in whatever position, wrapped or damaged in
+/// whatever way, **no error of the surface contains any part of an argument**. Every argument
+/// below carries a marker (the stand-in for a key, a note secret, an address, a memo), as a bare
+/// string, as a JSON string, twice encoded, as a value of the wrong type, as a key name, inside a
+/// valid structure in place of each field, truncated, and with invalid UTF-8-looking escapes; the
+/// marker must never come back in an error. A long run of malformed inputs from a deterministic
+/// generator is added on top.
+#[test]
+fn rw1_f6_no_error_of_the_surface_ever_contains_a_marker_from_its_input() {
+    const MARKER: &str = "S3CR3T-marker-7f3a9c";
+    let address = parse(api::shielded_address(&SEED))["address"].as_str().unwrap().to_string();
+    let state0 = api::new_state(&address).unwrap();
+    let page = page_with_one_shield(&SEED, 2 * Q);
+    let key = api::export_scan_key(&SEED, true).unwrap();
+    let scanned = parse(api::scan(&state0, &page, &key));
+    let state = scanned["state"].to_string();
+    let anchor = scanned["anchor"].clone();
+    let transfer = json!({ "chain_id": "test", "anchor": anchor, "expiry_height": 50, "inputs": [scanned["state"]["notes"][0]["position"]],
+        "recipient": address, "amount": "1000000000", "fee": "1000000000" });
+    let unshield = json!({ "chain_id": "test", "anchor": anchor, "inputs": [0], "to": "rouge1qqqq", "v_out": "1", "fee": "1000000000" });
+    let shield = json!({ "chain_id": "test", "anchor": anchor, "anchor_height": 1, "from_pub_key": "ab".repeat(1952), "nonce": 1,
+        "v_in": "3000000000", "fee": "1000000000", "recipient": address });
+    let pending = json!({ "tx_type": "shielded_transfer_v2", "nullifiers": ["00".repeat(32), "11".repeat(32)], "inputs": [0], "input_total": "1",
+        "change": { "cm": "22".repeat(32), "value": "1" }, "expiry_height": 5, "status": "pending", "mined_height": null, "rejected_hint": false });
+    let reports = json!([{ "node_id": "a", "height": 1, "root": anchor }]);
+
+    // every way of planting the marker in one valid JSON argument
+    fn plant(v: &Value, marker: &str, out: &mut Vec<String>) {
+        let text = v.to_string();
+        out.push(marker.to_string());
+        out.push(format!("\"{marker}\""));
+        out.push(format!("{text}{marker}"));
+        out.push(format!("{marker}{text}"));
+        out.push(serde_json::to_string(&format!("{text}{marker}")).unwrap()); // encoded twice
+        out.push(json!({ marker: v }).to_string());
+        out.push(json!([marker, v]).to_string());
+        out.push(text[..text.len() / 2].to_string() + marker);
+        out.push(format!("{{\"{marker}\":"));
+        out.push(format!("\"\\ud800{marker}\""));
+        fn pointers(v: &Value, at: String, out: &mut Vec<String>) {
+            match v {
+                Value::Object(m) => m.iter().for_each(|(k, c)| pointers(c, format!("{at}/{k}"), out)),
+                Value::Array(a) => a.iter().enumerate().for_each(|(i, c)| pointers(c, format!("{at}/{i}"), out)),
+                _ => {}
+            }
+            if !at.is_empty() {
+                out.push(at);
+            }
+        }
+        let mut all = Vec::new();
+        pointers(v, String::new(), &mut all);
+        for p in all {
+            for rep in [json!(marker), json!([marker]), json!({ marker: marker }), json!(format!("{}{marker}", "ab".repeat(32))), json!(format!("{marker}\u{0}"))] {
+                let mut x = v.clone();
+                *x.pointer_mut(&p).unwrap() = rep;
+                out.push(x.to_string());
+            }
+            // the key renamed to the marker
+            if let Some((parent, name)) = p.rsplit_once('/') {
+                let mut x = v.clone();
+                if let Some(Value::Object(m)) = x.pointer_mut(parent) {
+                    if let Some(val) = m.remove(name) {
+                        m.insert(marker.to_string(), val);
+                        out.push(x.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let variants = |v: &Value| {
+        let mut out = Vec::new();
+        plant(v, MARKER, &mut out);
+        out
+    };
+    let mut errors = 0usize;
+    let mut check = |what: &str, r: api::ApiResult| {
+        if let Err(e) = r {
+            errors += 1;
+            assert!(!e.contains(MARKER) && !e.contains("S3CR3T") && !e.contains("7f3a9c"), "{what}: the error quotes its input: {e}");
+            assert!(e.len() < 300, "{what}: an error of {} bytes", e.len());
+        }
+    };
+    let state_v: Value = serde_json::from_str(&state).unwrap();
+    let key_v: Value = serde_json::from_str(&key).unwrap();
+    let page_v: Value = serde_json::from_str(&page).unwrap();
+    for s in variants(&state_v) {
+        check("scan/state", api::scan(&s, &page, &key));
+        check("summary", api::summary(&s));
+        check("pending", api::pending(&s));
+        check("plan_payment/state", api::plan_payment(&s, "1", "1000000000", true));
+        check("plan_self_merge/state", api::plan_self_merge(&s, "1000000000", true));
+        check("build_transfer/state", api::build_transfer(&SEED, &s, &json!({}).to_string()));
+        check("build_unshield/state", api::build_unshield(&SEED, &s, &unshield.to_string()));
+        check("mark_pending/state", api::mark_pending(&s, &pending.to_string()));
+        check("resolve_pending", api::resolve_pending(&s, true));
+        check("note_rejection/state", api::note_rejection(&s, &"00".repeat(32)));
+        check("confirm_roots/state", api::confirm_roots(&s, &reports.to_string(), 1));
+        check("rescan_state", api::rescan_state(&s));
+        check("scan_pages/state", api::scan_pages(&s, "[]", &key));
+    }
+    for k in variants(&key_v) {
+        check("scan/key", api::scan(&state0, &page, &k));
+        check("scan_pages/key", api::scan_pages(&state0, &format!("[{page}]"), &k));
+    }
+    for p in variants(&page_v) {
+        check("scan/page", api::scan(&state0, &p, &key));
+        check("scan_pages/pages", api::scan_pages(&state0, &format!("[{p}]"), &key));
+        check("scan_pages/pages", api::scan_pages(&state0, &p, &key));
+    }
+    // (an unshield to a bad address fails before any proof; the transfer variants that stay valid
+    // would prove, so their inputs name a note that does not exist)
+    let mut transfer_no_note = transfer.clone();
+    transfer_no_note["inputs"] = json!([7]);
+    for t in variants(&transfer_no_note) {
+        check("build_transfer/params", api::build_transfer(&SEED, &state, &t));
+    }
+    for u in variants(&unshield) {
+        check("build_unshield/params", api::build_unshield(&SEED, &state, &u));
+    }
+    let mut shield_bad = shield.clone();
+    shield_bad["v_in"] = json!("1");
+    for s in variants(&shield_bad) {
+        check("build_shield", api::build_shield(&s));
+    }
+    for p in variants(&pending) {
+        check("mark_pending/record", api::mark_pending(&state, &p));
+    }
+    for r in variants(&reports) {
+        check("confirm_roots/reports", api::confirm_roots(&state, &r, 0));
+    }
+    for a in variants(&json!(address)) {
+        check("parse_address", api::parse_address(&a));
+        check("new_state", api::new_state(&a));
+        check("note_rejection/nullifier", api::note_rejection(&state, &a));
+        check("plan_payment/amount", api::plan_payment(&state, &a, "1", true));
+        check("plan_payment/fee", api::plan_payment(&state, "1", &a, true));
+        check("plan_self_merge/fee", api::plan_self_merge(&state, &a, true));
+        check("attach_signature/envelope", api::attach_signature(&a, "ab"));
+        check("attach_signature/sig", api::attach_signature(&json!({ "tx_type": "shield_v2" }).to_string(), &a));
+    }
+    // the address itself, damaged around a marker (an address is not secret, but a pasted
+    // clipboard may hold anything)
+    for a in [format!("{address}{MARKER}"), format!("{MARKER}{address}"), format!("rshield1{MARKER}"), address.replace("rshield1", &format!("{MARKER}1"))] {
+        check("parse_address", api::parse_address(&a));
+        check("new_state", api::new_state(&a));
+        let mut t = transfer_no_note.clone();
+        t["recipient"] = json!(a);
+        check("build_transfer/recipient", api::build_transfer(&SEED, &state, &t.to_string()));
+        let mut u = unshield.clone();
+        u["to"] = json!(a);
+        check("build_unshield/to", api::build_unshield(&SEED, &state, &u.to_string()));
+    }
+    // a seed that is not a seed
+    for seed in [MARKER.as_bytes().to_vec(), [MARKER.as_bytes(), &[0u8; 64][..]].concat()] {
+        check("shielded_address", api::shielded_address(&seed));
+        check("export_scan_key", api::export_scan_key(&seed, true));
+        check("build_transfer/seed", api::build_transfer(&seed, &state, &transfer.to_string()));
+    }
+    // random damage: bytes of valid arguments overwritten with pieces of the marker
+    let mut x = 0x2545_f491_4f6c_dd1du64;
+    let mut rnd = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let small_state = state0.clone();
+    for _ in 0..1_500 {
+        let mut damage = |text: &str| {
+            let mut b = text.as_bytes().to_vec();
+            for _ in 0..1 + rnd() % 3 {
+                let at = (rnd() % b.len() as u64) as usize;
+                let piece = &MARKER.as_bytes()[..1 + (rnd() % MARKER.len() as u64) as usize];
+                let end = (at + piece.len()).min(b.len());
+                b.splice(at..end, piece.iter().copied());
+            }
+            String::from_utf8_lossy(&b).into_owned()
+        };
+        let (s, p, k) = (damage(&small_state), damage(&page), damage(&key));
+        let (t, pd, rp) = (damage(&transfer_no_note.to_string()), damage(&pending.to_string()), damage(&reports.to_string()));
+        check("fuzz scan/state", api::scan(&s, &page, &key));
+        check("fuzz scan/page", api::scan(&small_state, &p, &key));
+        check("fuzz scan/key", api::scan(&small_state, &page, &k));
+        check("fuzz summary", api::summary(&s));
+        check("fuzz build_transfer", api::build_transfer(&SEED, &state, &t));
+        check("fuzz mark_pending", api::mark_pending(&state, &pd));
+        check("fuzz confirm_roots", api::confirm_roots(&state, &rp, 0));
+        check("fuzz parse_address", api::parse_address(&damage(&address)));
+    }
+    assert!(errors > 5_000, "the inputs exercised the error paths ({errors} errors)");
+}
+
 /// What the surface hands back never contains the spending key, `nk` (outside `export_scan_key`),
 /// the viewing key or the seed: the state blob, the scan result, the summary, the plans, and a
 /// built transfer with a real proof.
@@ -113,12 +307,21 @@ fn rw1_sound_no_key_material_in_states_results_or_built_transactions() {
     let scanned: Value = serde_json::from_str(&scanned_text).unwrap();
     let st = scanned["state"].to_string();
     clean("summary", &api::summary(&st).unwrap());
-    clean("plan_payment", &api::plan_payment(&st, "1000000000", "1000000000").unwrap());
+    clean("plan_payment", &api::plan_payment(&st, "1000000000", "1000000000", true).unwrap());
 
     let params = json!({ "chain_id": "test", "anchor": scanned["anchor"], "expiry_height": 50, "inputs": [scanned["state"]["notes"][0]["position"]],
         "recipient": address, "amount": "2000000000", "fee": "1000000000" });
     let built = api::build_transfer(&SEED, &st, &params.to_string()).unwrap();
     clean("build_transfer", &built);
+    // the pending calls, the root check and the rescan state carry no key either
+    let b0: Value = serde_json::from_str(&built).unwrap();
+    let marked = api::mark_pending(&st, &b0["pending"].to_string()).unwrap();
+    clean("mark_pending", &marked);
+    clean("pending", &api::pending(&marked).unwrap());
+    clean("resolve_pending", &api::resolve_pending(&marked, false).unwrap());
+    clean("note_rejection", &api::note_rejection(&marked, b0["nullifiers"][1].as_str().unwrap()).unwrap());
+    clean("confirm_roots", &api::confirm_roots(&marked, &json!([{ "node_id": "n", "height": 1, "root": scanned["anchor"] }]).to_string(), 1).unwrap());
+    clean("rescan_state", &api::rescan_state(&marked).unwrap());
     let b: Value = serde_json::from_str(&built).unwrap();
     assert_eq!(b["needs_account_signature"], json!(false));
     // the envelope is the signer-less shape; nothing but the two V2 payload fields is set
@@ -149,7 +352,7 @@ fn rw1_sound_foreign_or_mixed_scan_keys_credit_nothing() {
     let mut mixed = mine.clone();
     mixed["dk"] = theirs["dk"].clone();
     let r = parse(api::scan(&state, &page, &mixed.to_string()));
-    assert_eq!(r["balance"], json!("0"));
+    assert_eq!((&r["unverified_balance"], &r["confirmed_balance"]), (&json!("0"), &json!("0")));
     // the right keys: the note is there
-    assert_eq!(parse(api::scan(&state, &page, &mine.to_string()))["balance"], json!((2 * Q).to_string()));
+    assert_eq!(parse(api::scan(&state, &page, &mine.to_string()))["unverified_balance"], json!((2 * Q).to_string()));
 }

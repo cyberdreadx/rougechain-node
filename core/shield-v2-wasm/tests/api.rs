@@ -29,12 +29,13 @@ fn page_with_one_shield(seed: &[u8], value: u64) -> String {
     let key = account_key();
     let tx = deterministic::shield(
         &ShieldRequest {
-            ctx: TxContext { chain_id: "test".into(), anchor: WalletState::new([0; 32]).anchor(), expiry_height: 100 },
+            ctx: TxContext { chain_id: "test".into(), anchor: WalletState::new([0; 32]).anchor(), anchor_height: 36, expiry_height: 100 },
             from_pub_key: &key,
             nonce: 1,
             v_in: value + Q,
             fee: Q,
             recipient: &keys.address(),
+            max_fee: None,
         },
         "wasm-api",
     )
@@ -44,7 +45,7 @@ fn page_with_one_shield(seed: &[u8], value: u64) -> String {
         json!({ "cm_out": hex::encode(&b[138 + 32 * j..170 + 32 * j]), "leaf": j, "kem_ct": hex::encode(&b[kem..kem + 1088]), "note_ct": hex::encode(&b[note..note + 56]) })
     };
     json!({ "active": true, "tip_height": 1, "from_height": 1, "next_height": 2, "txs": [{
-        "height": 1, "index": 0, "tx_hash": "h", "tx_type": "shield_v2",
+        "height": 1, "index": 0, "tx_hash": "ab".repeat(32), "tx_type": "shield_v2",
         "nf1": hex::encode(&b[74..106]), "nf2": hex::encode(&b[106..138]),
         "outputs": [out(0, 258, 1346), out(1, 1402, 2490)],
     }] })
@@ -65,26 +66,42 @@ fn address_scan_plan_build_end_to_end() {
     let key = api::export_scan_key(&SEED, true).unwrap();
     let state0 = api::new_state(address).unwrap();
     let scanned = parse(api::scan(&state0, &page_with_one_shield(&SEED, 9 * Q), &key));
-    assert_eq!(scanned["balance"], "9000000000");
+    // one node's listing: the note is there, unverified — not in the confirmed balance
+    assert_eq!((scanned["unverified_balance"].as_str(), scanned["confirmed_balance"].as_str()), (Some("9000000000"), Some("0")));
     assert_eq!(scanned["report"]["received"].as_array().unwrap().len(), 1);
-    let state = scanned["state"].to_string();
+    let unverified = scanned["state"].to_string();
+    assert_eq!(parse(api::plan_payment(&unverified, "5000000000", "1000000000", false))["status"], "insufficient_funds");
+    assert_eq!(parse(api::plan_payment(&unverified, "5000000000", "1000000000", true))["status"], "ok");
+    // the same page through scan_pages gives the same state
+    let pages = format!("[{}]", page_with_one_shield(&SEED, 9 * Q));
+    assert_eq!(parse(api::scan_pages(&state0, &pages, &key))["state"], scanned["state"]);
+    // the root check: one node is not enough, two that agree are (quorum 0 = the default, 2)
+    let report = |id: &str| json!({ "node_id": id, "height": 1, "root": scanned["anchor"] });
+    let one = parse(api::confirm_roots(&unverified, &json!([report("a")]).to_string(), 0));
+    assert_eq!((one["report"]["matched_height"].is_null(), one["report"]["agreeing"].as_u64()), (true, Some(1)));
+    assert_eq!(parse(api::summary(&one["state"].to_string()))["confirmed_balance"], "0");
+    let two = parse(api::confirm_roots(&unverified, &json!([report("a"), report("b")]).to_string(), 0));
+    assert_eq!((two["report"]["matched_height"].as_u64(), two["report"]["newly_confirmed"].as_array().map(Vec::len)), (Some(1), Some(1)));
+    let state = two["state"].to_string();
     let summary = parse(api::summary(&state));
     assert_eq!(summary["notes"].as_array().unwrap().len(), 1);
+    assert_eq!(summary["notes"][0]["confirmed"], true);
+    assert_eq!((summary["confirmed_balance"].as_str(), summary["unverified_balance"].as_str(), summary["spendable_balance"].as_str()), (Some("9000000000"), Some("0"), Some("9000000000")));
     assert_eq!(summary["anchor"], scanned["anchor"]);
     // the viewing key alone finds the note; another wallet's key is refused for this state
     let view = api::export_scan_key(&SEED, false).unwrap();
-    assert_eq!(parse(api::scan(&state0, &page_with_one_shield(&SEED, 9 * Q), &view))["balance"], "9000000000");
+    assert_eq!(parse(api::scan(&state0, &page_with_one_shield(&SEED, 9 * Q), &view))["unverified_balance"], "9000000000");
     assert!(api::scan(&state0, &page_with_one_shield(&SEED, 9 * Q), &api::export_scan_key(&OTHER, true).unwrap()).is_err());
     // a note for someone else: nothing received
     let other_state = api::new_state(them["address"].as_str().unwrap()).unwrap();
     let r = parse(api::scan(&other_state, &page_with_one_shield(&SEED, 9 * Q), &api::export_scan_key(&OTHER, true).unwrap()));
-    assert_eq!((r["balance"].as_str(), r["report"]["received"].as_array().map(Vec::len)), (Some("0"), Some(0)));
+    assert_eq!((r["unverified_balance"].as_str(), r["report"]["received"].as_array().map(Vec::len)), (Some("0"), Some(0)));
 
     // plan
-    let plan = parse(api::plan_payment(&state, "5000000000", "1000000000"));
+    let plan = parse(api::plan_payment(&state, "5000000000", "1000000000", false));
     assert_eq!((plan["status"].as_str(), plan["selection"]["change"].as_str()), (Some("ok"), Some("3000000000")));
-    assert_eq!(parse(api::plan_payment(&state, "9000000000", "1000000000"))["status"], "insufficient_funds");
-    assert!(api::plan_self_merge(&state, "1000000000").unwrap_err().starts_with("request:"));
+    assert_eq!(parse(api::plan_payment(&state, "9000000000", "1000000000", false))["status"], "insufficient_funds");
+    assert!(api::plan_self_merge(&state, "1000000000", false).unwrap_err().starts_with("request:"));
 
     // build a transfer (a real proof)
     let params = json!({ "chain_id": "test", "anchor": scanned["anchor"], "expiry_height": 100, "inputs": plan["selection"]["positions"],
@@ -103,13 +120,51 @@ fn address_scan_plan_build_end_to_end() {
     let roles: Vec<&str> = built["outputs"].as_array().unwrap().iter().map(|o| o["role"].as_str().unwrap()).collect();
     assert!(roles.contains(&"payment") && roles.contains(&"change"));
     assert!(api::attach_signature(built["envelope_json"].as_str().unwrap(), "ab").unwrap_err().starts_with("request:"));
-    // pending bookkeeping
-    let pending = api::mark_pending(&state, &built["spent_positions"].to_string(), true).unwrap();
-    assert_eq!(parse(api::summary(&pending))["balance"], "0");
-    let positions = built["spent_positions"].to_string();
-    assert_eq!(parse(api::summary(&api::mark_pending(&pending, &positions, false).unwrap()))["balance"], "9000000000");
-    assert!(api::mark_pending(&pending, &positions, true).is_err(), "already pending");
-    assert!(api::mark_pending(&state, "[99]", true).is_err());
+    // the default expiry is the scanned height + 64; the result carries the pending record
+    assert_eq!(built["expiry_height"], 100);
+    let mut defaulted = params.clone();
+    defaulted.as_object_mut().unwrap().remove("expiry_height");
+    let pending_record = built["pending"].to_string();
+    assert_eq!(built["pending"]["inputs"], built["spent_positions"]);
+    assert_eq!((built["pending"]["expiry_height"].as_u64(), built["pending"]["status"].as_str()), (Some(100), Some("pending")));
+    // pending bookkeeping: recorded before submitting; the inputs are locked whatever a node says
+    let pending = api::mark_pending(&state, &pending_record).unwrap();
+    let sum = parse(api::summary(&pending));
+    assert_eq!((sum["locked_balance"].as_str(), sum["spendable_balance"].as_str(), sum["confirmed_balance"].as_str()), (Some("9000000000"), Some("0"), Some("9000000000")));
+    assert_eq!(parse(api::pending(&pending)).as_array().unwrap().len(), 1);
+    assert_eq!(parse(api::plan_payment(&pending, "5000000000", "1000000000", true))["status"], "insufficient_funds");
+    assert!(api::build_transfer(&SEED, &pending, &params.to_string()).unwrap_err().starts_with("note_locked:"));
+    assert!(api::mark_pending(&pending, &pending_record).unwrap_err().starts_with("request:"), "already recorded");
+    let hinted = parse(api::note_rejection(&pending, built["nullifiers"][0].as_str().unwrap()));
+    assert_eq!(hinted["found"], true);
+    let hinted = hinted["state"].to_string();
+    assert_eq!(parse(api::pending(&hinted))[0]["rejected_hint"], true);
+    let r = parse(api::resolve_pending(&hinted, false));
+    assert_eq!((r["still_pending"].as_u64(), r["expired"].as_array().map(Vec::len), r["mined"].as_array().map(Vec::len)), (Some(1), Some(0), Some(0)));
+    assert_eq!(parse(api::summary(&r["state"].to_string()))["spendable_balance"], "0", "a claimed rejection releases nothing");
+    // the chain passes the expiry height without the transaction: released
+    let empty = json!({ "active": true, "tip_height": 100, "from_height": 2, "next_height": 101, "txs": [] }).to_string();
+    let later = parse(api::scan(&hinted, &empty, &key))["state"].to_string();
+    assert_eq!(parse(api::resolve_pending(&later, true))["still_pending"], 1, "not under the confirmed-height policy: nobody vouched for height 100");
+    let r = parse(api::resolve_pending(&later, false));
+    assert_eq!((r["still_pending"].as_u64(), r["expired"].as_array().map(Vec::len)), (Some(0), Some(1)));
+    assert_eq!(parse(api::summary(&r["state"].to_string()))["spendable_balance"], "9000000000");
+    // a rescan state keeps the pending list
+    assert_eq!(parse(api::pending(&api::rescan_state(&hinted).unwrap())).as_array().unwrap().len(), 1);
+    assert!(api::mark_pending(&state, "{}").is_err());
+    // the fee ceiling: 10 x the minimum unless max_fee says otherwise
+    let mut p = params.clone();
+    p["fee"] = json!("3000000000");
+    p["max_fee"] = json!("2000000000");
+    assert!(api::build_transfer(&SEED, &state, &p.to_string()).unwrap_err().starts_with("fee_above_maximum:"));
+    // an expiry outside the bound, an anchor height that is not the state's
+    let mut p = params.clone();
+    p["expiry_height"] = json!(130);
+    assert!(api::build_transfer(&SEED, &state, &p.to_string()).unwrap_err().starts_with("request:"));
+    let mut p = params.clone();
+    p["anchor_height"] = json!(7);
+    assert!(api::build_transfer(&SEED, &state, &p.to_string()).unwrap_err().starts_with("request:"));
+    let _ = defaulted;
     // the wrong seed for this state, a wrong anchor, a fee below the minimum
     assert!(api::build_transfer(&OTHER, &state, &params.to_string()).unwrap_err().starts_with("request:"));
     let mut p = params.clone();
@@ -124,10 +179,14 @@ fn address_scan_plan_build_end_to_end() {
     assert!(api::build_unshield(&SEED, &state, &p.to_string()).unwrap_err().starts_with("address:"), "a shielded address is not an account");
 
     // build a shield (a real proof) and attach the account signature
-    let params = json!({ "chain_id": "test", "anchor": scanned["anchor"], "expiry_height": 100, "from_pub_key": hex::encode(account_key()),
+    let params = json!({ "chain_id": "test", "anchor": scanned["anchor"], "anchor_height": 1, "from_pub_key": hex::encode(account_key()),
         "nonce": 7, "v_in": "3000000000", "fee": "1000000000", "recipient": address });
     let built = parse(api::build_shield(&params.to_string()));
     assert_eq!((built["tx_type"].as_str(), built["needs_account_signature"].as_bool()), (Some("shield_v2"), Some(true)));
+    assert_eq!((built["expiry_height"].as_u64(), built["pending"].is_null()), (Some(65), true), "the default expiry is anchor_height + 64; a shield locks no note");
+    let mut no_height = params.clone();
+    no_height.as_object_mut().unwrap().remove("anchor_height");
+    assert!(api::build_shield(&no_height.to_string()).unwrap_err().starts_with("request:"));
     let signing = String::from_utf8(hex::decode(built["signing_bytes"].as_str().unwrap()).unwrap()).unwrap();
     assert!(signing.contains(built["proof"].as_str().unwrap()) && signing.contains(built["body"].as_str().unwrap()));
     let signed: Value = serde_json::from_str(&api::attach_signature(built["envelope_json"].as_str().unwrap(), "0a0b").unwrap()).unwrap();
@@ -168,22 +227,37 @@ fn malformed_input_is_an_error_never_a_panic() {
         coded(api::scan(&state, j, &key));
         coded(api::scan(&state, &page, j));
         coded(api::summary(j));
-        coded(api::plan_payment(j, "1", "1"));
+        coded(api::plan_payment(j, "1", "1", true));
         if j.parse::<u64>().is_err() {
-            coded(api::plan_payment(&state, j, "1"));
-            coded(api::plan_payment(&state, "1", j));
-            coded(api::plan_self_merge(&state, j));
+            coded(api::plan_payment(&state, j, "1", true));
+            coded(api::plan_payment(&state, "1", j, true));
+            coded(api::plan_self_merge(&state, j, true));
         }
-        coded(api::plan_self_merge(j, "1"));
+        coded(api::plan_self_merge(j, "1", true));
+        coded(api::scan_pages(j, "[]", &key));
+        if !j.trim().is_empty() {
+            coded(api::scan_pages(&state, &format!("[{j}]"), &key));
+        }
+        if *j != "[]" {
+            coded(api::scan_pages(&state, j, &key));
+        }
+        coded(api::pending(j));
+        coded(api::resolve_pending(j, false));
+        coded(api::rescan_state(j));
+        coded(api::note_rejection(j, &"00".repeat(32)));
+        coded(api::note_rejection(&state, j));
+        coded(api::confirm_roots(j, "[]", 0));
+        if *j != "[]" {
+            coded(api::confirm_roots(&state, j, 0));
+        }
+        coded(api::confirm_roots(&state, &json!([{ "node_id": "a", "height": 0, "root": j }]).to_string(), 0));
         coded(api::build_shield(j));
         coded(api::build_transfer(&SEED, j, "{}"));
         coded(api::build_transfer(&SEED, &state, j));
         coded(api::build_unshield(&SEED, &state, j));
         coded(api::attach_signature(j, "ab"));
-        coded(api::mark_pending(j, "[]", true));
-        if *j != "[]" {
-            coded(api::mark_pending(&state, j, true));
-        }
+        coded(api::mark_pending(j, "{}"));
+        coded(api::mark_pending(&state, j));
     }
     // well-formed JSON with wrong contents
     let anchor = parse(api::summary(&state))["anchor"].clone();
@@ -192,12 +266,13 @@ fn malformed_input_is_an_error_never_a_panic() {
         ("anchor", json!("zz")), ("anchor", json!("ff".repeat(32))), ("anchor", json!(5)), ("chain_id", json!("")), ("expiry_height", json!(-1)),
         ("expiry_height", json!("5")), ("inputs", json!([])), ("inputs", json!([0, 1, 2])), ("inputs", json!([7])), ("inputs", json!("0")),
         ("recipient", json!("rshield1qqqq")), ("amount", json!(1)), ("amount", json!("-1")), ("fee", json!("1e9")),
+        ("max_fee", json!(5)), ("max_fee", json!("x")), ("anchor_height", json!("1")), ("anchor_height", json!(-1)),
     ] {
         let mut p = base.clone();
         p[field] = bad;
         coded(api::build_transfer(&SEED, &state, &p.to_string()));
     }
-    let shield = json!({ "chain_id": "test", "anchor": anchor, "expiry_height": 5, "from_pub_key": hex::encode(account_key()), "nonce": 1,
+    let shield = json!({ "chain_id": "test", "anchor": anchor, "anchor_height": 1, "expiry_height": 5, "from_pub_key": hex::encode(account_key()), "nonce": 1,
         "v_in": "3000000000", "fee": "1000000000", "recipient": address });
     for (field, bad) in [
         ("from_pub_key", json!("ab")), ("from_pub_key", json!("AB".repeat(1952))), ("from_pub_key", json!("zz".repeat(1952))),
