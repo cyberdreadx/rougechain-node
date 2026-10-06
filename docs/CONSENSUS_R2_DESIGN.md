@@ -1498,6 +1498,8 @@ for the live chain: all of it concerns rules that are not yet built.
 
 **1. How long is a validator really out after being jailed for downtime? (F6)**
 
+*DECIDED by the owner 2026-10-07: keep the rule and describe it truthfully — "jailed for at least 1 hour; returns at the first daily epoch boundary at least 24 hours after asking" (in practice 25 to 49 hours).*
+
 *What was found.* The decision says "jail 1 hour". The same design says a jailed validator comes back like
 any newcomer: at the next daily changeover that is at least 24 hours after it asks to return. Put together,
 a validator jailed for "1 hour" is out for about **25 to 49 hours**.
