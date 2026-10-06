@@ -773,6 +773,8 @@ Release 2 design §3 asked for).
 
 ## 10. Decisions for the owner
 
+All eleven decisions were taken by the owner on 2026-10-06; the outcome is recorded in bold in each row.
+
 | # | Decision | Recommendation | If the alternative is chosen |
 |---|---|---|---|
 | 1 | Protocol family | Tendermint, following the published algorithm (§2.4). **DECIDED by the owner 2026-10-06: adopted, with ML-DSA-65 as the only vote signature scheme.** | HotStuff: transactions before a quiet period are not final without filler blocks, and more new machinery. Current + Release 2b: fewer votes, but the known stuck-round defect has to be fixed by inventing rules nobody has reviewed |
@@ -785,7 +787,7 @@ Release 2 design §3 asked for).
 | 8 | Interim admission control | Approval by `≥ q` of current stake, announced as temporary with a written exit condition. **DECIDED by the owner 2026-10-06: adopted.** | None: anyone who can buy enough XRGE can halt or take the chain from the next epoch. Permanent: the chain is permissioned in fact |
 | 9 | Reserve subsidy | Replace the 0.1 XRGE per-block floor with a per-time rate; choose `RATE` as a budget  **DECIDED by the owner 2026-10-06: adopted. Finding: the live mainnet `__staking_rewards__` balance is 0 XRGE (the repository genesis value of 10.8 B was never applied on mainnet), so the existing floor has paid nothing. The owner will fund the reserve by a plain transfer; `RATE` is then set to spend that budget over about two years with a full set of 32.** | Keep the floor: any proposer can farm it with minimum-fee transactions once proposers rotate (§5.3). `RATE = 0`: no income for operators beyond negligible fees |
 | 10 | Order of stages and relation to LC1 | A → B → C → D → E; stage B before LC1's activation, or folded into LC1's text first  **DECIDED by the owner 2026-10-06: adopted.** | C before B: double-signing becomes slashable sooner, jailing still waits. LC1 first: rounds later force a new header version and a new light-client instance (LC1 D-11) |
-| 11 | CONSENSUS-0 and independent review as a gate | No node code for stage B before §9's exit criteria are met | Faster start, with protocol errors found on testnet or mainnet instead of in a simulator |
+| 11 | CONSENSUS-0 and independent review as a gate | No node code for stage B before §9's exit criteria are met  **DECIDED by the owner 2026-10-06: adopted.** | Faster start, with protocol errors found on testnet or mainnet instead of in a simulator |
 
 ---
 
