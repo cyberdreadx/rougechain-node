@@ -107,9 +107,9 @@ await rc.faucet(wallet);
 
 ### Mintable tokens (SDK 1.12.0, node TOKEN_MINTING upgrade)
 
-Mintable tokens need the node's `TOKEN_MINTING` upgrade, which is **not scheduled on any network
-yet**. Until it is active the node refuses `mintable` / `maxSupply` and every mint with
-"token minting is not active yet". Check first:
+Mintable tokens need the node's `TOKEN_MINTING` upgrade, **active on mainnet since block 235 and on
+testnet since block 1360**. On a network where it is not active the node refuses `mintable` /
+`maxSupply` and every mint with "token minting is not active yet". To check:
 
 ```typescript
 import { tokenMintingActive } from '@rougechain/sdk';

@@ -105,8 +105,8 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 | `/api/token/:symbol/transactions` | GET | Get token transactions |
 | `/api/burn-address` | GET | Get official burn address |
 | `/api/burned` | GET | Get burned token stats |
-| `/api/v2/token/create` | POST | Create token (signed); `mintable` / `max_supply` from TOKEN_MINTING activation (not scheduled) |
-| `/api/v2/token/mint` | POST | Mint more of a mintable token, creator only (signed) — **not active yet** |
+| `/api/v2/token/create` | POST | Create token (signed); `mintable` / `max_supply` since TOKEN_MINTING (mainnet block 235) |
+| `/api/v2/token/mint` | POST | Mint more of a mintable token, creator only (signed); live since mainnet block 235 |
 | `/api/v2/token/metadata/update` | POST | Update token metadata (signed) |
 | `/api/v2/token/metadata/claim` | POST | Claim metadata ownership (signed) |
 

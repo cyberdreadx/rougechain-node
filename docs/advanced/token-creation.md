@@ -7,7 +7,7 @@ Create custom tokens on RougeChain. Tokens can be traded on the built-in AMM/DEX
 | Property | Value |
 |----------|-------|
 | Creation fee | 100 XRGE |
-| Supply | Set at creation — the full supply is minted to the creator and is fixed. Mintable tokens (creator can mint more, optional cap) are built but **not active yet** — see [Mintable tokens](#mintable-tokens-not-active-yet) |
+| Supply | Set at creation — the full supply is minted to the creator. Fixed unless the token is created **mintable** (creator can mint more, optional cap; live since block 235) — see [Mintable tokens](#mintable-tokens-active-since-block-235) |
 | Decimals | Not configurable — user-created tokens are whole units (0 decimals) |
 | Trading | Via AMM liquidity pools |
 
@@ -86,15 +86,14 @@ Once created, the entire supply is credited to the creator's wallet. You can the
 2. **Create a liquidity pool** to enable trading
 3. **Burn** tokens by sending to the burn address
 
-## Mintable tokens (not active yet)
+## Mintable tokens (active since block 235)
 
-> **Status: built, activation not scheduled.** Mintable tokens are a consensus upgrade
-> (`TOKEN_MINTING`). Until its activation height is set and reached, the node **refuses**
-> `mintable` / `max_supply` on `/api/v2/token/create` with `token minting is not active yet` and
-> refuses every `/api/v2/token/mint`. `GET /api/stats` → `upgrade_schedule.token_minting` shows the
-> height (`null` = not scheduled).
+> **Status: LIVE on mainnet since block 235 and on testnet since block 1360** (`TOKEN_MINTING`).
+> `GET /api/stats` → `upgrade_schedule.token_minting` shows the height. On a network where the height
+> has not been reached the node refuses `mintable` / `max_supply` on `/api/v2/token/create` with
+> `token minting is not active yet` and refuses every `/api/v2/token/mint`.
 
-From activation, a token can be created **mintable**, with an optional cap. Add to the signed
+A token can be created **mintable**, with an optional cap. Add to the signed
 create payload:
 
 | Field | Type | Meaning |

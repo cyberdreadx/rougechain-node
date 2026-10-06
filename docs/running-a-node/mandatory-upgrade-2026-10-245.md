@@ -1,9 +1,11 @@
 # RougeChain node release 1.6.2 — monetary-integrity rule (2026-10)
 
-**Mandatory upgrade for every mainnet validator and full node — install it before block 235.**
-This release contains the two changes that activate at 235 (see the
-[previous notice](mandatory-upgrade-2026-10.md)) and one new consensus rule at 245, so a node that
-installs it now is ready for both heights with a single upgrade.
+**Mandatory upgrade for every mainnet validator and full node.** Blocks **235 and 245 have both
+passed** (mainnet was at height 251 on 2026-10-06), so a node on an older build is already stopped at
+the first block it cannot judge; installing this release — or [1.6.3](release-1.6.3.md), which
+contains it — and restarting is enough to catch up, no resync. This release contains the two changes
+that activated at 235 (see the [previous notice](mandatory-upgrade-2026-10.md)) and one consensus
+rule that activated at 245.
 
 | Change | Constant (`core/daemon/src/node.rs`) | Mainnet | Testnet |
 |---|---|---|---|
