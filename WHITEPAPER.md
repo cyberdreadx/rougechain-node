@@ -269,7 +269,7 @@ proposer(H) = the eligible validator with the largest stake
 
 A block signed by any other key is rejected at import before any state is modified, and a node refuses to seal a block for a height at which it is not the designated proposer. The producer records every proposal in a local proposal journal (`proposal-journal-db`) keyed by height and parent hash, so it never signs two different blocks for the same slot. `/api/stats` reports the activation height and the designated proposer for the next height.
 
-Release 1 has **no fallback**: if the designated proposer is offline, no blocks are produced until it returns. Release 2 is split in two: Release 2a (verified finality) has been active since height 150, and Release 2b (skip certificates and a deterministic fallback proposer) is planned; see Section 12.
+Release 1 has **no fallback**: if the designated proposer is offline, no blocks are produced until it returns. Release 2a (verified finality) has been active since height 150. Its planned sequel, Release 2b (skip certificates and a deterministic fallback proposer), has been folded into the consensus redesign of 6 October 2026, which is not implemented; see Section 12.2.
 
 Earlier versions of this paper described a stake-weighted random selection seeded by the ANU Quantum Random Number Generator. That function exists in the codebase, but it was never enforced on mainnet -- before height 100 a block from any staked validator was accepted -- and it is not part of the Release 1 rule.
 
