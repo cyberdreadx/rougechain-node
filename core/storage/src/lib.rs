@@ -14,6 +14,7 @@ pub mod nullifier_store;
 pub mod push_token_store;
 pub mod regen_vote_store;
 pub mod receipt_store;
+pub mod shield_v2_store;
 pub mod state_root;
 pub mod token_metadata_store;
 pub mod token_stake_store;
