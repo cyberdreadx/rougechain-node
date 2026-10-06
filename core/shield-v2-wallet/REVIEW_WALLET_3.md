@@ -414,3 +414,228 @@ Each as `systemd-run --user --scope -q -p MemoryMax=2500M -p MemorySwapMax=0 -p 
 4. The property test gets a contradicting liar, several liar ids, altered ciphertexts, an
    independent true-balance oracle and the bounded-settlement invariant; M4 or its replacement is
    then caught.
+
+---
+
+## Resolution
+
+Branch `fix/shield-v2-wallet-settlement-2`, from `review/shield-v2-wallet-3` @ `dd02c86`.
+Date: 2026-10-06. Every `rw3_f*` test passes and asserts the safe behaviour; the three demos
+that showed behaviour which is now fixed are regression tests (`rw3_f1b`, `rw3_f2b`, `rw3_f8`);
+one demo is left, RW3-10, which no wallet core can remove. Nothing was pushed. **None of this
+has been read by a second person.**
+
+Commits:
+
+| Commit | What |
+|---|---|
+| `625a08b` | wallet core: configured nodes and quorum, `spend_base`, build-and-lock, own outputs from the record, ciphertext hash, cap on unspent notes, state format 4, the tests of the three reviews |
+| `f4a6942` | the property test, rewritten around an independent model |
+| `19e19da` | wasm surface |
+| `dec53b4` | node: node-local ciphertext hash, report of accepted blocks |
+| `ea989b6` | the property test strengthened until every mutation is caught by an invariant |
+| *(this commit)* | spec amendments W-16, W-17; `NOTES.md` §5–§7, §12; this section |
+
+### Per finding
+
+| # | Fix | Where | Commit | Test |
+|---|---|---|---|---|
+| RW3-1 (High) | The quorum is a strict majority of the CONFIGURED nodes, stored in the state (`set_nodes`). `confirm_state(reports)` has no quorum argument, counts a configured node once per height, ignores unconfigured ids, returns the dissenters by node and height and is not blocked by them; `listing_refuted` when more nodes contradict the wallet than a lying minority can be. Fewer than two configured nodes confirm nothing. "Drop a node" is deleted from `NOTES.md` | `store.rs` `set_nodes`, `quorum`, `confirm_state`, `ConfirmReport`, `Dissent` | `625a08b` | `rw3_f1_…`, `rw3_f1b_…`, `rw3_f8_…`; `rw1_f1_…`, `rw2_f4_…` rewritten; property test |
+| RW3-8 (Low) | Node ids are canonical http(s) origins (`canonical_node_id`): scheme and host lower-cased, default port, path, query, fragment, trailing slash and one trailing dot removed, duplicates collapsed; anything else is refused by `set_nodes` and not counted by `confirm_state`. A stored set that is not canonical is refused by `from_json` | `store.rs` `canonical_node_id` | `625a08b` | `rw3_f8_…` (12 accepted spellings, 20 refusals) |
+| RW3-7 (High) | The anchor and the height the expiry is measured from come from the confirmed checkpoint: `spend_base` → `(tree root, confirmed height)`; the builders take no height from the caller; an anchor above the confirmed height is refused unless `allow_unverified`, and then the expiry is still measured from the confirmed height. `mark_pending` refuses an expiry above the confirmed height + 128 and a state without a confirmed height. `scan` still accepts a node's tip claim — nothing depends on it any more | `store.rs` `spend_base`, `mark_pending`; `tx.rs` `spend_inputs` | `625a08b` | `rw3_f7_…`, `rw3_f7b_…`, **`rw3_f7c_…` (the bound G3: 4 fates × 4 minority behaviours)**; property test (expiry ≤ TRUE height at the build + 128; the client's loop ends) |
+| RW3-5 (Medium) | `build_transfer(state, expected_revision, keys, params)` / `build_unshield(…)` → `LockedTx { tx, state }`: the transaction and the state in which its inputs are locked and its entry recorded (outputs, nullifiers, own outputs with `r`, expiry), the record written BEFORE the proof is made. No exported function returns a proven spend without it; the wasm `mark_pending` is removed. `abandon_unsubmitted(nullifier)` sets `abandoned_hint` and releases nothing | `tx.rs` `build_transfer`, `build_unshield`, `LockedTx`, `SpendOptions`; `api.rs` | `625a08b`, `19e19da` | `rw3_f5_…` (wallet and wasm), `wallet_flow`, daemon interop |
+| RW3-2 (Medium) (a) | Own outputs never depend on a ciphertext: the pending record holds `(cm, value, r)` of the change and of a payment to the wallet's own address; when the scan meets the commitment it recomputes it from the record and stores the note, with its position, path and nullifier | `store.rs` `scan` (`own_outputs`), `PendingChange.r`, `PendingTx.own_payment`; `tx.rs` `pending_of` | `625a08b` | `rw3_f2_…` |
+| RW3-2 (Medium) (b) | The node keeps a node-local running hash over `(cm_out, kem_ct, note_ct)` of every accepted output and reports it as `report.ciphertext_acc`; the wallet rebuilds it from the listing with per-height checkpoints; `confirm_state` requires it. A listing with blanked or swapped ciphertexts cannot be confirmed | `storage/src/shield_v2_store.rs` (side record), `daemon/src/shield_v2.rs` (`ciphertext_acc_step`, `DaemonPoolStore`), `daemon/src/node.rs`; `store.rs` `ciphertext_acc_step` | `dec53b4`, `625a08b` | `rw3_f2b_…`; daemon `rw3_f2_the_ciphertext_hash_is_node_local_…`; interop (`sync` compares the two implementations) |
+| RW3-4 (Medium) | The cap applies to unspent notes received from others, is a parameter (`with_limits`, `fresh_for_rescan_with`, wasm `new_state` / `rescan_state`; default 65,536, at most 1,048,576), and `over_capacity` is recovered by a rescan with a higher cap. A scan keeps at most 4,096 spent notes (`MAX_SPENT_RETAINED`) and drops the rest into `pruned` at the end of each page | `store.rs` `scan`, `drop_old_spent`, `validate` | `625a08b` | `rw3_f4_…` (65,538 notes: 2 unspent stored, at most 8,194 held at the end of any page), `rw3_f4b_…` |
+| RW3-3 (Low) | Own outputs are stored whatever their size: those the pending record opens, and — so that a restore finds them — any output for this wallet in a transaction that spends one of this wallet's notes. `select_inputs` prefers a clean change (zero, or ≥ the minimum): smallest single note with one, else smallest pair with one, else the plain rule with `change_below_minimum: true` | `store.rs` `scan`; `select.rs` | `625a08b` | `rw3_f3_…` |
+| RW3-6 (Low) | `report` is the record of the last ACCEPTED block, written after `append_block` (import and producer path) and at start-up; `shield_v2_stats` serves it instead of the pool record | `daemon/src/node.rs` `shield_v2_mark_accepted`, `shield_v2_stats`; `AcceptedReport` | `dec53b4` | daemon `rw3_f6_…` (passes) |
+| RW3-9 (Info) | The property test is rewritten around an independent model | `tests/settlement_properties.rs` | `f4a6942`, `ea989b6` | mutation table below |
+| RW3-10 (Info) | Documented: locks are per device; what the UI must tell the user and the 128-block embargo after a restore. The property test's client follows that rule and the test asserts that it is sufficient | spec §5.5 (W-17), `NOTES.md` §6 item 7 | this commit | `rw3_demo_a_restored_device_…` (the limit); property test (`end_embargo`) |
+
+**Found by the new property test, not by the review.** A listing node can append a "block" above
+every honest tip in which a note of the wallet is spent (for instance the wallet's own withheld
+transaction, listed as mined 400 blocks in the future). Nobody reports that height, so nothing
+contradicts it, everything up to the real tip matches, and the note is out of every balance until
+the chain gets there. `confirm_state` now returns `quorum_tip` (the quorum-th highest height the
+configured nodes claim) and `listing_ahead`; the client asks again and, if it stays, rescans
+against another node (`rw3_f7d_…`; spec §5.4).
+
+### The quorum rule, as implemented
+
+`n` = the number of CONFIGURED nodes (in the state). `quorum = max(2, ⌊n/2⌋ + 1)`: 1→2 (never
+reached), 2→2, 3→2, 4→3, 5→3, 6→4, 7→4. A height `h` is confirmed **iff** at least `quorum`
+configured nodes each made exactly one report for `h` and it equals the wallet's
+`(tree_root, nullifier_acc, ciphertext_acc, note_count, nullifier_count)` at `h`. The confirmed
+height is the highest such `h` ever. Reports under unconfigured ids are not counted; a node with
+two different reports for `h` dissents at `h`; dissent never blocks; the threshold never depends
+on the reports supplied; `set_nodes` is the only call that changes it and it un-confirms nothing.
+
+### The expiry rule, as implemented
+
+`MAX_EXPIRY_OFFSET = 128`, `DEFAULT_EXPIRY_OFFSET = 64`. For a transfer or an unshield with
+confirmed height `C`: `C < expiry_height ≤ C + 128`, default `C + 64`; no confirmed height ⇒ no
+build. The node accepts a transaction in block `H` while `expiry_height ≥ H`
+(`daemon/src/shield_v2.rs`, check 7), so the last block that can hold it is `expiry_height`.
+`resolve` settles an entry at the latest when `C ≥ expiry_height`. Since `C` at the build is a
+height the chain has reached, an entry is settled no later than 128 blocks after its build plus
+the time to get that height confirmed.
+
+### The API for build-and-lock
+
+```rust
+// quantum-vault-shield-v2-wallet
+pub struct SpendOptions<'a> { pub chain_id: &'a str, pub inputs: &'a [u64], pub expiry_height: Option<u64>,
+                              pub allow_unverified: bool, pub max_fee: Option<u64> }
+pub struct TransferParams<'a> { pub spend: SpendOptions<'a>, pub recipient: &'a ShieldedAddress, pub amount: u64, pub fee: u64 }
+pub struct UnshieldParams<'a> { pub spend: SpendOptions<'a>, pub to_account: [u8; 32], pub v_out: u64, pub fee: u64 }
+pub struct LockedTx { pub tx: BuiltTx, pub state: WalletState }
+pub fn build_transfer(state: &WalletState, expected_revision: u64, keys: &ShieldedKeys, p: &TransferParams) -> Result<LockedTx, WalletError>;
+pub fn build_unshield(state: &WalletState, expected_revision: u64, keys: &ShieldedKeys, p: &UnshieldParams) -> Result<LockedTx, WalletError>;
+impl WalletState { pub fn abandon_unsubmitted(&mut self, nullifier: &[u8; 32]) -> bool; }  // a hint; releases nothing
+```
+
+wasm: `build_transfer(seed, state_json, params_json, expected_revision)` and `build_unshield(…)`
+return `{ state, revision, envelope_json, … }`; `abandon_unsubmitted(state_json, nullifier_hex,
+expected_revision)`; `set_nodes(state_json, nodes_json, expected_revision)`;
+`confirm_state(state_json, reports_json, expected_revision)`. Removed: `mark_pending`,
+`confirm_roots`. **The client rule: persist the returned state, then submit.**
+
+### The node-local field, and why it is outside consensus
+
+`ShieldV2Store` gained two keys in its sled tree: `"x"`, the side record (the ciphertext hash and
+the leaf count it covers), and `"r"`, the report of the last accepted block. Neither is in the
+metadata record `"m"` (`encode_stored_pool`), which is the only thing the state-root section of
+spec §4.8 reads (`PoolState::state_root_section`, unchanged; `core/shield-v2` is not touched by
+this branch). The side record is written in the same `apply_batch` as the pool record, captured
+by `snapshot` and put back by `restore`, removed by `clear`, and rebuilt at start-up from the
+stored blocks if a store has leaves and no valid record.
+
+Proof by test (`node::shield_v2_daemon_tests::rw3_f2_the_ciphertext_hash_is_node_local_outside_the_state_root_and_rolled_back`):
+node y has its side record overwritten with garbage; the state root of y is unchanged and equal
+to node x's; both import three more V2 blocks and an empty one; after each, block hash, state
+root, pool record bytes and both counters are identical on x and y, while x reports the hash and y
+reports `null`; a speculative apply followed by a restore leaves side record and accepted record
+byte for byte as before; `shield_v2_rebuild_ciphertext_acc` gives y the value x has.
+`state_root_is_byte_identical_before_activation` and `node::strict_historical_replay_tests`
+(the mainnet fixture) pass unchanged.
+
+### The mutation table against the new property test
+
+Each mutation applied to `store.rs` (R5: `tx.rs`) alone, then
+`cargo test -p quantum-vault-shield-v2-wallet --features test-vectors … --test settlement_properties`,
+then reverted. **26 of 26 are caught by the property test alone**, each by an invariant (the
+message of the failing assertion is given).
+
+| # | Mutation | Caught by |
+|---|---|---|
+| M1 | `resolve` settles at the scanned height | "settled as expired while the true chain can still mine it" (seed 5) |
+| M2 | a report is compared by root and note count only | "the state confirmed at height 5 is not the chain's" (seed 1) |
+| M4 | "a conflict no longer blocks" | *this is now the specified behaviour (RW3-1); its inverse is R1 below* |
+| M4b | as M4, flag dropped | *not applicable: `diverged` no longer gates anything* |
+| M5 | `fresh_for_rescan` keeps `seen_*` | "to_json writes what from_json reads" (the state is invalid) |
+| M6 | any nullifier match marks ALL inputs spent | "the confirmed balance is not the true balance at the tip" (seed 21) |
+| M7 | `mined` ignores the outputs (nullifier pair only) | "the listing showed the wallet's own transaction and its change is not stored" (seed 41) — *was a miss* |
+| M8 | `expired` one block early | "settled as expired while the true chain can still mine it (height 69, expiry 70)" (seed 3) |
+| M9 | the quorum is 2 whatever the configured set | "the state confirmed at height 1143 is not the chain's" (seed 1) — *was a miss* |
+| M9b | the quorum is a majority of the reports supplied (the RW3-1 demo) | "the state confirmed at height 1698 is not the chain's" (seed 3) |
+| M10 | every note confirmed on any match | "confirmed balance 73500000000 exceeds the true balance 25266877027" (seed 33) |
+| M11 | the match height is the scanned height | "a height was confirmed that the true chain has not reached" (seed 1) |
+| M12 | `expired` tested before `mined` | "a MINED transaction was settled as expired" (seed 1) |
+| M13 | agreeing reports counted, not distinct nodes | "the state confirmed at height 1143 is not the chain's" (seed 1) |
+| M21 | the recipient check does not compare the commitment | "confirmed balance 1031000000000 exceeds the true balance 32439750832" (seed 1) — *was a miss* |
+| M25 | a migrated lock expires at the old scanned height (no + 128) | "settled as expired while the true chain can still mine it" (seed 1) |
+| R1 (RW3-1) | a dissenting node blocks the call — *M4 was the miss that hid this* | "not settled after 18 rounds with an honest majority reachable" (seed 3) |
+| R7 (RW3-7) | the expiry is measured from the scanned height | "expiry 890 is more than 128 blocks above the true height 588" (seed 5) |
+| R2 (RW3-2) | the ciphertext hash is not compared | "the state confirmed at height 2212 is not the chain's" (seed 1) |
+| R4 (RW3-4) | the cap counts stored notes, spent ones included | "notes counted as over capacity although the wallet never held 14 unspent notes (peak 8)" (seed 4) |
+| R2a | the change is not taken from the pending record | "the listing showed the wallet's own transaction and its change is not stored" (seed 22) |
+| R3 | own outputs below the minimum are not stored | "the confirmed balance is not the true balance at the tip" (seed 9) |
+| R5 | the builder returns the state without the lock | "locked.is_locked(p) …" (first payment) |
+| R8 | a report under an unconfigured id counts | "a height was confirmed that the true chain has not reached" (seed 1) |
+| R9 | `listing_ahead` is never set | "the wallet's balance IS the true balance" (seed 3) |
+| R10 | `listing_refuted` is never set | "not settled after 18 rounds with an honest majority reachable" (seed 1) |
+| R11 | locks are held by leaf position, not by commitment | "a note a pending transaction spends is not locked (at leaf 19)" (seed 7) |
+| R12 | `abandon_unsubmitted` releases the lock | "s.abandon_unsubmitted(…) && s.is_locked(…)" |
+
+The first version of the new test (`f4a6942`) missed M8, M9b and R2a and caught R11 only
+through a coverage threshold; `ea989b6` added what was missing from the model (honest nodes that
+do not answer and a client that hands in only agreeing reports; a release in the very last valid
+block; blanked ciphertexts of the wallet's own outputs; leaves shifted by a forged transaction in
+front of a rescan, with a lock invariant taken from the oracle's books).
+
+What the test's model is, so that its own blind spots can be judged: the oracle (`RefChain`)
+keeps its own nullifier set, hashes (SHA-256 with the tags written out in the test), anchor
+window and expiry rule, reads bodies at the byte offsets of spec §3.2, and enters every note in
+its books from what the MAKER of the transaction knows — never by scanning or decrypting. It is
+cross-checked against the stage-1 `Pool` after every block. It shares with the code under test:
+the Poseidon tree hash and the nullifier / `rho` derivations of `quantum_vault_shield_v2::reference`
+(the chain's primitives), and the wallet's own assembly to MAKE transactions (bodies are then
+read independently). One transaction per block; no reorganisations; proofs are not made.
+
+### Commands run
+
+Each as `systemd-run --user --scope -q -p MemoryMax=2500M -p MemorySwapMax=0 -p CPUWeight=10 nice
+-n 19 cargo … --release --locked --offline -j 1`, one at a time, after checking that no `cargo`
+or `rustc` process was running. (The tool that ran them moves a command to the background after
+ten minutes; the two that took longer — the first release build of the daemon and the
+`test-prover` suite — were waited for before any other `cargo` command was started.)
+
+| Command | Result |
+|---|---|
+| `cargo test -p quantum-vault-shield-v2-wallet --features test-vectors -p quantum-vault-shield-v2-wasm --no-fail-fast -- --test-threads=1` | **83 passed, 0 failed, 0 ignored**: wallet 76 (unit 21, `review_wallet_1` 14, `review_wallet_2` 14, `review_wallet_3` 17, `settlement_properties` 1, `vectors` 3, `wallet_flow` 6), wasm 7 (`api` 2, `review_wallet_1` 4, `review_wallet_3` 1) |
+| the property test alone, once per mutation (26 runs on the final test) | table above |
+| `cargo build -p quantum-vault-shield-v2-wasm --target wasm32-unknown-unknown` | succeeds, no warnings; 2,620,985 bytes |
+| `cargo test -p quantum-vault-shield-v2 --features test-prover -- --test-threads=1` | 71 passed, 0 failed, 1 ignored (`prover::measure_proving_time`, a measurement that was ignored before; this crate is not changed by the branch): unit 6, `forgery` 10, `negative` 17, `pool` 17, `prover` 4, `review2_wrapper` 5, `review_node_1` 3, `review_verifier` 3, `vectors` 6 |
+| `cargo test -p quantum-vault-shield-v2 -- --test-threads=1` | 35 passed, 0 failed, 0 ignored: unit 2, `pool` 17, `review2_wrapper` 5, `review_node_1` 3, `review_verifier` 3, `vectors` 5 |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_daemon_tests --test-threads=1` | 11 passed (10 before + `rw3_f2_…`; `rw3_f6_…` passes), 287 filtered out |
+| `… -- node::shield_v2_wallet_interop_tests --test-threads=1` | 4 passed |
+| `… -- node::shield_v2_review_node_1_tests --test-threads=1` | 5 passed |
+| `… -- shield_v2::tests --test-threads=1` | 6 passed |
+| `… -- node::strict_historical_replay_tests --test-threads=1` | 3 passed |
+| `cargo test -p quantum-vault-storage` | 19 passed |
+| `cargo build -p quantum-vault-daemon` | succeeds |
+| `cargo tree -p quantum-vault-daemon -e normal,build,features -i quantum-vault-shield-v2` | `quantum-vault-shield-v2 feature "default"` only; the normal and build graph of the daemon contains neither the wallet nor the wasm crate |
+| `NOBLE_ROOT=… node core/shield-v2-wallet/tests/noble_crosscheck.mjs` | 53 of 53 checks passed (read-only) |
+
+`core/target/` was deleted afterwards.
+
+### What remains trust in nodes
+
+* A MAJORITY of the configured nodes lying together — or one operator behind most of them — is
+  believed in everything: forged notes are confirmed and spendable (G2), a live transaction is
+  settled as `expired` and the retry pays twice (G1), a mined one is hidden. No proof against the
+  chain exists; that needs header commitments and a light client.
+* Who the configured nodes are is the configuring party's decision. The core cannot tell two
+  names of one machine apart; canonicalisation collapses spellings, not operators.
+* `ciphertext_acc` is a statement of each node about its own store, not consensus data: an honest
+  node whose side record is missing reports `null` (and then does not count), and nothing but the
+  quorum stands behind the value.
+* An honest node's report is trusted to describe a block it accepted. A proposer that equivocates
+  can make honest nodes accept different blocks at one height; that is a consensus failure.
+* A reorganisation below the confirmed height is not handled (the confirmed height never goes
+  back).
+* Locks are per device (RW3-10): the embargo after a restore is the UI's to enforce.
+
+### Not done
+
+* **A wallet with one configured node does not work**: nothing is confirmed, so nothing is
+  spendable by default and no transfer or unshield can be built — as the task specified ("a
+  single-node wallet shows everything as unverified"), but it also removes the former "my own
+  node, quorum 1" mode, and with it the single-node development setup. Whether a deliberate,
+  loudly named single-node mode should exist is a product decision that was not taken here.
+* The client loop (ask every node, rotate the listing node, rescan on `listing_refuted` /
+  persistent `listing_ahead`, the embargo after a restore) exists as documentation and as the
+  property test's client; no client code was written, and no part of the core makes a request.
+* `listing_ahead` cannot distinguish an honest listing node that is a block ahead from one that
+  invented a block; the core returns the signal and the client decides after asking again.
+* A format-3 state built after a lying page keeps its long expiry (stated in `from_json`):
+  shortening it would release a lock on a transaction that is still valid.
+* The side record of an already running node is rebuilt at start-up from its stored blocks; this
+  path is tested through `shield_v2_rebuild_ciphertext_acc` in the daemon test, not by restarting
+  a node on an old data directory. No node was started, stopped or touched.
+* `MAX_SPENT_RETAINED` (4,096) is exercised by `rw3_f4_…` only; the property test's histories are
+  far shorter.
+* The JavaScript / TypeScript bindings were not generated (`wasm-bindgen-cli` is not installed);
+  nothing was run as WebAssembly. GitHub Actions was not run.
+* The viewing-key-only path (`nk = None`) with pending transactions is still only read, as in the
+  review; own outputs of a restore are recognised only with `nk`.

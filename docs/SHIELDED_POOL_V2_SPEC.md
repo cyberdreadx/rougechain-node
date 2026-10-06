@@ -56,6 +56,26 @@ only `expiry_height` does (§4.3 item 8 is annotated, §5.5 says it). Wallet rul
 answer only: no constant, tag, encoding or parameter of §2 changed, no body or ciphertext format
 of §3, and no consensus rule.
 
+*Amended 2026-10-06 after the third wallet core review
+(`core/shield-v2-wallet/REVIEW_WALLET_3.md`, findings RW3-1 … RW3-10; its guarantees G1–G4 are
+restated in §5.5):* (W-16) §5.4 — **the quorum is a strict majority of the nodes the wallet is
+CONFIGURED with**, a property of the wallet state and never of the reports at hand; node
+identities are canonical http(s) origins; a dissenting minority is named and does not block, and
+a listing that most nodes contradict, or that runs ahead of the quorum, is to be replaced
+(RW3-1, RW3-8); the state check gains a third value, **`ciphertext_acc`**, a running hash over
+every output's commitment and two ciphertexts that each node keeps **node-locally, outside the
+pool state of §4.8 and outside the state root**, so that a quorum vouches for the ciphertexts a
+listing served (RW3-2); the report is the record of the last *accepted* block (RW3-6); the cap on
+stored notes counts unspent notes only and is a parameter (RW3-4); a wallet's own outputs are
+stored whatever their size and never depend on a ciphertext (RW3-2, RW3-3); (W-17) §5.5 — **the
+anchor and the expiry of a transfer or unshield are taken from the wallet's confirmed height,
+never from a height one node claimed** (`expiry_height ≤ confirmed height + 128`), which makes
+settlement bounded (RW3-7); **building and locking are one operation** (RW3-5); locks are per
+device, and what a restored device must do (RW3-10). Wallet rules, one node-local value and one
+node API answer only: no constant, tag, encoding or parameter of §2 changed, no body or
+ciphertext format of §3, no consensus rule, and **the state root of §4.8 is byte-for-byte what
+it was**.
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -1085,58 +1105,98 @@ the true one.
 
 **The state check.** The pool state of §4.8 has two halves, and a listing carries both: the
 commitments (`cm_out1`, `cm_out2` of every transaction, in order) and the nullifiers (`nf1`, `nf2`
-of every transaction, in order). A wallet MUST rebuild both from the listing it scans:
+of every transaction, in order). It also carries something the pool state does not commit: the
+two ciphertexts of every output. A wallet MUST rebuild all three from the listing it scans:
 
-* the commitment tree — the frontier, `note_count` and `tree_root` of §4.3; and
+* the commitment tree — the frontier, `note_count` and `tree_root` of §4.3;
 * the running nullifier hash — `nullifier_acc` and `nullifier_count` exactly as §4.5 step 1
   defines them: starting from 32 zero bytes at A, `acc ← SHA-256(tag ‖ acc ‖ nf)` for `nf1` and
-  then `nf2` of every listed transaction in listing order;
+  then `nf2` of every listed transaction in listing order; and
+* *(W-16, RW3-2.)* the running **ciphertext hash** `ciphertext_acc`: starting from 32 zero bytes
+  at A, for every output in tree order,
+  `acc ← SHA-256("rougechain.shield_v2.ciphertext_acc.node_local.v1" ‖ acc ‖ cm_out_j ‖ kem_ct_j ‖ note_ct_j)`
+  (32 + 32 + 1,088 + 56 bytes after the tag);
 
-and MUST keep, for the heights it may be asked about, the four values
-`(tree_root, nullifier_acc, note_count, nullifier_count)` after the block at that height.
+and MUST keep, for the heights it may be asked about, the five values
+`(tree_root, nullifier_acc, ciphertext_acc, note_count, nullifier_count)` after the block at that
+height.
 
-A **report** is one node's statement of those four values for one height. The node's
+*(W-16, RW3-2.)* **`ciphertext_acc` is node-local and not consensus.** The ciphertexts are in
+neither half of §4.8: a listing node could blank or swap them and a wallet whose root and
+nullifier hash a quorum had confirmed would never learn that a note was hidden from it. So every
+node keeps the hash above **beside** its pool record — not in it, not in the state-root section
+of §4.8, not in any block — updated in the same atomic write as the pool record, rolled back
+with it when a block is rejected, and rebuilt by a re-import (or, once, from the stored blocks
+by a node that was upgraded). Two nodes that disagreed on it would still agree on every block:
+it is derived from data consensus already fixed (`cm_out` is in the tree; the ciphertexts are in
+the body, and the body is bound by the proof). A node that cannot vouch for it reports `null`,
+and its report then counts for nothing.
+
+A **report** is one node's statement of those five values for one height. The node's
 `GET /api/shield-v2/stats` returns it as `report: { height, tree_root, nullifier_acc, note_count,
-nullifier_count }`, all five from ONE read of its pool record; `height` is that record's own
-height (the last block whose effects it holds), never a chain tip read separately. *(API only;
-RW2-6.)* The wallet labels each report with the identity of the node it asked.
+nullifier_count, ciphertext_acc }`, as ONE record that the node writes when it has **accepted**
+the block at `height` — stored on its chain — and never while it is still applying a block that
+may be rejected. *(API only; RW2-6, RW3-6.)* The wallet labels each report with the identity of
+the node it asked.
 
-* A height is **confirmed** when at least a quorum of *distinct* nodes reported, for that height,
-  exactly the wallet's four values. The default quorum is 2, and the quorum MUST NOT be less
-  than a strict majority of the distinct nodes whose reports the wallet is comparing: with four
-  nodes asked, three. With one node and the default quorum nothing is confirmed.
-* **A conflict confirms nothing.** If any report for a height the wallet can compare differs from
-  the wallet's values, or one node made two different reports for one height, the wallet MUST NOT
-  confirm anything on that set of reports and MUST tell the caller (*diverged*). The caller
-  resolves the conflict: it decides which nodes to ask again and, if it is its own listing that
-  disagrees with the others, rebuilds from an empty state against another node.
-* **Distinct means distinct to the caller.** A node's identity is the endpoint the user or the
-  application configured. It MUST NOT be a name, key or address that the node returned about
-  itself: one operator would then be as many nodes as it cared to name. Which nodes are asked,
-  and that they are in fact independent, is the caller's choice and the caller's risk.
+*(W-16, RW3-1, RW3-8.)* **The configured set.** A wallet state MUST contain the set of nodes the
+wallet is configured with, and the quorum is a property of that set:
+
+* **A node's identity is the endpoint the user or the application configured**, in canonical
+  form: an http(s) origin `scheme://host[:port]` with scheme and host in lower case, the default
+  port removed, and no path, query, fragment or trailing slash. Two spellings of one endpoint are
+  one node; a wallet MUST refuse an identity that is not an http(s) origin. It MUST NOT be a
+  name, key or address that the node returned about itself: one operator would then be as many
+  nodes as it cared to name. That the configured nodes are in fact independent operators is the
+  configuring party's choice and risk.
+* **The quorum is a strict majority of the configured set**, `⌊n/2⌋ + 1`, and at least 2. A
+  height is **confirmed** iff that many configured nodes reported, for that height, exactly the
+  wallet's five values. A node counts at most once per height; a node that made two different
+  reports for one height does not count there; a report from a node that is not configured does
+  not count at all.
+* **The threshold MUST NOT depend on the reports at hand.** Asking fewer nodes, or leaving out a
+  node that disagrees, can only make a confirmation harder. Changing the configured set is an
+  explicit act of the user or application; it does not un-confirm what was confirmed and applies
+  to every later confirmation.
+* **With fewer than two configured nodes nothing is confirmed.** A single-node wallet shows
+  every note as unverified and builds no transfer or unshield (§5.5). A merchant-facing
+  integration — anything that releases goods or credits an account on an incoming shielded
+  payment — MUST be configured with nodes it has reason to trust, its own among them.
+* **A dissenting minority does not block.** Within the trust model — a strict minority of the
+  configured nodes lies arbitrarily — a strict majority contains an honest node, and an honest
+  node's report is the chain's state at its height; the wallet's state there is the chain's
+  whatever the others say. A wallet MUST return which configured nodes contradicted it, by node
+  and height, so that an interface can say "node X disagrees".
+* **When the listing is what is wrong.** If at one height more configured nodes contradict the
+  wallet than a lying minority can be (more than `n − quorum`), at least one honest node says
+  that the wallet's listing is not the chain: the wallet MUST say so (*listing refuted*) and the
+  client rebuilds from an empty state against **another** node. The same when the listing shows
+  pool transactions in blocks above the height a quorum has reached — the quorum-th highest
+  height the configured nodes claim — and keeps doing so when the nodes are asked again
+  (*listing ahead*): nobody can contradict a block nobody has, and a listing node that invented
+  one in which a note of the wallet is "spent" would otherwise keep that note out of every
+  balance until the chain got there.
 * A wallet MUST keep a confirmation status per note. A note is **unverified** when it is found
   and **confirmed** when its height is at or below a confirmed height.
 * A wallet MUST report confirmed and unverified balances separately, MUST NOT spend an unverified
   note — neither select it nor accept it as an input of a transaction it builds — unless the
   caller explicitly asks for it, and **MUST NOT present an incoming shielded payment as final on
   one node's word**: the user interface shows it as unconfirmed until its height is confirmed.
-* A merchant-facing integration — anything that releases goods or credits an account on an
-  incoming shielded payment — MUST use its own node, and says so by asking that node alone with
-  the quorum set to 1.
 
 Why matching values are evidence: the root commits every output commitment up to that height in
-order, the running hash commits every nullifier up to that height in order, and by §4.3 item 3
-the k-th transaction is entries `2k` and `2k + 1` of each. If both are the nodes', every
-transaction the wallet read up to that height — which nullifiers with which outputs — is one
-those nodes hold, and there is no other. A listing with an invented, hidden, reordered or altered
-transaction gives another root or another hash. **The confirmed balance is therefore exact as of
+order, the running hash commits every nullifier up to that height in order, the ciphertext hash
+commits the two ciphertexts of every output, and by §4.3 item 3 the k-th transaction is entries
+`2k` and `2k + 1` of each. If all are the nodes', every transaction the wallet read up to that
+height — which nullifiers with which outputs and which ciphertexts — is one those nodes hold,
+and there is no other. A listing with an invented, hidden, reordered or altered transaction, or
+with a blanked or swapped ciphertext, gives another root or another hash. **The confirmed balance is therefore exact as of
 the confirmed height, and only as of it**: a spend above that height that the wallet's listing
 hides is not known to the wallet until a later height is confirmed — or cannot be.
 
 This is not a new weakness of the shielded pool and the quorum is not a proof: it is the word of
-the nodes asked instead of the word of one — **the same trust a wallet places in a node today for
-ordinary account balances**, which are also shown "as reported by the node". A majority of the
-nodes a wallet asks, lying together, is believed. Proofs against a header-committed pool state
+a majority of the configured nodes instead of the word of one — **the same trust a wallet places
+in a node today for ordinary account balances**, which are also shown "as reported by the node".
+A majority of the nodes a wallet is configured with, lying together, is believed. Proofs against a header-committed pool state
 (so that a wallet needs no node's word at all) come with the consensus and light-client work,
 which is outside this specification.
 
@@ -1157,8 +1217,23 @@ notes. A wallet SHOULD NOT store an incoming note whose value is below a minimum
 spent alone — and SHOULD count such notes instead, so that the user can be told. Such a note is
 in no balance; a wallet that later wants it rescans with a lower minimum. A wallet SHOULD bound
 what it stores per note (paths of neighbouring notes share their upper nodes) and SHOULD drop
-spent notes whose spend is long confirmed. A wallet's change below the minimum is such a note
-too: an interface SHOULD warn before it builds a payment whose change would be.
+spent notes whose spend is long confirmed.
+
+*(W-16, RW3-3, RW3-4.)* **What the dust rule and the cap do not apply to.**
+
+* **A wallet's own outputs.** A note the wallet created itself — the change of its own
+  transaction, a payment to its own address — MUST be stored whatever its size. The wallet knows
+  them two ways: from its pending record (below, §5.5), and, on a restore, because the
+  transaction that created them spends one of the wallet's notes, which only the wallet's key can
+  do. Coin selection SHOULD avoid a change above zero and below the minimum where a selection
+  without one exists, and SHOULD say so where none does.
+* **Spent notes.** A bound on the number of stored notes MUST count unspent notes only, and a
+  scan over a long history MUST end with every unspent note stored: a wallet keeps a bounded
+  number of spent notes for display and drops the rest as it scans. The bound is a parameter of
+  the state (default 65,536); notes that arrive while that many unspent notes are held are
+  counted, not stored, and a rescan with a higher bound recovers them. Filling the default bound
+  with notes of the default minimum value costs a sender 32,768 fees and 65,536 XRGE handed to
+  the victim.
 
 **The wallet stores**, for every note it owns: `value`, `rho`, `r`, the leaf position, `cm`, the
 transaction that created it, and whether its nullifier `H(3; nk ‖ rho)` has appeared on chain. It
@@ -1188,12 +1263,21 @@ through conforming ciphertexts.
 
 ### 5.5 Building a transaction
 
-* The wallet chooses an `anchor` from the anchor window and SHOULD use the most recent root it
-  has. *(W-11, W-15.)* `expiry_height` MUST be above the height the anchor belongs to and at most
-  128 blocks above it; a wallet SHOULD use exactly **anchor height + 64** (§5.8). **This bound is
-  the only thing that limits how long a transaction can be mined** — the anchor window does not
-  (§4.3 item 8) — and it is what lets a wallet release the inputs of a transaction that was never
-  mined in bounded time (below).
+* The wallet chooses an `anchor` from the anchor window. *(W-11, W-15, rewritten W-17.)* **For a
+  transfer or an unshield the anchor MUST be the wallet's tree root at its confirmed height C
+  (§5.4), and `expiry_height` MUST be above C and at most C + 128**; a wallet SHOULD use exactly
+  **C + 64** (§5.8). Neither is taken from the caller, from the height the scan has reached or
+  from anything else one node said: the scanned height is the listing node's claim, and a
+  transaction whose expiry was measured from it would stay minable — and its inputs locked — for
+  as long as that node cared to claim (RW3-7). A wallet without a confirmed height MUST NOT build
+  a transfer or an unshield. A wallet whose tree root is above its confirmed height (its listing
+  has shown outputs nobody has confirmed) MUST refuse too, unless the caller explicitly accepts
+  an unconfirmed root — and then the expiry is still measured from C. (A shield spends no note
+  and locks nothing; its `expiry_height` is at most 128 above the height the caller read.)
+  **`expiry_height` is the only thing that limits how long a transaction can be mined** — the
+  anchor window does not (§4.3 item 8) — and the node accepts a transaction in block H while
+  `expiry_height ≥ H` (§3.6 check 7), so the last block that can hold it is block
+  `expiry_height`.
 * It builds the body (§3.2), computes `binding = binding_from_bytes(body)`, and proves the
   statement of §2.7 for the public inputs taken from the body. The nullifiers must be fixed before
   the output commitments can be computed, because each output's `rho` is `H_rho(nf1, nf2, j − 1)`.
@@ -1222,10 +1306,21 @@ valid and the payee is paid twice. The rule that follows from it:
 
 *Recording.* Before a transaction leaves it, the wallet MUST record it in its persistent state:
 **both nullifiers and both output commitments** (`nf1`, `nf2`, `cm_out1`, `cm_out2` — together
-they identify the transaction in a listing), the notes it spends, the change it expects and its
-`expiry_height`. The notes it spends are **locked** from that moment: the wallet MUST NOT select
-them or hand them to a builder. A lock belongs to the note — its commitment — not to a leaf
-position.
+they identify the transaction in a listing), the notes it spends, its `expiry_height`, and
+*(W-17)* **every note the transaction creates for the wallet itself — its change, a payment to
+its own address — with value and `r`**, so that the wallet stores that note from its own record
+when the commitment appears, whatever a listing serves as its ciphertext (RW3-2). The notes it
+spends are **locked** from that moment: the wallet MUST NOT select them or hand them to a
+builder. A lock belongs to the note — its commitment — not to a leaf position.
+
+*(W-17, RW3-5.)* **Building and locking are one operation.** A wallet library MUST NOT offer a
+way to obtain a proven transfer or unshield without the state in which its inputs are locked and
+its record is written: the call that builds takes the state (and the revision the caller expects
+it to have) and returns the transaction **together with** the new state. The client's rule is
+one sentence: **persist the returned state, then submit.** A client that could not persist the
+state does not submit, and builds again. A client that is certain it never submitted MAY say so;
+that is a hint for the interface and releases nothing — the library cannot check it, and if it
+is wrong, releasing would be a double payment.
 
 *Settlement.* Let C be the highest confirmed height (§5.4). A pending transaction is settled, and
 its lock ended, in exactly three cases, each decided on the wallet's own data up to C:
@@ -1245,8 +1340,15 @@ its lock ended, in exactly three cases, each decided on the wallet's own data up
   input of the same pending transaction was spent. Two devices that hold the same recovery phrase
   share no storage and cannot share locks: each can spend a note the other has locked. That is
   the *superseded* case, and it loses nothing.
-* The expected change is credited like any other note — when the scan finds it and its height is
-  confirmed, which is when the transaction settles as mined — and not before.
+* The expected change is stored from the wallet's own record when its commitment appears in the
+  listing, and credited like any other note — when its height is confirmed, which is when the
+  transaction settles as mined — and not before.
+* *(W-17, RW3-7.)* **Settlement is bounded.** `expiry_height ≤ C_build + 128`, where `C_build`
+  is the confirmed height at the build, and a confirmed height is one the chain has reached. So
+  once the confirmed height reaches `expiry_height` — at most 128 blocks after the build — the
+  transaction is in exactly one of the three rows above, **whatever a lying minority served in
+  the meantime**; the minority can delay the confirmation, by the time it takes the client to
+  list from another node, and nothing else.
 * The comparison for *expired* is exact. The node refuses a transaction whose `expiry_height` is
   below the block's height (§3.6 check 7), so block `expiry_height` is the last that can hold it;
   C ≥ `expiry_height` means that block has been read and confirmed.
@@ -1259,6 +1361,29 @@ its lock ended, in exactly three cases, each decided on the wallet's own data up
 * Two writers of one stored state (two tabs, a page and a worker) MUST NOT overwrite each
   other's records: a lost record is a lost lock. A wallet state SHOULD carry a revision that
   changes with every write, checked when the state is stored.
+* *(W-17, RW3-10.)* **Locks are per device.** They live in the wallet state, and a second device
+  on the same recovery phrase, or the same device after a restore from the phrase, has none. If
+  such a device picks the notes a pending transaction of the other spends, one of the two
+  transactions is *superseded*: nothing is lost. If it picks OTHER notes for "the same" payment
+  while the first transaction is withheld, both are mined: no wallet library can prevent that,
+  because the second device does not know the first transaction exists. The user interface
+  MUST: (a) tell the user, after a restore and on first use of a phrase on a new device, that
+  payments made from another copy of the wallet in the last 128 blocks may still be in flight
+  and are not shown here; (b) **not offer a payment until a height at least 128 blocks above the
+  first height it confirmed after the restore is confirmed** — every transaction any earlier
+  copy built has then been mined or can never be — unless the user overrides knowingly; and
+  (c) never suggest "pay again" for a payment whose state it does not hold.
+
+*(W-17.)* **What these rules guarantee**, for a wallet whose configured nodes are honest in their
+strict majority, against any behaviour of the others, of senders and payees, with several
+devices and crashes at any point: **(G1)** the wallet's own behaviour never pays twice — a
+payment is retried only after the wallet has settled the previous attempt as *superseded* or
+*expired*, and those are true; **(G2)** the confirmed balance never exceeds the true balance at
+the confirmed height; **(G3)** nothing is locked or hidden from view for longer than it takes
+the confirmed height to advance 128 blocks past the build, while an honest majority is
+reachable; **(G4)** a lying or unreachable minority causes delay only. Outside that model — a
+majority of the configured nodes lying together, or one operator behind most of them —
+everything "confirmed" is theirs (§5.4).
 
 Why *mined* needs the outputs and not only a nullifier: a nullifier of the record appears whenever
 *any* transaction spends that note; and two transactions built from the same two notes have the
@@ -1784,4 +1909,5 @@ To be confirmed or changed by the owner before the first testnet activation.
 | `SHIELD_V2_POOL_CAP_QUANTA` on testnet | §4.4 | the same 10^15 as mainnet; the owner's decision names mainnet only |
 | State-root tag and layout | §4.8 | `rougechain.stateroot.shield_v2.v1`, running nullifier hash (O-12) |
 | Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, of `0x02 ‖ pk ‖ ek ‖ check`: 1,974 characters; `check` = first 8 bytes of SHA-256(`"rouge-shield/v2/address-check/v1"` ‖ `0x02` ‖ `pk` ‖ `ek`); fingerprint = first 8 bytes of SHA-256 of `pk ‖ ek` (O-11, W-4, W-9) |
-| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum 2 and never below a strict majority of the nodes asked; `expiry_height` = anchor height + 64, at most + 128; fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee (W-10, W-11, W-14, W-15) |
+| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-17) |
+| Node-local ciphertext hash (not consensus) | §5.4 | tag `rougechain.shield_v2.ciphertext_acc.node_local.v1`; SHA-256 over `acc ‖ cm_out ‖ kem_ct ‖ note_ct` per output in tree order, from 32 zero bytes; reported as `report.ciphertext_acc`; outside §4.8 (W-16) |
