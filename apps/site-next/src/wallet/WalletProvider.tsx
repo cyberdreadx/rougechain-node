@@ -32,7 +32,9 @@ import {
 import { generateMnemonic, keypairFromMnemonic, validateMnemonic } from "@rougechain/core/mnemonic";
 import { registerWalletOnNode } from "@rougechain/core/pqc-messenger";
 import { deriveMessagingKeypair, migrateToDerivedMessagingKeys, withDerivedMessagingKeys } from "@rougechain/core/messaging-keys";
-import { getRougeChainProvider, signViaExtension } from "@rougechain/core/extension-bridge";
+import { getRougeChainProvider, signMessageViaExtension, signViaExtension, type SignedMessage } from "@rougechain/core/extension-bridge";
+import { pubkeyToAddress } from "@rougechain/core/address";
+import { signMessage } from "@rougechain/core/message-signing";
 import { signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
 import { useChain } from "../explorer/chain";
 import {
@@ -390,6 +392,11 @@ export interface Signer {
   kind: "local" | "extension";
   publicKey: string;
   sign(payload: TransactionPayload): Promise<SignedTransaction>;
+  /**
+   * Sign a text message to prove control of the wallet (never a transaction — see
+   * @rougechain/core/message-signing). A provider wallet asks its user every time.
+   */
+  signMessage(message: string): Promise<SignedMessage>;
 }
 
 /**
@@ -403,9 +410,24 @@ export function useSigner(): Signer | null {
     const publicKey = wallet.signingPublicKey;
     if (wallet.signingPrivateKey) {
       const priv = wallet.signingPrivateKey;
-      return { kind: "local", publicKey, sign: async (p) => signTransaction(p, priv, publicKey) };
+      return {
+        kind: "local",
+        publicKey,
+        sign: async (p) => signTransaction(p, priv, publicKey),
+        signMessage: async (message) => ({
+          message,
+          signature: signMessage(priv, message),
+          publicKey,
+          address: await pubkeyToAddress(publicKey),
+        }),
+      };
     }
-    return { kind: "extension", publicKey, sign: (p) => signViaExtension(p, publicKey) };
+    return {
+      kind: "extension",
+      publicKey,
+      sign: (p) => signViaExtension(p, publicKey),
+      signMessage: (message) => signMessageViaExtension(message, publicKey),
+    };
   }, [wallet]);
 }
 

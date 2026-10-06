@@ -6,6 +6,7 @@ import { PROFILE_CHANGED_EVENT } from "@rougechain/core/avatar";
 import { deriveMessagingKeypair } from "@rougechain/core/messaging-keys";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { verifyTransaction, generateNonce } from "@rougechain/core/pqc-signer";
+import { signMessage as coreSignMessage, verifyMessage } from "@rougechain/core/message-signing";
 import {
   hasEncryptedWallet,
   isWalletLocked,
@@ -398,6 +399,63 @@ describe("provider state machine", () => {
     return signer!.sign({ type: "transfer", from: w.signingPublicKey, to: "x", amount: 1, fee: 0.1, token: "XRGE", timestamp: 1, nonce: generateNonce() }).then((tx) => {
       expect(verifyTransaction(tx)).toBe(true);
     });
+  });
+
+  it("signs a message locally: verifiable with verifyMessage, and not a transaction signature", async () => {
+    const w = seedAppsWebWallet();
+    mount();
+    expect(signer?.kind).toBe("local");
+    const signed = await signer!.signMessage("Prove I hold this wallet");
+    expect(signed).toEqual({
+      message: "Prove I hold this wallet",
+      signature: expect.stringMatching(/^[0-9a-f]{6618}$/),
+      publicKey: w.signingPublicKey,
+      address: await pubkeyToAddress(w.signingPublicKey),
+    });
+    expect(verifyMessage(w.signingPublicKey, "Prove I hold this wallet", signed.signature)).toBe(true);
+    expect(verifyMessage(w.signingPublicKey, "Prove I hold another wallet", signed.signature)).toBe(false);
+    // the same text signed as a transaction payload would be a different signature domain
+    const json = '{"amount":1,"type":"transfer"}';
+    const asMessage = await signer!.signMessage(json);
+    expect(verifyTransaction({ payload: JSON.parse(json), signature: asMessage.signature, public_key: w.signingPublicKey })).toBe(false);
+  });
+
+  it("signs a message through the provider wallet (extension / Qwalla) and checks what comes back", async () => {
+    const w = seedAppsWebWallet();
+    const other = seedAppsWebWallet();
+    resetBrowserState();
+    mockFetch();
+    const signMessage = vi.fn(async ({ message }: { message: string }) => ({
+      signature: coreSignMessage(w.signingPrivateKey, message),
+      publicKey: w.signingPublicKey,
+      address: await pubkeyToAddress(w.signingPublicKey),
+    }));
+    const provider: Record<string, unknown> = { isRougeChain: true, connect: async () => ({ publicKey: w.signingPublicKey }), signTransaction: vi.fn(), signMessage };
+    Object.defineProperty(window, "rougechain", { configurable: true, value: provider });
+    mount();
+    await act(() => ctx.connectExtension());
+    expect(signer?.kind).toBe("extension");
+
+    const signed = await signer!.signMessage("hello");
+    expect(signMessage).toHaveBeenCalledWith({ message: "hello" });
+    expect(provider.signTransaction).not.toHaveBeenCalled();
+    expect(signed).toMatchObject({ message: "hello", publicKey: w.signingPublicKey, address: await pubkeyToAddress(w.signingPublicKey) });
+    expect(verifyMessage(w.signingPublicKey, "hello", signed.signature)).toBe(true);
+
+    // a signature for another message, or by another account, is not handed to the caller
+    signMessage.mockImplementationOnce(async () => ({ signature: coreSignMessage(w.signingPrivateKey, "something else"), publicKey: w.signingPublicKey, address: "" }));
+    await expect(signer!.signMessage("hello")).rejects.toThrow("does not verify");
+    signMessage.mockImplementationOnce(async ({ message }) => ({ signature: coreSignMessage(other.signingPrivateKey, message), publicKey: other.signingPublicKey, address: "" }));
+    await expect(signer!.signMessage("hello")).rejects.toThrow("different account");
+    signMessage.mockImplementationOnce(async () => ({}) as never);
+    await expect(signer!.signMessage("hello")).rejects.toThrow("did not return a signature");
+    signMessage.mockImplementationOnce(async () => { throw new Error("User denied message signature request"); });
+    await expect(signer!.signMessage("hello")).rejects.toThrow("User denied");
+
+    // an older wallet without the method: a clear error, and signTransaction is never used instead
+    delete provider.signMessage;
+    await expect(signer!.signMessage("hello")).rejects.toThrow("does not support message signing");
+    expect(provider.signTransaction).not.toHaveBeenCalled();
   });
 
   it("auto-locks after the configured inactivity", async () => {
