@@ -598,17 +598,176 @@ pub fn decode_stored_pool(v: &[u8]) -> Result<StoredPool, String> {
     })
 }
 
+// ---- node-local: the running hash over the listed ciphertexts (REVIEW_WALLET_3 RW3-2) ----------
+//
+// NOT CONSENSUS. The pool state of spec §4.8 commits every output commitment (the tree root) and
+// every nullifier (`nullifier_acc`), and nothing about `kem_ct` / `note_ct`. A node that serves
+// `/api/shield-v2/notes` could therefore blank or swap ciphertexts and a wallet whose root and
+// nullifier hash a quorum confirmed would never notice the hidden note. So every node keeps, next
+// to the pool record and outside it, a running hash over `(cm_out, kem_ct, note_ct)` of every
+// accepted V2 output in tree order, and reports it. A wallet rebuilds the same hash from the
+// listing and has it confirmed by the same quorum as the root.
+//
+// It is derived data: rebuilt by a re-import, rolled back by the pool store's snapshot / restore,
+// and absent from `encode_stored_pool` — the only bytes the state-root section reads. Two nodes
+// that disagreed on it would still agree on every block.
+
+/// Domain tag of the node-local ciphertext hash. Not a constant of spec §2.
+pub const CIPHERTEXT_ACC_TAG: &[u8] = b"rougechain.shield_v2.ciphertext_acc.node_local.v1";
+
+/// `SHA-256(tag ‖ acc ‖ cm_out ‖ kem_ct ‖ note_ct)` — one output; the hash starts at 32 zero
+/// bytes and takes the outputs in tree order. The wallet core computes the same
+/// (`quantum_vault_shield_v2_wallet::store::ciphertext_acc_step`); the interop tests compare them.
+pub fn ciphertext_acc_step(acc: &Bytes32, cm_out: &Bytes32, kem_ct: &[u8], note_ct: &[u8]) -> Bytes32 {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(CIPHERTEXT_ACC_TAG);
+    h.update(acc);
+    h.update(cm_out);
+    h.update(kem_ct);
+    h.update(note_ct);
+    h.finalize().into()
+}
+
+/// The `(kem_ct, note_ct)` pairs of one V2 body in output order — what [`ciphertext_acc_step`]
+/// takes with the two `cm_out`. `None` if `body` is not 2,546 bytes.
+pub fn body_ciphertexts(body: &[u8]) -> Option<[(Vec<u8>, Vec<u8>); 2]> {
+    if body.len() != SHIELD_V2_BODY_BYTES {
+        return None;
+    }
+    Some([
+        (body[OFF_KEM1..OFF_KEM1 + KEM_CT_BYTES].to_vec(), body[OFF_NOTE1..OFF_NOTE1 + NOTE_CT_BYTES].to_vec()),
+        (body[OFF_KEM2..OFF_KEM2 + KEM_CT_BYTES].to_vec(), body[OFF_NOTE2..OFF_NOTE2 + NOTE_CT_BYTES].to_vec()),
+    ])
+}
+
+/// The side record of `ShieldV2Store`: the ciphertext hash and the leaf count it covers. It is
+/// valid only while that count is the store's leaf count (a commit that did not carry the
+/// ciphertexts leaves the record behind, and the node then reports no ciphertext hash rather
+/// than a wrong one).
+pub fn encode_side(acc: &Bytes32, leaf_count: u64) -> Vec<u8> {
+    let mut v = Vec::with_capacity(40);
+    v.extend_from_slice(acc);
+    v.extend_from_slice(&leaf_count.to_be_bytes());
+    v
+}
+
+pub fn decode_side(v: &[u8]) -> Option<(Bytes32, u64)> {
+    (v.len() == 40).then(|| (b32(&v[..32]), u64::from_be_bytes(v[32..].try_into().expect("8"))))
+}
+
+/// The ciphertext hash of the store's current leaves, if the node has it: zero for an empty tree,
+/// the side record's value when it covers exactly the stored leaves, `None` otherwise.
+pub fn current_ciphertext_acc(store: &ShieldV2Store) -> Result<Option<Bytes32>, String> {
+    let leaves = store.leaf_count()?;
+    Ok(match store.side()?.as_deref().and_then(decode_side) {
+        Some((acc, n)) if n == leaves => Some(acc),
+        _ if leaves == 0 => Some([0u8; 32]),
+        _ => None,
+    })
+}
+
+/// What `/api/shield-v2/stats` answers as `report`: the pool state after the block at `height`
+/// plus the node-local ciphertext hash, as ONE record written when that block was ACCEPTED
+/// (stored on this node's chain) — never during a speculative apply (REVIEW_WALLET_3 RW3-6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcceptedReport {
+    pub height: u64,
+    pub note_count: u64,
+    pub tree_root: Bytes32,
+    pub nullifier_count: u64,
+    pub nullifier_acc: Bytes32,
+    pub ciphertext_acc: Option<Bytes32>,
+}
+
+impl AcceptedReport {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut v = Vec::with_capacity(121);
+        v.extend_from_slice(&self.height.to_be_bytes());
+        v.extend_from_slice(&self.note_count.to_be_bytes());
+        v.extend_from_slice(&self.tree_root);
+        v.extend_from_slice(&self.nullifier_count.to_be_bytes());
+        v.extend_from_slice(&self.nullifier_acc);
+        v.push(self.ciphertext_acc.is_some() as u8);
+        v.extend_from_slice(&self.ciphertext_acc.unwrap_or([0u8; 32]));
+        v
+    }
+
+    pub fn decode(v: &[u8]) -> Option<Self> {
+        if v.len() != 121 || v[88] > 1 {
+            return None;
+        }
+        let be = |at: usize| u64::from_be_bytes(v[at..at + 8].try_into().expect("8"));
+        Some(Self {
+            height: be(0),
+            note_count: be(8),
+            tree_root: b32(&v[16..48]),
+            nullifier_count: be(48),
+            nullifier_acc: b32(&v[56..88]),
+            ciphertext_acc: (v[88] == 1).then(|| b32(&v[89..121])),
+        })
+    }
+
+    pub fn of(height: u64, state: &PoolState, ciphertext_acc: Option<Bytes32>) -> Self {
+        Self {
+            height,
+            note_count: state.note_count,
+            tree_root: state.tree_root,
+            nullifier_count: state.nullifier_count,
+            nullifier_acc: state.nullifier_acc,
+            ciphertext_acc,
+        }
+    }
+
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "height": self.height,
+            "tree_root": hex::encode(self.tree_root),
+            "nullifier_acc": hex::encode(self.nullifier_acc),
+            "note_count": self.note_count,
+            "nullifier_count": self.nullifier_count,
+            "ciphertext_acc": self.ciphertext_acc.map(hex::encode),
+        })
+    }
+}
+
 /// `quantum_vault_shield_v2::pool::PoolStore` over the persistent `ShieldV2Store`. A genesis
 /// initialisation (`next_height == activation_height`) records no per-block leaf range; every
 /// applied block records its range under its height for the wallet-facing listing.
+///
+/// Node-local (not consensus): built [`DaemonPoolStore::with_ciphertexts`], a commit also
+/// advances the ciphertext hash over the block's outputs in the same atomic store write.
 #[derive(Clone)]
 pub struct DaemonPoolStore {
     inner: ShieldV2Store,
+    /// `(kem_ct, note_ct)` of every leaf the next commit appends, in leaf order.
+    ciphertexts: Option<Vec<(Vec<u8>, Vec<u8>)>>,
 }
 
 impl DaemonPoolStore {
     pub fn new(inner: ShieldV2Store) -> Self {
-        Self { inner }
+        Self { inner, ciphertexts: None }
+    }
+
+    /// The store for applying ONE block whose outputs carry these ciphertexts (one pair per
+    /// appended leaf, in order).
+    pub fn with_ciphertexts(inner: ShieldV2Store, ciphertexts: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
+        Self { inner, ciphertexts: Some(ciphertexts) }
+    }
+
+    /// The side record after `update`, or `None` when it cannot be advanced (no ciphertexts were
+    /// supplied for the leaves, or the stored record does not cover the tree): the record is then
+    /// left behind and the node reports no ciphertext hash until it is rebuilt.
+    fn side_after(&self, update: &PoolUpdate) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(mut acc) = current_ciphertext_acc(&self.inner).map_err(StoreError)? else { return Ok(None) };
+        if update.leaves.is_empty() {
+            return Ok(Some(encode_side(&acc, update.first_leaf)));
+        }
+        let Some(cts) = self.ciphertexts.as_ref().filter(|c| c.len() == update.leaves.len()) else { return Ok(None) };
+        for (cm, (kem_ct, note_ct)) in update.leaves.iter().zip(cts) {
+            acc = ciphertext_acc_step(&acc, cm, kem_ct, note_ct);
+        }
+        Ok(Some(encode_side(&acc, update.first_leaf + update.leaves.len() as u64)))
     }
 }
 
@@ -631,7 +790,16 @@ impl PoolStore for DaemonPoolStore {
             next_height: update.next_height,
             state: update.state.clone(),
         });
-        self.inner.commit(applied_height, &meta, &update.nullifiers, update.first_leaf, &update.leaves).map_err(StoreError)
+        // node-local, same batch: never a reason to refuse a block. (The ciphertexts belong to
+        // the one block this store was built for: they are used up by the commit that appends
+        // leaves — not by the genesis initialisation `open_or_init` may commit first.)
+        let side = self.side_after(update)?;
+        if !update.leaves.is_empty() {
+            self.ciphertexts = None;
+        }
+        self.inner
+            .commit_with_side(applied_height, &meta, &update.nullifiers, update.first_leaf, &update.leaves, side.as_deref())
+            .map_err(StoreError)
     }
 }
 
