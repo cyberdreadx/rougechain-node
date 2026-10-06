@@ -1,0 +1,52 @@
+[package]
+name = "quantum-vault-shield-v2"
+version = "0.1.0"
+# 2024, unlike the sibling crates: the verifier is ported from `research/shield3` (edition 2024)
+# without semantic change, and the pinned proof library is edition 2024 as well.
+edition = "2024"
+publish = false
+description = "Shielded pool V2 (docs/SHIELDED_POOL_V2_SPEC.md): the fixed-parameter production verifier `verify_spend` (spec §2) and the pure pool-state logic of spec §4. Not wired into block processing."
+
+# `test-prover`: the research prover (`prove_spend(trace, public, seed)`), the trace builder and
+# the witness constructors of `research/shield3`, for THIS crate's forgery tests only. Off by
+# default; the daemon must never enable it. It adds no parameter set, no second verifier and no
+# hiding-OFF mode — there is no `research` feature in this crate (spec §7, L-3). It is NOT the
+# wallet prover of spec §5.6 (it takes a caller-supplied seed; open issue O-14).
+[features]
+default = []
+test-prover = []
+
+[[test]]
+name = "forgery"
+path = "tests/forgery.rs"
+required-features = ["test-prover"]
+
+[[test]]
+name = "negative"
+path = "tests/negative.rs"
+required-features = ["test-prover"]
+
+# Plonky3 v0.8.0, pinned to the exact upstream commit of spec §2.1 / §2.9. Unmodified.
+[dependencies]
+p3-air = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-blake3 = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-challenger = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-commit = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-dft = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-fri = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-koala-bear = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-matrix = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-merkle-tree = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-poseidon2 = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3.git", rev = "a21e3ed42905040ad49c519e402f018381c12d0c" }
+
+blake3 = { version = "1.8", default-features = false }
+# The proof byte format is postcard 1.1.x (spec §2.9.1).
+postcard = { version = "~1.1.3", default-features = false, features = ["alloc"] }
+rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }
+sha2 = "0.10"
+
+[dev-dependencies]
+serde_json = "1"
