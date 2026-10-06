@@ -70,9 +70,12 @@ impl Indexer {
             let json = serde_json::to_vec(&event).map_err(|e| e.to_string())?;
             self.events.insert(primary_key.as_bytes(), json).map_err(|e| e.to_string())?;
 
-            // Address index (from)
-            let addr_key = format!("addr:{}:{}:{:04}", &event.from, height, idx);
-            self.by_address.insert(addr_key.as_bytes(), b"").map_err(|e| e.to_string())?;
+            // Address index (from). SHIELD_V2: the two signer-less types have no sender (spec
+            // §3.1) — nothing is indexed under the empty address.
+            if !event.from.is_empty() {
+                let addr_key = format!("addr:{}:{}:{:04}", &event.from, height, idx);
+                self.by_address.insert(addr_key.as_bytes(), b"").map_err(|e| e.to_string())?;
+            }
 
             // Address index (to, if present)
             if let Some(ref to) = event.to {

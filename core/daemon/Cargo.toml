@@ -27,6 +27,11 @@ quantum-vault-storage = { path = "../storage" }
 quantum-vault-vm = { path = "../vm" }
 quantum-vault-bridge-exec = { path = "../bridge-exec" }
 quantum-vault-finality = { path = "../finality" }
+# SHIELD_V2: the fixed-parameter verifier and the pool rules (docs/SHIELDED_POOL_V2_SPEC.md). The
+# `test-prover` feature MUST NOT be enabled here (spec §7, L-3); only the dev-dependency below turns
+# it on, for this crate's own tests (cargo's resolver 2 keeps dev-dependency features out of a
+# normal build — asserted with `cargo tree`, see core/shield-v2/NOTES.md).
+quantum-vault-shield-v2 = { path = "../shield-v2" }
 sled = "0.34"
 eth-ecdsa-verifier = "0.1"
 rayon = "1.10"
@@ -40,3 +45,4 @@ protoc-bin-vendored = "3"
 
 [dev-dependencies]
 wat = "1"
+quantum-vault-shield-v2 = { path = "../shield-v2", features = ["test-prover"] }

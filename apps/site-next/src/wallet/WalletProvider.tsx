@@ -43,7 +43,7 @@ import {
   type WalletSnapshot,
 } from "./store";
 import { setOnboardingActive } from "./tour";
-import { networkLabel, useRougeAddress } from "./hooks";
+import { networkLabel, useExtensionProvider, useRougeAddress } from "./hooks";
 import i18n from "../i18n";
 import { toast } from "./toast";
 
@@ -195,6 +195,43 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
   useEffect(() => {
     setOnboardingActive(flow !== null || snapshot.needsPassword);
   }, [flow, snapshot.needsPassword]);
+
+  // Follow the extension / Qwalla provider when the user switches accounts or disconnects there.
+  // Only a wallet that came from the provider (no local keys) is touched; a local wallet never is.
+  const provider = useExtensionProvider();
+  useEffect(() => {
+    if (!provider?.on) return;
+    const onAccounts = (...args: unknown[]) => {
+      const accounts = Array.isArray(args[0]) ? (args[0] as unknown[]) : [];
+      const next = typeof accounts[0] === "string" ? accounts[0] : null;
+      const current = loadUnifiedWallet();
+      if (!current || current.signingPrivateKey) return;
+      if (!next) {
+        clearUnifiedWallet();
+        setFlow(null);
+        notifyWalletChanged();
+        return;
+      }
+      if (next === current.signingPublicKey) return;
+      // connect() on an already-approved site answers without a prompt and carries the new
+      // account's display name / messaging key when the provider has them.
+      provider
+        .connect()
+        .then((result) => {
+          if (!result?.publicKey || result.publicKey !== next) return;
+          saveUnifiedWallet(extensionWallet(result));
+          notifyWalletChanged();
+        })
+        .catch(() => {});
+    };
+    const onDisconnect = () => onAccounts([]);
+    provider.on("accountsChanged", onAccounts);
+    provider.on("disconnect", onDisconnect);
+    return () => {
+      provider.removeListener?.("accountsChanged", onAccounts);
+      provider.removeListener?.("disconnect", onDisconnect);
+    };
+  }, [provider]);
 
   const create = useCallback(async () => {
     const mnemonic = generateMnemonic();

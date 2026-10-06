@@ -399,7 +399,9 @@
     "openWallet": "Open Wallet",
     "viewInExplorer": "View in Explorer",
     "lock": "Lock",
-    "setPassword": "Set a password to enable lock"
+    "setPassword": "Set a password to enable lock",
+    "disconnect": "Disconnect",
+    "disconnected": "Wallet disconnected"
   },
   "incoming": {
     "title": "Transfer received",

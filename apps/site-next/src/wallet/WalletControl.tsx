@@ -144,7 +144,19 @@ export function WalletControl() {
             )}
           </div>
           <div className="account-disconnect">
-            {w.hasPassword ? (
+            {w.isExtension ? (
+              // A provider wallet holds no keys here, so disconnecting only forgets the connection.
+              <Button
+                variant="outline"
+                onClick={() => {
+                  w.disconnect();
+                  toast.info(t("control.disconnected"));
+                  close();
+                }}
+              >
+                {t("control.disconnect")}
+              </Button>
+            ) : w.hasPassword ? (
               <Button
                 variant="outline"
                 onClick={() => {
