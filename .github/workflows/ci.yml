@@ -33,8 +33,30 @@ jobs:
         with:
           workspaces: core
 
-      - name: Build (workspace)
-        run: cargo build --workspace --verbose
+      # Packages are selected with -p, never --workspace: the wallet-side shield crates enable the
+      # `prover` feature of quantum-vault-shield-v2, and the daemon refuses to compile if that
+      # feature is unified into it (see core/Cargo.toml). A plain `cargo build` builds the default
+      # members, i.e. the node exactly as it ships.
+      - name: Build (node, default members)
+        run: cargo build --verbose
 
-      - name: Test (workspace)
-        run: cargo test --workspace --verbose
+      - name: Test (node crates)
+        run: >
+          cargo test --verbose
+          -p quantum-vault-types -p quantum-vault-crypto -p quantum-vault-consensus
+          -p quantum-vault-storage -p quantum-vault-p2p -p quantum-vault-vm
+          -p quantum-vault-finality -p quantum-vault-cli -p quantum-vault-bridge-exec
+          -p quantum-vault-wasm-prover
+
+      # Its own invocation: the daemon's tests use the prover as a dev-dependency only.
+      - name: Test (daemon)
+        run: cargo test --verbose -p quantum-vault-daemon
+
+      # Release profile: the proof sweeps take hours in a debug build.
+      - name: Test (shielded pool V2 verifier and pool rules)
+        run: cargo test --release -p quantum-vault-shield-v2 -- --test-threads=1
+
+      - name: Test (shielded pool V2 wallet core)
+        run: >
+          cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors
+          -p quantum-vault-shield-v2-wasm -- --test-threads=1
