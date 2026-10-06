@@ -463,3 +463,9 @@ pub mod deterministic {
         assemble_shield(req, &mut crate::entropy::FailingEntropy)
     }
 }
+
+// REVIEW_WALLET_1: tests that need this module's private assembly functions and the crate-private
+// entropy trait (a generator that repeats). Test builds only.
+#[cfg(test)]
+#[path = "review_wallet_1_tests.rs"]
+mod review_wallet_1_tests;
