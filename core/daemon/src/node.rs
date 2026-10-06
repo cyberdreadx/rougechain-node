@@ -5696,6 +5696,17 @@ impl L1Node {
 
     // ── SHIELD_V2: read-only views (API) ────────────────────────────────────────────────────
     /// Pool statistics: activation, pool total, note and nullifier counts, tree root, anchor window.
+    ///
+    /// **`report`** (REVIEW_WALLET_2 RW2-6) is what a wallet passes to `confirm_state`: the height
+    /// and both halves of the pool state of spec §4.8 — `tree_root` and `nullifier_acc`, with
+    /// `note_count` and `nullifier_count` — **all five from ONE read of the pool record**. The
+    /// record is one value, written once per block together with that block's leaves and
+    /// nullifiers; `height` is the record's own `next_height − 1`, the last block whose effects it
+    /// holds. It is never paired with `tip_height`, which comes from the chain store in another
+    /// read: a block applied between the two reads would give the root of one height under the
+    /// number of another, and two nodes racing the same block would send a wallet two reports
+    /// that match nothing. `report` is `null` before the pool's first block. API only: nothing
+    /// here is consensus.
     pub fn shield_v2_stats(&self) -> Result<serde_json::Value, String> {
         let activation = shield_v2::shield_v2_activation_height();
         let tip = self.store.get_tip()?.height;
@@ -5727,8 +5738,19 @@ impl L1Node {
                 "anchor_window": p.window.iter().map(hex::encode).collect::<Vec<_>>(),
                 "latest_anchor": p.window.last().map(hex::encode),
             });
+            v["report"] = match st.next_height.checked_sub(1) {
+                Some(height) => serde_json::json!({
+                    "height": height,
+                    "tree_root": hex::encode(p.tree_root),
+                    "nullifier_acc": hex::encode(p.nullifier_acc),
+                    "note_count": p.note_count,
+                    "nullifier_count": p.nullifier_count,
+                }),
+                None => serde_json::Value::Null,
+            };
         } else {
             v["pool"] = serde_json::Value::Null;
+            v["report"] = serde_json::Value::Null;
         }
         Ok(v)
     }
@@ -15068,6 +15090,15 @@ mod shield_v2_daemon_tests {
         let stats = n.y.shield_v2_stats().unwrap();
         assert_eq!(stats["pool"]["note_count"], 6);
         assert_eq!(stats["pool"]["pool_total_quanta"], (4 * Q).to_string());
+        // RW2-6: the report is the pool record's own height with the state of that height — the
+        // last applied block, which here is the tip
+        let (pool, report) = (pool_state(&n.y), &stats["report"]);
+        assert_eq!(report["height"], A + 3);
+        assert_eq!((report["height"].as_u64(), stats["pool"]["next_height"].as_u64()), (Some(A + 3), Some(A + 4)));
+        assert_eq!(report["tree_root"], hex::encode(pool.tree_root));
+        assert_eq!(report["nullifier_acc"], hex::encode(pool.nullifier_acc));
+        assert_eq!((report["note_count"].as_u64(), report["nullifier_count"].as_u64()), (Some(pool.note_count), Some(pool.nullifier_count)));
+        assert_eq!(report["tree_root"], stats["pool"]["tree_root"]);
         set_test_shield_v2(None);
     }
 
@@ -15834,12 +15865,22 @@ mod shield_v2_wallet_interop_tests {
             // the default expiry: the anchor's height + 64 (REVIEW_WALLET_1 F-7)
             TxContext::new(&self.node.chain_id(), anchor, stats["tip_height"].as_u64().unwrap())
         }
-        /// What this node reports about the pool's root at its tip — one entry of
-        /// `WalletState::confirm_roots` (REVIEW_WALLET_1 F-1), read from the stats handler.
-        fn root_report(&self, node_id: &str) -> wallet::RootReport {
+        /// What this node reports about the pool — one entry of `WalletState::confirm_state`
+        /// (REVIEW_WALLET_1 F-1, REVIEW_WALLET_2 RW2-2 / RW2-6): the `report` object of the stats
+        /// handler, exactly as a client reads it, under the id the CALLER gives the node.
+        fn state_report(&self, node_id: &str) -> wallet::StateReport {
             let stats = self.node.shield_v2_stats().unwrap();
-            let root = hex::decode(stats["pool"]["latest_anchor"].as_str().expect("the pool has a root")).unwrap().try_into().unwrap();
-            wallet::RootReport { node_id: node_id.to_string(), height: stats["tip_height"].as_u64().unwrap(), root }
+            let r = &stats["report"];
+            let b32 = |k: &str| -> [u8; 32] { hex::decode(r[k].as_str().expect("the report has this digest")).unwrap().try_into().unwrap() };
+            assert_eq!(r["height"], stats["tip_height"], "between blocks the pool record is at the tip");
+            wallet::StateReport {
+                node_id: node_id.to_string(),
+                height: r["height"].as_u64().unwrap(),
+                tree_root: b32("tree_root"),
+                nullifier_acc: b32("nullifier_acc"),
+                note_count: r["note_count"].as_u64().unwrap(),
+                nullifier_count: r["nullifier_count"].as_u64().unwrap(),
+            }
         }
         /// One page of `GET /api/shield-v2/notes` — the node's JSON, parsed by the wallet.
         fn page(&self, since: u64, blocks: u64) -> ListingPage {
@@ -15855,6 +15896,14 @@ mod shield_v2_wallet_interop_tests {
             assert_eq!(state.anchor(), self.pool().tree_root, "the wallet's tree root is the node's");
             assert_eq!(state.tree().note_count(), self.pool().note_count);
             assert_eq!(state.tree().frontier(), self.pool().frontier.to_vec(), "and its frontier is the node's (spec §4.8)");
+            // RW2-2: the other half of the state. The wallet's running nullifier hash, rebuilt
+            // from the node's listing, is the node's consensus `nullifier_acc` (spec §4.5, §4.8)
+            assert_eq!(state.nullifier_acc(), self.pool().nullifier_acc, "the wallet's nullifier hash is the node's");
+            assert_eq!(state.nullifier_count(), self.pool().nullifier_count);
+            if let Some(h) = state.scanned_height() {
+                let (mine, node) = (state.state_at(h).expect("the scanned height"), self.state_report("n"));
+                assert_eq!((h, mine.tree_root, mine.nullifier_acc, mine.note_count, mine.nullifier_count), (node.height, node.tree_root, node.nullifier_acc, node.note_count, node.nullifier_count));
+            }
         }
     }
 
@@ -15953,11 +16002,12 @@ mod shield_v2_wallet_interop_tests {
             assert!(matches!(wallet::select_inputs(&a, 5 * Q, FEE), Err(wallet::WalletError::InsufficientFunds { have: 0, .. })));
             // one node is not the default quorum (two distinct nodes; the two-node check against
             // independent nodes is in the test below) …
-            let own = [h.root_report("this-wallet's-own-node")];
-            let c = a.confirm_roots(&own, wallet::DEFAULT_CONFIRM_QUORUM).unwrap();
+            let own = [h.state_report("this-wallet's-own-node")];
+            let c = a.confirm_state(&own, None).unwrap();
             assert!(c.matched_height.is_none() && a.confirmed_balance() == 0);
+            assert!(matches!(a.spend_input(a.notes()[0].position), Err(wallet::WalletError::NoteUnverified)));
             // … a wallet that asks its OWN node says so with a quorum of 1 (spec §5.4)
-            let c = a.confirm_roots(&own, 1).unwrap();
+            let c = a.confirm_state(&own, Some(1)).unwrap();
             assert_eq!((c.matched_height, a.confirmed_balance()), (h.node.tip_height().ok(), 9 * Q as u128));
 
             // ── transfer: Alice pays Bob 5, fee 1, change 3 ──
@@ -15982,20 +16032,25 @@ mod shield_v2_wallet_interop_tests {
             assert!(node_accepts(&transfer, built.expiry_height + 1).is_err(), "never above it");
             let record = built.pending().expect("a transfer has a pending record");
             assert_eq!(record.nullifiers.iter().map(|n| n.0).collect::<Vec<_>>(), parsed.body.nf.to_vec(), "the wallet's record names the nullifiers the node reads");
+            assert_eq!(record.outputs.iter().map(|c| c.0).collect::<Vec<_>>(), parsed.body.cm_out.to_vec(), "and the output commitments the node appends");
             a.mark_pending(record).expect("recorded before submission");
             assert!(matches!(a.spend_input(sel.positions[0]), Err(wallet::WalletError::NoteLocked)));
             assert!(matches!(wallet::select_inputs_with(&a, Q, FEE, true), Err(wallet::WalletError::InsufficientFunds { .. })), "the only note is locked");
-            assert_eq!(a.resolve(wallet::ReleasePolicy::Scanned).still_pending, 1, "nothing is settled before the chain shows it");
+            assert_eq!(a.resolve().still_pending, 1, "nothing is settled before the chain shows it");
             let payment = built.outputs.iter().find(|o| o.role == wallet::OutputRole::Payment).unwrap();
             let (payment_cm, payment_r) = (payment.cm, payment.r);
             h.import(vec![transfer.clone()]).expect("the transfer block is accepted");
             assert_eq!(h.pool().pool_total, 8 * Q as u128);
             h.sync(&mut a, &alice.scan_key(), 256);
             h.sync(&mut b, &bob.scan_key(), 256);
-            // the node's listing shows the nullifiers: mined, the inputs spent, the change arrived
-            let settled = a.resolve(wallet::ReleasePolicy::Scanned);
-            assert_eq!((settled.mined.len(), settled.expired.len(), settled.still_pending), (1, 0, 0));
-            assert_eq!(settled.mined[0].mined_height, h.node.tip_height().ok());
+            // the node's listing shows both nullifiers with both outputs: seen, the inputs spent,
+            // the change arrived — and settled once the height is confirmed (here by the wallet's
+            // own node: quorum 1), not before
+            assert_eq!(a.resolve().still_pending, 1, "listed is not settled");
+            assert_eq!(a.confirm_state(&[h.state_report("own")], Some(1)).unwrap().matched_height, h.node.tip_height().ok());
+            let settled = a.resolve();
+            assert_eq!((settled.mined.len(), settled.superseded.len(), settled.expired.len(), settled.still_pending), (1, 0, 0, 0));
+            assert_eq!(settled.mined[0].seen_height, h.node.tip_height().ok());
             assert!(a.unspent().any(|n| Some(n.cm) == settled.mined[0].change.as_ref().map(|c| c.cm)));
             assert_eq!((a.balance(), b.balance()), (3 * Q as u128, 5 * Q as u128));
             assert_eq!(b.notes()[0].cm.0, payment_cm);
@@ -16006,6 +16061,7 @@ mod shield_v2_wallet_interop_tests {
             let to = pub_key_to_address(&recv.public_key_hex).unwrap();
             let to_account = wallet::account_from_address(&to).expect("the wallet decodes the node's rouge1 address");
             assert_eq!(wallet::address_from_account(&to_account), to, "and encodes it the same way");
+            assert!(b.confirm_state(&[h.state_report("own")], Some(1)).unwrap().matched_height.is_some());
             let inputs = [b.spend_input(b.notes()[0].position).unwrap()];
             let built = wallet::build_unshield(&wallet::UnshieldRequest {
                 ctx: h.ctx(), keys: &bob, inputs: &inputs, to_account, v_out: 3 * Q, fee: FEE,
@@ -16022,7 +16078,8 @@ mod shield_v2_wallet_interop_tests {
             assert_eq!(balance(&recv_addr), 3 * Q as u128, "the public account is credited v_out");
             h.sync(&mut a, &alice.scan_key(), 256);
             h.sync(&mut b, &bob.scan_key(), 256);
-            assert_eq!(b.resolve(wallet::ReleasePolicy::Scanned).mined.len(), 1);
+            assert!(b.confirm_state(&[h.state_report("own")], Some(1)).unwrap().matched_height.is_some());
+            assert_eq!(b.resolve().mined.len(), 1);
             assert_eq!((a.balance(), b.balance()), (3 * Q as u128, Q as u128));
             assert_eq!(h.pool().pool_total, a.balance() + b.balance(), "the pool total is exactly what the wallets hold");
             assert_eq!((h.pool().note_count, h.pool().nullifier_count), (6, 6));
@@ -16059,22 +16116,28 @@ mod shield_v2_wallet_interop_tests {
         // F-1 with two INDEPENDENT nodes (a third replay): both report the wallet's root at the
         // tip, the default quorum is met and every note is confirmed
         let h2 = replayed(3);
-        let reports = [h.root_report("node-1"), h2.root_report("node-2")];
+        let reports = [h.state_report("node-1"), h2.state_report("node-2")];
         assert_eq!(a.unverified_balance(), 3 * Q as u128);
-        let c = a.confirm_roots(&reports, wallet::DEFAULT_CONFIRM_QUORUM).unwrap();
+        let c = a.confirm_state(&reports, None).unwrap();
         assert_eq!((c.matched_height, c.agreeing, c.diverged), (h.node.tip_height().ok(), 2, false));
         assert_eq!((a.confirmed_balance(), a.unverified_balance()), (3 * Q as u128, 0));
         // … and a node on another chain (one transaction short) does not vouch for it
         let short = replayed(2);
         let mut lone = WalletState::new(f.alice.pk());
         h.sync(&mut lone, &ShieldedKeys::from_seed(&f.alice_seed).unwrap().scan_key(), 256);
-        let mut other = short.root_report("node-3");
+        let mut other = short.state_report("node-3");
         other.height = h.node.tip_height().unwrap();
-        assert!(lone.confirm_roots(&[h.root_report("node-1"), other], wallet::DEFAULT_CONFIRM_QUORUM).unwrap().matched_height.is_none());
+        let c = lone.confirm_state(&[h.state_report("node-1"), other.clone()], None).unwrap();
+        assert!(c.matched_height.is_none() && c.diverged, "a conflicting report confirms nothing");
+        // … also when its tree root is the right one and only its nullifier hash differs (RW2-2)
+        let mut half = h.state_report("node-3");
+        half.nullifier_acc = other.nullifier_acc;
+        let c = lone.confirm_state(&[h.state_report("node-1"), half], None).unwrap();
+        assert!(c.matched_height.is_none() && c.diverged && lone.confirmed_balance() == 0, "the root alone is not the state");
         // the original wallet (it resolved its pending transaction) under the same check is the same state
         let mut original = f.alice.clone();
-        original.confirm_roots(&reports, wallet::DEFAULT_CONFIRM_QUORUM).unwrap();
-        assert_eq!(a, original);
+        original.confirm_state(&reports, None).unwrap();
+        assert!(a.content_eq(&original));
         assert_eq!(h.node.balances.lock().unwrap().get(&canon_addr(&f.recv.public_key_hex)).copied(), Some(3 * Q as u128));
     }
 
@@ -16093,12 +16156,12 @@ mod shield_v2_wallet_interop_tests {
             assert_eq!(restored.next_height(), 0);
             h.sync(&mut restored, &keys.scan_key(), 1);
             // (the confirmation status is not chain data: both are confirmed against this node first)
-            let own = [h.root_report("own-node")];
+            let own = [h.state_report("own-node")];
             let mut original = original.clone();
-            assert!(restored.confirm_roots(&own, 1).unwrap().matched_height.is_some());
-            original.confirm_roots(&own, 1).unwrap();
+            assert!(restored.confirm_state(&own, Some(1)).unwrap().matched_height.is_some());
+            original.confirm_state(&own, Some(1)).unwrap();
             assert!(original.pending().is_empty() && restored.pending().is_empty());
-            assert_eq!(restored, original, "restore = the incrementally built state");
+            assert!(restored.content_eq(&original), "restore = the incrementally built state");
             assert_eq!(restored.balance(), balance as u128);
             check_notes_against_node(&h, &restored);
             // a restored note is spendable at once: its path leads to the node's latest anchor
