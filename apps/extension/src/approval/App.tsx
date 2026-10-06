@@ -1,18 +1,20 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { Shield, Link2, FileSignature, Send, AlertTriangle, Code2, Upload } from "lucide-react";
 import type { ContractTxDetails } from "../lib/contract-tx";
+import type { SignMessageReview } from "@rougechain/core/message-signing";
+import SignMessageView, { signMessageHasDanger } from "./SignMessageView";
 
 /**
  * Approval popup — opened by the service worker when a dApp
- * requests connect / signTransaction / sendTransaction.
+ * requests connect / signTransaction / signMessage / sendTransaction.
  *
  * URL params:
  *   id     — unique request ID stored in chrome.storage.session
- *   type   — "connect" | "sign" | "send"
+ *   type   — "connect" | "sign" | "sign-message" | "send"
  *   origin — requesting site origin
  */
 
-type ApprovalType = "connect" | "sign" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send";
+type ApprovalType = "connect" | "sign" | "sign-message" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send";
 
 interface PendingRequest {
     id: string;
@@ -181,7 +183,12 @@ export default function ApprovalApp() {
 
     const kind = request.type;
     const isConnect = kind === "connect" || kind === "evm-connect";
-    const isSign = kind === "sign" || kind === "evm-personal-sign";
+    const isSign = kind === "sign" || kind === "sign-message" || kind === "evm-personal-sign";
+    // signMessage: the service worker stores its review of the message as the payload.
+    const messageReview = kind === "sign-message" && request.payload && typeof request.payload.display === "string"
+        ? (request.payload as unknown as SignMessageReview)
+        : null;
+    const messageDanger = !!messageReview && signMessageHasDanger(messageReview);
     const isSend = kind === "send" || kind === "evm-send";
     const evm = isEvm(kind);
     const p = request.payload || {};
@@ -212,7 +219,9 @@ export default function ApprovalApp() {
                     </div>
                     <h2 className="text-lg font-semibold">
                         {isConnect && "Connection Request"}
-                        {isSign && (request.details ? "Contract Signature" : "Signature Request")}
+                        {isSign && (kind === "sign-message"
+                            ? (messageReview?.signIn ? "Sign-In Request" : "Message Signature")
+                            : request.details ? "Contract Signature" : "Signature Request")}
                         {isSend && (request.details ? "Contract Transaction" : "Transaction Request")}
                     </h2>
                     {evm && (
@@ -259,6 +268,12 @@ export default function ApprovalApp() {
 
                 {(request.type === "sign" || request.type === "send") && request.details && (
                     <ContractTxView details={request.details} sending={request.type === "send"} />
+                )}
+
+                {kind === "sign-message" && (
+                    messageReview
+                        ? <SignMessageView review={messageReview} />
+                        : <p className="text-sm text-red-400 text-center">The message could not be loaded. Deny this request.</p>
                 )}
 
                 {request.type === "sign" && !request.details && (
@@ -382,8 +397,8 @@ export default function ApprovalApp() {
                 </button>
                 <button
                     onClick={() => respond(true)}
-                    disabled={closing}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 ${isSend
+                    disabled={closing || (kind === "sign-message" && !messageReview)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 ${isSend || messageDanger
                         ? "bg-red-500 hover:bg-red-600"
                         : isSign
                             ? "bg-amber-500 hover:bg-amber-600"
@@ -391,7 +406,7 @@ export default function ApprovalApp() {
                         }`}
                 >
                     {isConnect && "Connect"}
-                    {isSign && "Sign"}
+                    {isSign && (messageDanger ? "Sign anyway" : "Sign")}
                     {isSend && "Approve & Send"}
                 </button>
             </div>

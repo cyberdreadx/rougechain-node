@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.13.0
+
+Wallet message signing, for proving control of a wallet to a website (login, token gating). See `docs/advanced/wallet-authentication.md`.
+
+### Added
+- `signMessage(privateKeyHex, message)` and `verifyMessage(publicKeyHex, message, signatureHex)`. `message` is a string (signed as UTF-8) or a `Uint8Array`. The signature is ML-DSA-65 over `"\x19RougeChain Signed Message:\n" + decimal(byte length) + "\n" + message bytes` (`messageSigningBytes(message)`), so it can never be used as a transaction signature: every transaction signing input is a JSON document starting with `{`. `verifyMessage` returns `false` for malformed input and never throws.
+- Sign-In with RougeChain, modelled on EIP-4361: `createSignInMessage({ domain, address, uri, statement?, nonce, issuedAt, expirationTime?, chainId, resources? })`, `parseSignInMessage(text)` (returns `null` unless the text is exactly the canonical form), and `verifySignIn({ message, signature, publicKey, expectedDomain, expectedNonce, expectedChainId, now?, maxClockSkewMs?, maxAgeMs? })`, which resolves to `{ valid: true, address, publicKey, fields }` or `{ valid: false, error }`. The nonce must be at least 16 characters.
+- Helpers for wallets that implement `window.rougechain.signMessage`: `reviewSignMessageRequest`, `visibleMessageText`, `looksLikeTransactionPayload`, `claimedSignInDomain`, and the constants `SIGNED_MESSAGE_PREFIX`, `MAX_SIGN_MESSAGE_BYTES` (4096).
+- Types `SignInFields`, `SignInFailure`, `VerifySignInParams`, `VerifySignInResult`, `SignMessageReview`.
+
+Nothing existing changed: `signTransaction`, `verifyTransaction` and `signRequest` are untouched.
+
 ## 1.12.0
 
 Client side of the node's TOKEN_MINTING upgrade (mintable custom tokens, creator-only capped minting). The upgrade is built into the node but **not scheduled on any network yet**; until it activates the node refuses the new fields and `mint_tokens` with "token minting is not active yet".

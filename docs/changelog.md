@@ -4,6 +4,19 @@ All notable changes to RougeChain.
 
 ---
 
+## Wallet message signing (`signMessage`) for logins and token gating — 2026-10-06
+
+- New provider method `window.rougechain.signMessage({ message })` → `{ signature, publicKey, address }`
+  in the browser extension **1.8.0** (built from source; not yet in the Chrome Web Store at the time
+  of this entry). Qwalla gets it with its next update. Sites must feature-detect.
+- The signature is ML-DSA-65 over `"\x19RougeChain Signed Message:\n" + byte length + "\n" + message`.
+  A node only verifies transaction signatures over JSON documents, so a signed message can never be
+  a transaction, and the reverse.
+- `@rougechain/sdk` **1.13.0** (in the repository; not yet on npm) adds `signMessage`,
+  `verifyMessage`, `createSignInMessage`, `parseSignInMessage` and `verifySignIn`.
+- New page: [Wallet Authentication](advanced/wallet-authentication.md), with the exact formats and a
+  complete token-gating server. No node change; `signTransaction` is unchanged.
+
 ## Mainnet: blocks 235 and 245 active; documentation brought up to date — 2026-10-06
 
 - Mainnet passed **block 235** (mintable tokens, contract royalty reads) and **block 245**

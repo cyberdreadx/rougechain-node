@@ -98,6 +98,22 @@ const rougechain = {
         return sendRequest("sendTransaction", { payload }) as Promise<{ txId: string; fee?: number; address?: string; preview?: unknown }>;
     },
 
+    /**
+     * Sign a text message to prove control of the wallet (login, token gating). Never a
+     * transaction: the signature is over
+     * `"\x19RougeChain Signed Message:\n" + decimal(byte length) + "\n" + UTF-8(message)`,
+     * which the node can never accept as a transaction. The site must be connected, the user
+     * approves every request, the message is at most 4,096 bytes, and a message that looks like a
+     * transaction payload is refused (use `signTransaction`). Verify with `verifyMessage` /
+     * `verifySignIn` from `@rougechain/sdk`. Since 1.8.0 — feature-detect with
+     * `typeof window.rougechain.signMessage === "function"`.
+     */
+    async signMessage(params: { message: string }): Promise<{ signature: string; publicKey: string; address: string }> {
+        return sendRequest("signMessage", { message: params?.message }) as Promise<{
+            signature: string; publicKey: string; address: string;
+        }>;
+    },
+
     on(event: string, callback: EventCallback): void {
         if (!eventListeners.has(event)) {
             eventListeners.set(event, new Set());

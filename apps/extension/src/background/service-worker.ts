@@ -1,12 +1,14 @@
 /**
  * Service worker for RougeChain Wallet Extension
  * Handles auto-lock timer, badge updates, and dApp connection messages.
- * Opens approval popup windows for connect/sign/send requests.
+ * Opens approval popup windows for connect/sign/signMessage/send requests.
  */
 
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { deriveEvmAccount, personalSign, hexToBytes as evmHexToBytes, decodeSignMessage, type EvmAccount } from "../lib/evm-wallet";
 import { rpc, fillSignAndSend, getChain, isSupportedChain, BASE_MAINNET_CHAIN_ID } from "../lib/evm-rpc";
+import { pubkeyToAddress } from "@rougechain/core/address";
+import { reviewSignMessageRequest, signMessage } from "@rougechain/core/message-signing";
 import {
     analyzeContractPayload,
     contractEndpoint,
@@ -328,7 +330,7 @@ let approvalCounter = 0;
  * Returns `true` if approved, `false` if denied or window closed.
  */
 function requestApproval(
-    type: "connect" | "sign" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send",
+    type: "connect" | "sign" | "sign-message" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send",
     origin: string,
     payload?: Record<string, unknown>,
     details?: ContractTxDetails
@@ -541,6 +543,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                             signature: signSig,
                             publicKey: wallet.publicKey,
                             payload: prepared.payload,
+                        },
+                    });
+                    break;
+                }
+
+                // Prove control of the wallet by signing a text message (login, token gating).
+                // The signed bytes carry the "\x19RougeChain Signed Message:\n" prefix
+                // (@rougechain/core/message-signing), so the result is never a transaction
+                // signature. There is no remembered approval: the user is asked every time.
+                case "signMessage": {
+                    const wallet = await getWalletData();
+                    if (!wallet) {
+                        sendResponse({ error: "Wallet is locked" });
+                        return;
+                    }
+
+                    const sites = await getConnectedSites();
+                    if (!sites.some(s => s.origin === origin)) {
+                        sendResponse({ error: "Site not connected. Call connect() first." });
+                        return;
+                    }
+
+                    const address = await pubkeyToAddress(wallet.publicKey);
+                    const review = reviewSignMessageRequest(params?.message, origin, address);
+                    if ("error" in review) {
+                        sendResponse({ error: review.error });
+                        return;
+                    }
+
+                    const messageApproved = await requestApproval(
+                        "sign-message", origin, review as unknown as Record<string, unknown>,
+                    );
+                    if (!messageApproved) {
+                        sendResponse({ error: "User denied message signature request" });
+                        return;
+                    }
+
+                    sendResponse({
+                        result: {
+                            signature: signMessage(wallet.privateKey, review.message),
+                            publicKey: wallet.publicKey,
+                            address,
                         },
                     });
                     break;
