@@ -48,8 +48,7 @@ Severity: Critical / High / Medium / Low / Info. "Test" names the test added by 
   different chains below A.
 * Why this is broader than the TOKEN_MINTING precedent: the payload *fields* need a CLI-envelope
   `signed_payload` to survive an old node's deserialisation with a valid signature (the old node
-  drops the unknown fields; the header `tx_hash` is not checked at import, node.rs has no
-  comparison of `header.tx_hash`), whereas a bare type name needs nothing.
+  drops the unknown fields), whereas a bare type name needs nothing.
 * Test: `node::shield_v2_review_node_1_tests::review_r1_1_bare_v2_type_names_pass_every_pre_stage_2_rule`
   (documenting, passes): the three bare types pass signature, fee/type sanity,
   MONETARY_INTEGRITY, GAME_READY, TOKEN_MINTING, royalty cap and binding, and only

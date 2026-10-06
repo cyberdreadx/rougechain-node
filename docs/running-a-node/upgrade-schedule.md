@@ -51,9 +51,8 @@ computes a different state root and rejects the block. Every node must run the n
 the height.
 
 > Corrected 2026-10-06: an earlier version of this page said an old node rejects such a block because
-> it "computes a different block `tx_hash`". That was wrong. Nodes do not compare a block's
-> transaction-list hash with its header on import; what an old node disagrees on is the state root.
-> Checking the transaction-list hash at import is planned as part of the consensus redesign.
+> it "computes a different block `tx_hash`". That was wrong: what an old node disagrees on is the
+> state root.
 
 CONTRACT_NFT_ROYALTY is planned for the **same height**. It is a smaller fork: from its height every
 contract call links `host_nft_royalty_bps` / `host_nft_royalty_recipient`, so a call to a contract that
