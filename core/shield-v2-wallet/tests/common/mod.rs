@@ -35,9 +35,17 @@ pub const NODE_A: &str = "node-a";
 pub const NODE_B: &str = "node-b";
 
 /// Configures `state` with these test nodes (bare names, see [`node`]).
+///
+/// **And it records the user's statement that no other copy of the wallet has a payment in
+/// flight** (`assert_no_other_copy_has_a_pending_payment`, REVIEW_WALLET_4 RW4-1): the wallets of
+/// these tests are new wallets, and a state made by `WalletState::new` is otherwise under the
+/// restore embargo for 128 blocks. A test about the embargo itself configures its state with
+/// `set_nodes` and does not make the statement. (The statement is accepted only before the first
+/// confirmed state check; on a state that already has its embargo base the call is a no-op.)
 pub fn configure(state: &mut WalletState, ids: &[&str]) {
     let ids: Vec<String> = ids.iter().map(|id| node(id)).collect();
     state.set_nodes(&ids).unwrap();
+    let _ = state.assert_no_other_copy_has_a_pending_payment();
 }
 
 pub fn keys(phrase: &str) -> ShieldedKeys {

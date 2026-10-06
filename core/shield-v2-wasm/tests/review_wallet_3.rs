@@ -76,6 +76,8 @@ fn rw3_f5_a_built_transaction_is_submittable_before_anything_is_locked() {
     let key = api::export_scan_key(&SEED, true).unwrap();
     let state0 = api::new_state(me["address"].as_str().unwrap(), "", 0).unwrap();
     let state0 = parse(api::set_nodes(&state0, r#"["https://a.example", "https://b.example", "https://c.example"]"#, rev(&state0)))["state"].to_string();
+    // a new wallet: the user's statement that lifts the restore embargo (REVIEW_WALLET_4 RW4-1)
+    let state0 = parse(api::assert_sole_copy(&state0, true, rev(&state0)))["state"].to_string();
     let scanned = parse(api::scan(&state0, &page_with_shields(&SEED, &[10 * Q, 6 * Q]), &key, rev(&state0)));
     let unverified = scanned["state"].to_string();
     // two of the three configured nodes agree; the third says something else and is named

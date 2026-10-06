@@ -21,9 +21,21 @@
 //!   reaches its expiry, at most 128 blocks above the confirmed height it was built at. What
 //!   `scan` reports of it, a node's "rejected" (`note_rejection`), the client's own "never
 //!   submitted" (`abandon_unsubmitted`) and a height one node claims are hints, never a release;
-//! * every call that changes a state takes `expected_revision` and returns `revision`: store the
-//!   revision with the state, pass the STORED one, and store the result only if it is still the
-//!   stored one (`stale_state:` otherwise) — two tabs must not drop each other's locks;
+//! * every call that changes a state takes `expected_revision` (a counter) and returns `revision`
+//!   and **`revision_id`, the identity of the returned state**: store the identity with the
+//!   state and store a result only if the stored identity is still the one that was LOADED
+//!   (compare-and-swap) — two tabs that start from one revision both reach "counter + 1", with
+//!   two identities, and must not drop each other's locks;
+//! * **a state made by `new_state` is under the restore embargo**: `build_transfer` /
+//!   `build_unshield` refuse it (`restored_recently:`) until its confirmed height is 128 blocks
+//!   above its embargo base; `summary().spend` and `confirm_state().spend` say whether a spend
+//!   can be built now and why not, every bound in BLOCKS; the only override is the user's
+//!   explicit statement, `assert_sole_copy`;
+//! * no call returns a state that the next call refuses (`state_invariant:` instead), and a
+//!   STORED state that is refused (`state:`) is answered with `recover_locks`, never with
+//!   `new_state`;
+//! * the configured nodes are `https` origins, one per host (`http` for loopback development
+//!   sets only);
 //! * amounts are decimal strings of quanta (a JavaScript number cannot hold a u64);
 //! * 32-byte values, bodies, proofs and keys are lowercase hexadecimal;
 //! * the BIP-39 seed (64 bytes) is passed as a `Uint8Array` to the calls that spend; this module
@@ -56,21 +68,26 @@ export interface OwnedNote { value: Quanta; r: Hex; rho: Hex; position: number; 
 /** Opaque to the client: persist it (encrypted) and pass it back. */
 export type WalletState = object;
 /** `expected_change` is for display only and is in none of the other figures. */
-export interface Balances { confirmed_balance: Quanta; unverified_balance: Quanta; locked_balance: Quanta; spendable_balance: Quanta; expected_change: Quanta; }
+export interface Balances { confirmed_balance: Quanta; unverified_balance: Quanta; locked_balance: Quanta; spendable_balance: Quanta; expected_change: Quanta; /** true: scanned without the nullifier key; spends are not seen, spendable is 0 */ unverified_spends: boolean; /** received for certain, spent or not unknown; in no balance */ received_spend_unknown: Quanta; view_only_since: number | null; }
+/** Every figure is a number of BLOCKS (the chain has no block time). `reason`: no_nodes | view_only | no_quorum | embargo | root_unconfirmed | window_too_short. */
+export interface SpendStatus { can_spend_now: boolean; reason: string | null; confirmed_height: number | null; confirmed_lag: number | null; usable_window_blocks: number | null; embargo_until: number | null; embargo_blocks_left: number | null; view_only_since: number | null; default_expiry_blocks: number; max_expiry_blocks: number; restore_embargo_blocks: number; restore_lag_bound_blocks: number; }
+/** `embargo: true` (or `entries_unreadable > 0`): the recovered state is under the restore embargo. */
+export interface Recovery { state: WalletState; revision: number; revision_id: Hex; entries_kept: number; entries_unreadable: number; expiry_unknown: boolean; nodes_kept: boolean; embargo: boolean; }
 /** The revision of the returned state: store it with the state, pass the STORED one as `expected_revision`. */
-export interface Revised { state: WalletState; revision: number; }
+export interface Revised { state: WalletState; revision: number; /** the IDENTITY of the returned state: store it with the state and compare-and-swap on it */ revision_id: Hex; }
 /** The canonical configured set (http(s) origins) and the quorum `confirm_state` applies: a strict majority of it, at least 2. */
 export interface NodesResult extends Revised { nodes: string[]; quorum: number; }
 /** What ONE node's listing says. `pending_seen_*` settle nothing: only `resolve_pending` does. */
-export interface ScanReport { txs: number; received: number[]; spent: number[]; pending_seen_mined: number; pending_seen_superseded: number; not_stored: number; own_outputs_from_record: number; spent_dropped: number; next_height: number; at_tip: boolean; }
+export interface ScanReport { txs: number; received: number[]; spent: number[]; pending_seen_mined: number; pending_seen_superseded: number; not_stored: number; own_outputs_from_record: number; spent_dropped: number; next_height: number; at_tip: boolean; /** true: the page is numbered below the wallet's own tree: rescan_state, then another node */ leaf_mismatch: boolean; }
 export interface ScanResult extends Balances, Revised { report: ScanReport; anchor: Hex; scanned_height: number | null; }
 export interface ScanPagesResult extends Balances, Revised { report: ScanReport[]; anchor: Hex; scanned_height: number | null; }
 /** A note the transaction creates for this wallet. SECRET (`value`, `r`). `r` is null only in an entry migrated from an older state. */
 export interface OwnOutput { cm: Hex; value: Quanta; r: Hex | null; }
 /** `status` is what the scan has SEEN (one node's listing); the inputs are locked in every status. `outputs`: cm_out1, cm_out2. `rejected_hint` / `abandoned_hint` are hints for display and release nothing. */
+/** `inputs` is DERIVED (where the state holds the notes); an entry is held by `input_cms` and `nullifiers`. */
 export interface PendingTx { tx_type: "shielded_transfer_v2" | "unshield_v2" | ""; nullifiers: Hex[]; outputs: Hex[]; inputs: number[]; input_cms: Hex[]; input_total: Quanta; change: OwnOutput | null; own_payment: OwnOutput | null; expiry_height: number; status: "pending" | "seen_mined" | "seen_superseded"; seen_height: number | null; rejected_hint: boolean; abandoned_hint: boolean; legacy: boolean; }
 export interface Tally { count: number; total: Quanta; }
-export interface StateSummary extends Balances { revision: number; anchor: Hex; nullifier_acc: Hex; nullifier_count: number; ciphertext_acc: Hex; nodes: string[]; quorum: number; max_unspent_notes: number; next_height: number; scanned_height: number | null; confirmed_height: number | null; note_count: number; min_note_value: Quanta; below_minimum: Tally; over_capacity: Tally; pruned: Tally; notes: OwnedNote[]; pending: PendingTx[]; }
+export interface StateSummary extends Balances { revision: number; revision_id: Hex; spend: SpendStatus; spend_embargo: object; sole_copy_asserted: boolean; own_shields: number; anchor: Hex; nullifier_acc: Hex; nullifier_count: number; ciphertext_acc: Hex; nodes: string[]; quorum: number; max_unspent_notes: number; next_height: number; scanned_height: number | null; confirmed_height: number | null; note_count: number; min_note_value: Quanta; below_minimum: Tally; over_capacity: Tally; pruned: Tally; notes: OwnedNote[]; pending: PendingTx[]; }
 export interface Selection { positions: number[]; total: Quanta; change: Quanta; change_below_minimum: boolean; }
 export type PaymentPlan =
   | { status: "ok"; selection: Selection; change_below_min_note_value: boolean }
@@ -80,7 +97,7 @@ export interface MergePlan { positions: number[]; amount: Quanta; fee: Quanta; }
 /** A shield: from `GET /api/shield-v2/stats` the chain id, `pool.latest_anchor` and the node's tip as `anchor_height`.
  *  `expiry_height`: default `anchor_height + 64`; must be above `anchor_height` and at most 128 above it.
  *  `max_fee`: default 10 x the minimum fee; a fee above it is refused. */
-export interface ShieldParams { chain_id: string; anchor: Hex; anchor_height: number; expiry_height?: number; max_fee?: Quanta; from_pub_key: Hex; nonce: number; v_in: Quanta; fee: Quanta; recipient: string; }
+export interface ShieldParams { chain_id: string; anchor: Hex; anchor_height: number; expiry_height?: number; max_fee?: Quanta; from_pub_key: Hex; nonce: number; v_in: Quanta; fee: Quanta; recipient: string; allow_below_min_note_value?: boolean; }
 /** A transfer or unshield takes NO height: the anchor is the state's confirmed tree root and the expiry is measured from the state's confirmed height.
  *  `anchor` (optional): a cross-check, must be the state's own root.
  *  `expiry_height`: default confirmed height + 64; at most confirmed height + 128.
@@ -112,9 +129,9 @@ export interface Resolution extends Revised { mined: PendingTx[]; superseded: Pe
 /** The `report` object of a node's `GET /api/shield-v2/stats`, plus `node_id`: the endpoint the CALLER configured, never a string the node returned. */
 export interface StateReport { node_id: string; height: number; tree_root: Hex; nullifier_acc: Hex; note_count: number; nullifier_count: number; ciphertext_acc: Hex; }
 /** `quorum`: a strict majority of the `configured` nodes (at least 2) — never of the reports passed. `dissenting`: configured nodes that contradict the wallet (they do not block). `diverged`: nothing matched and somebody contradicts. `listing_refuted`: the wallet's own listing is wrong — `rescan_state`, then scan from another node. `quorum_tip`: the height a quorum of the configured nodes has reached. `listing_ahead`: the listing shows transactions in blocks above it — ask again; if it stays, `rescan_state` and scan from another node. */
-export interface ConfirmReport { configured: number; quorum: number; nodes: number; matched_height: number | null; confirmed_height: number | null; newly_confirmed: number[]; agreeing: number; not_comparable: number; not_configured: number; dissenting: { node_id: string; height: number }[]; conflicts: number[]; diverged: boolean; listing_refuted: boolean; quorum_tip: number | null; listing_ahead: boolean; pruned: number; }
+export interface ConfirmReport { configured: number; quorum: number; nodes: number; matched_height: number | null; confirmed_height: number | null; newly_confirmed: number[]; agreeing: number; not_comparable: number; not_configured: number; dissenting: { node_id: string; height: number }[]; conflicts: number[]; diverged: boolean; listing_refuted: boolean; quorum_tip: number | null; listing_ahead: boolean; pruned: number; /** one node's word; used for the embargo base only */ highest_reported: number | null; all_reported: boolean; /** quorum_tip - confirmed_height, in blocks */ confirmed_lag: number | null; embargo_base_set: boolean; }
 /** `malformed`: entries of `reports_json` that were not a well-formed report (skipped). */
-export interface ConfirmResult extends Revised { report: ConfirmReport; malformed: number; }
+export interface ConfirmResult extends Revised { report: ConfirmReport; malformed: number; /** configured nodes whose report has no ciphertext_acc: an outdated build, no vote */ outdated_nodes: string[]; spend: SpendStatus; }
 "#;
 
 fn js(r: api::ApiResult) -> Result<String, JsError> {
@@ -157,8 +174,44 @@ pub fn new_state(address: &str, min_note_value_quanta: &str, max_unspent_notes: 
     js(api::new_state(address, min_note_value_quanta, max_unspent_notes))
 }
 
-/// Configures the wallet's nodes (`nodes_json`: a JSON array of http(s) origins). The quorum is a
-/// strict majority of this set. JSON `NodesResult`.
+/// The user's explicit statement "no other copy of this wallet has a payment in flight": the
+/// only override of the restore embargo of a state made by `new_state`. The second argument must
+/// be `true`. Accepted only before the first confirmed state check. JSON `Revised & { spend }`.
+#[wasm_bindgen]
+pub fn assert_sole_copy(state_json: &str, i_am_sure_no_other_copy_has_a_pending_payment: bool, expected_revision: f64) -> Result<String, JsError> {
+    js(api::assert_sole_copy(state_json, i_am_sure_no_other_copy_has_a_pending_payment, expected_revision))
+}
+
+/// Can this state build a spend now, and why not; every bound in blocks. `quorum_tip`: from the
+/// latest `confirm_state` (negative: none). JSON `SpendStatus`.
+#[wasm_bindgen]
+pub fn can_spend_now(state_json: &str, quorum_tip: f64) -> Result<String, JsError> {
+    js(api::can_spend_now(state_json, quorum_tip))
+}
+
+/// `stale_state:` unless the state in hand is the revision with this identity (`revision_id`).
+#[wasm_bindgen]
+pub fn expect_revision_id(state_json: &str, revision_id_hex: &str) -> Result<String, JsError> {
+    js(api::expect_revision_id(state_json, revision_id_hex))
+}
+
+/// The answer to a `state:` error on a stored state: an empty state for the same wallet with
+/// every lock that can be read out of the text. NEVER `new_state` instead. JSON `Recovery`.
+#[wasm_bindgen]
+pub fn recover_locks(state_json: &str) -> Result<String, JsError> {
+    js(api::recover_locks(state_json))
+}
+
+/// A `shield_v2` to the wallet's OWN address, recorded in the state (its note is stored whatever
+/// its value). JSON `Revised & BuiltTx`. Proves: seconds; run in a worker.
+#[wasm_bindgen]
+pub fn build_own_shield(state_json: &str, own_address: &str, params_json: &str, expected_revision: f64) -> Result<String, JsError> {
+    js(api::build_own_shield(state_json, own_address, params_json, expected_revision))
+}
+
+/// Configures the wallet's nodes (`nodes_json`: a JSON array of origins: https, one per host;
+/// http for loopback development sets only). The quorum is a strict majority of this set. JSON
+/// `NodesResult`.
 #[wasm_bindgen]
 pub fn set_nodes(state_json: &str, nodes_json: &str, expected_revision: f64) -> Result<String, JsError> {
     js(api::set_nodes(state_json, nodes_json, expected_revision))

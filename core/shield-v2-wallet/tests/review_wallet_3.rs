@@ -289,9 +289,14 @@ fn rw3_f8_the_quorum_is_a_strict_majority_of_the_configured_nodes_and_node_ids_a
     let mut s = WalletState::new(alice.address().pk);
     let rev = s.revision();
     assert_eq!(
-        s.set_nodes(&["https://node.example", "https://node.example/", "HTTPS://NODE.EXAMPLE", "https://b.example:443", "http://node.example"]).unwrap(),
-        vec!["http://node.example", "https://b.example", "https://node.example"]
+        s.set_nodes(&["https://node.example", "https://node.example/", "HTTPS://NODE.EXAMPLE", "https://b.example:443", "https://c.example:8443"]).unwrap(),
+        vec!["https://b.example", "https://c.example:8443", "https://node.example"]
     );
+    // REVIEW_WALLET_4 RW4-2 / RW4-7 (this assertion listed `http://node.example` beside
+    // `https://node.example` as a third node before): http outside loopback, and two ids with
+    // one host, refuse the whole call
+    assert!(s.clone().set_nodes(&["https://node.example", "https://b.example", "http://node.example"]).is_err(), "http is for loopback only");
+    assert!(s.clone().set_nodes(&["https://node.example", "https://b.example", "https://node.example:8443"]).is_err(), "one node per host");
     assert_eq!((s.nodes().len(), s.quorum(), s.revision()), (3, 2, rev + 1));
     assert!(s.set_nodes(&["https://c.example", "c"]).is_err() && s.nodes().len() == 3 && s.revision() == rev + 1, "refused as a whole");
     assert!(s.set_nodes(&(0..65).map(|i| format!("https://n{i}.example")).collect::<Vec<_>>()).is_err(), "at most 64 nodes");
@@ -1066,7 +1071,7 @@ fn rw3_a_format_3_state_is_migrated_with_every_pending_entry_locked() {
     assert_eq!((m.min_note_value(), m.revision(), m.nodes().len(), m.max_unspent_notes()), (Q / 4, now.revision() + 1, 0, MAX_STORED_NOTES));
     assert!(m.pending().iter().all(|p| p.status == PendingStatus::Pending && p.seen_height.is_none() && !p.legacy && p.outputs.len() == 2 && p.change.as_ref().is_some_and(|c| c.r.is_none())));
     assert_eq!(m.pending()[0].input_cms, vec![now.note_at(pos3).unwrap().cm]);
-    assert!(m.to_json().unwrap().contains("\"version\":4"));
+    assert!(m.to_json().unwrap().contains("\"version\":5"));
     assert!(WalletState::from_json(&v3.to_string().replace("\"version\":3", "\"version\":5")).is_err());
 
     // the truth: ta was mined, tb never

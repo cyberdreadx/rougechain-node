@@ -42,7 +42,7 @@ use crate::error::WalletError;
 use crate::field;
 use crate::keys::{account_from_pub_key, ShieldedAddress, ShieldedKeys};
 use crate::note_enc::{encrypt_note, encrypt_to_nobody};
-use crate::store::{PendingChange, PendingStatus, PendingTx, SpendInput, WalletState, B32};
+use crate::store::{OwnShield, PendingChange, PendingStatus, PendingTx, SpendInput, WalletState, B32, DEFAULT_MIN_NOTE_VALUE};
 
 /// The default distance between the anchor's height and `expiry_height`
 /// ([`TxContext::new`]): 64 blocks. Every client SHOULD use exactly this offset (a fixed offset
@@ -595,10 +595,75 @@ fn assemble_shield(req: &ShieldRequest<'_>, src: Source<'_>) -> Result<UnprovenT
     assemble(TxKind::Shield, &req.ctx, inputs, outs, amounts, (&[], 0), Some((hex::encode(req.from_pub_key), req.nonce)), false, rnd)
 }
 
-/// Builds and proves a `shield_v2`. The result's envelope still needs the account signature over
-/// [`BuiltTx::signing_bytes`].
+/// The note a shield creates must be worth storing (REVIEW_WALLET_4 RW4-11): below `min` it is
+/// refused unless the caller allows it explicitly.
+fn check_shield_note(req: &ShieldRequest<'_>, min: u64, allow_below_minimum: bool) -> Result<(), WalletError> {
+    let value = req.v_in.saturating_sub(req.fee);
+    if value > 0 && value < min && !allow_below_minimum {
+        return Err(WalletError::NoteBelowMinimum { value, min });
+    }
+    Ok(())
+}
+
+/// Builds and proves a `shield_v2` to SOMEBODY ELSE's address. The result's envelope still needs
+/// the account signature over [`BuiltTx::signing_bytes`]. A note below the default minimum note
+/// value (the minimum fee, 1 XRGE) is refused — the recipient's wallet would count it as dust
+/// and not store it; see [`build_shield_with`]. For a shield to the wallet's OWN address use
+/// [`build_own_shield`], which records the note in the wallet state.
 pub fn build_shield(req: &ShieldRequest<'_>) -> Result<BuiltTx, WalletError> {
+    build_shield_with(req, DEFAULT_MIN_NOTE_VALUE, false)
+}
+
+/// [`build_shield`] with the minimum note value to apply and the caller's explicit decision to
+/// shield a note below it (`allow_below_min_note_value`).
+pub fn build_shield_with(req: &ShieldRequest<'_>, min_note_value: u64, allow_below_min_note_value: bool) -> Result<BuiltTx, WalletError> {
+    check_shield_note(req, min_note_value, allow_below_min_note_value)?;
     assemble_shield(req, Source::Hedged(&mut OsEntropy))?.prove()
+}
+
+/// A shield to the wallet's own address **and the wallet state in which its note is recorded**
+/// ([`OwnShield`]). Persist `state`; sign and submit `tx`. (A shield spends no note and locks
+/// nothing: a state that was not persisted loses only the record — the note is then found
+/// through its ciphertext like anybody's, if it is at least the minimum note value.)
+pub struct RecordedShield {
+    pub tx: BuiltTx,
+    pub state: WalletState,
+}
+
+fn own_shield_checks(state: &WalletState, expected_revision: u64, own: &ShieldedAddress, req: &ShieldRequest<'_>, allow_below_min_note_value: bool) -> Result<(), WalletError> {
+    state.expect_revision(expected_revision)?;
+    if state.pk() != own.pk {
+        return Err(WalletError::Request("this state belongs to another wallet".into()));
+    }
+    if req.recipient.pk == own.pk && req.recipient.ek != own.ek {
+        return Err(WalletError::MixedOwnAddress);
+    }
+    if req.recipient != own {
+        return Err(WalletError::Request("build_own_shield shields to the wallet's own address; for another recipient use build_shield".into()));
+    }
+    check_shield_note(req, state.min_note_value(), allow_below_min_note_value)
+}
+
+fn record_own_shield(state: &WalletState, tx: &UnprovenTx) -> Result<WalletState, WalletError> {
+    let note = tx.outputs.iter().find(|o| o.role == OutputRole::Payment).ok_or(WalletError::Internal("a shield without its note"))?;
+    let mut next = state.clone();
+    next.record_own_shield(OwnShield { cm: B32(note.cm), value: note.value, r: B32(note.r), expiry_height: tx.expiry_height })?;
+    Ok(next)
+}
+
+/// Builds and proves a `shield_v2` **to the wallet's own address and records its note in the
+/// state** (REVIEW_WALLET_4 RW4-11): the note is then stored from the record when the scan meets
+/// it — whatever its value, whatever the listing serves as its ciphertext — by the rule that
+/// stores the wallet's own change. `own` is the wallet's address (`ShieldedKeys::address`); the
+/// request's recipient must be exactly it. A note below the STATE's minimum note value is
+/// refused unless `allow_below_min_note_value`: such a note keeps its record for as long as it
+/// is unspent, but a restore from the phrase alone does not find it (rescan with a minimum note
+/// value of 1 to recover it).
+pub fn build_own_shield(state: &WalletState, expected_revision: u64, own: &ShieldedAddress, req: &ShieldRequest<'_>, allow_below_min_note_value: bool) -> Result<RecordedShield, WalletError> {
+    own_shield_checks(state, expected_revision, own, req, allow_below_min_note_value)?;
+    let unproven = assemble_shield(req, Source::Hedged(&mut OsEntropy))?;
+    let next = record_own_shield(state, &unproven)?;
+    Ok(RecordedShield { tx: unproven.prove()?, state: next })
 }
 
 // ---- transfer --------------------------------------------------------------------------------------
@@ -641,6 +706,14 @@ fn assemble_transfer(req: &TransferRequest<'_>, src: Source<'_>) -> Result<Unpro
         return Err(WalletError::Request("a transfer must send a non-zero amount".into()));
     }
     let (change, total) = change_of(req.inputs, req.amount as u128 + req.fee as u128)?;
+    // the wallet's own pk with somebody else's encryption key: the note would be the wallet's
+    // and readable only by the other party — gone at the next rescan (RW4-4)
+    {
+        let own = req.keys.address();
+        if req.recipient.pk == own.pk && req.recipient.ek != own.ek {
+            return Err(WalletError::MixedOwnAddress);
+        }
+    }
     let anchor = field::digest(&req.ctx.anchor, "the anchor")?;
     let mut t = Transcript::new(TxKind::Transfer, &req.ctx, req.fee);
     t.inputs(req.inputs);
@@ -656,7 +729,10 @@ fn assemble_transfer(req: &TransferRequest<'_>, src: Source<'_>) -> Result<Unpro
         OutSpec { role: OutputRole::Change, value: change, pk: *req.keys.pk(), ek: Some(&own) },
     ];
     let amounts = Amounts { v_in: 0, v_out: 0, fee: req.fee, account: [0u8; 32] };
-    let payment_to_self = req.recipient.pk == own.pk;
+    // "to self" is the WHOLE address — pk AND encryption key (REVIEW_WALLET_4 RW4-4). For any
+    // other recipient the note is encrypted to the recipient's key and the wallet keeps nothing
+    // of it but the outgoing record.
+    let payment_to_self = *req.recipient == own;
     assemble(TxKind::Transfer, &req.ctx, inputs, outs, amounts, (req.inputs, total), None, payment_to_self, rnd)
 }
 
@@ -840,6 +916,13 @@ pub mod deterministic {
     }
     pub fn unshield(req: &UnshieldRequest<'_>, label: &str) -> Result<UnprovenTx, WalletError> {
         assemble_unshield(req, Source::Stream(&mut DeterministicEntropy::new(label)))
+    }
+    /// [`super::build_own_shield`] without the proof: the same checks, the same record.
+    pub fn own_shield_recorded(state: &WalletState, expected_revision: u64, own: &ShieldedAddress, req: &ShieldRequest<'_>, allow_below_min_note_value: bool, label: &str) -> Result<(UnprovenTx, WalletState), WalletError> {
+        own_shield_checks(state, expected_revision, own, req, allow_below_min_note_value)?;
+        let unproven = assemble_shield(req, Source::Stream(&mut DeterministicEntropy::new(label)))?;
+        let next = record_own_shield(state, &unproven)?;
+        Ok((unproven, next))
     }
     /// [`super::build_transfer`] without the proof: the same state checks, the same context from
     /// the confirmed height, the same lock — and an unproven body with deterministic randomness.

@@ -272,20 +272,31 @@ fn rw4_sound_without_lag_the_documented_embargo_is_sufficient() {
     }
 }
 
-/// The embargo is not enforced by the core either: a state made by `WalletState::new` builds a
-/// spend the moment it has a confirmed height. (Stated in the documents; here so that nobody
-/// reads "the property test asserts it is sufficient" as "the core enforces it".)
+/// As reviewed: "the embargo is not enforced by the core either: a state made by
+/// `WalletState::new` builds a spend the moment it has a confirmed height."
+///
+/// **Resolved (the name is the review's; the limit is gone).** A state made by `WalletState::new`
+/// and configured with `set_nodes` is under the restore embargo, in the core: it builds nothing
+/// until its confirmed height is 128 blocks above its embargo base. The only way around it is the
+/// user's recorded statement that no other copy has a payment in flight — which is what
+/// `common::configure` makes for the new wallets of these tests.
 #[test]
 fn rw4_demo_the_restore_embargo_is_documentation_only() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q]);
     let mut restored = WalletState::new(alice.address().pk);
-    configure(&mut restored, &[N1, N2, N3]);
+    restored.set_nodes(&[node(N1), node(N2), node(N3)]).unwrap();
     restored.scan(&chain.page(0), &alice.scan_key()).unwrap();
-    restored.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
+    restored.confirm_state(&[chain.report(N1), chain.report(N2), chain.report(N3)]).unwrap();
     let p = position_of(&restored, 10 * Q);
-    assert!(pay_with(&mut restored, &alice, &[p], &bob.address(), 4 * Q, None, "rw4-demo-embargo").is_ok(), "LIMIT: nothing in the core knows that this state was just restored");
+    assert!(matches!(pay_with(&mut restored, &alice, &[p], &bob.address(), 4 * Q, None, "rw4-demo-embargo"), Err(WalletError::RestoredRecently { until: Some(h) }) if h == chain.height + MAX_EXPIRY_OFFSET), "the core knows that this state has no lock history");
+    // with the user's statement (a NEW wallet): at once
+    let mut new_wallet = WalletState::new(alice.address().pk);
+    configure(&mut new_wallet, &[N1, N2, N3]);
+    new_wallet.scan(&chain.page(0), &alice.scan_key()).unwrap();
+    new_wallet.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
+    assert!(new_wallet.sole_copy_asserted() && pay_with(&mut new_wallet, &alice, &[p], &bob.address(), 4 * Q, None, "rw4-demo-embargo").is_ok());
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -361,8 +372,17 @@ fn rw4_sound_canonical_node_id_for_host_names_and_what_it_refuses() {
     ] {
         assert!(id(s).is_none(), "must be refused: {s:?} gave {:?}", id(s));
     }
+    // Resolution of RW4-7 (this test stated the limit "one host, three nodes" before): the SET
+    // is refused — http outside loopback, and two ids with one host — while `canonical_node_id`
+    // above only spells
     let mut w = WalletState::new([1u8; 32]);
-    assert_eq!(w.set_nodes(&["http://node.example", "https://node.example", "https://node.example:8443"]).unwrap().len(), 3, "LIMIT: one host, three nodes");
+    assert!(w.set_nodes(&["http://node.example", "https://node.example", "https://node.example:8443"]).is_err());
+    assert!(w.set_nodes(&["https://node.example", "https://node.example:8443", "https://b.example"]).is_err(), "one node per host, whatever the port");
+    assert!(w.set_nodes(&["http://node.example", "https://b.example", "https://c.example"]).is_err(), "http is accepted for loopback hosts only");
+    assert!(w.set_nodes(&["https://localhost:8443", "https://b.example", "https://c.example"]).is_err(), "a loopback node is never in a quorum with other nodes");
+    assert_eq!(w.set_nodes(&["http://localhost:5101", "http://127.0.0.1:5102", "http://[::1]:5103", "http://localhost:5104"]).unwrap().len(), 4, "a development set: loopback only, told apart by port");
+    assert!(w.set_nodes(&["http://localhost:5101", "https://localhost:5101"]).is_err(), "one node per host and port");
+    assert_eq!(w.set_nodes(&["https://node.example", "https://b.example", "https://c.example"]).unwrap().len(), 3);
     assert_eq!(w.quorum(), 2);
 }
 
@@ -798,6 +818,12 @@ fn rw4_demo_a_shield_to_ones_own_address_below_the_minimum_note_value_is_not_sto
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     assert_eq!((w.balances().confirmed, w.below_minimum().count, balance_of(&chain, &alice)), (0, 1, Q as u128 / 2), "LIMIT: the user shielded 0.5 XRGE and the wallet shows nothing");
+    // Resolved (RW4-11): that is a shield made OUTSIDE the wallet's own builder. `build_shield`
+    // refuses a note below the minimum unless the caller allows it, and `build_own_shield`
+    // records the note in the state, which then stores it whatever its value —
+    // `rw4r_i11_the_wallets_own_shield_is_recorded_and_stored_whatever_its_value`.
+    let small = ShieldRequest { ctx: chain.ctx(), from_pub_key: &fake_account_key(2), nonce: 1, v_in: Q + Q / 2, fee: Q, recipient: &alice.address(), max_fee: None };
+    assert!(matches!(build_shield(&small).err(), Some(WalletError::NoteBelowMinimum { .. })));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -832,4 +858,7 @@ fn rw4_demo_two_different_states_carry_the_same_revision() {
     assert!(!tab_b.is_locked(p10), "LIMIT: and that state does not hold tab A's lock");
     // the rule that does protect it: compare-and-swap against the revision the tab LOADED
     assert_ne!(stored_revision, loaded, "tab B's write is refused by a storage CAS on the revision it loaded");
+    // Resolved (RW4-10): the COUNTER is still a counter, and every state now carries the
+    // IDENTITY of its revision, which is what a client stores and compares
+    assert!(tab_a.revision_id() != tab_b.revision_id() && tab_b.expect_revision_id(&tab_a.revision_id()).is_err(), "the identity tells tab B's state from tab A's");
 }

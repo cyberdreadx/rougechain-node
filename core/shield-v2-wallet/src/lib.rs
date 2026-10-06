@@ -46,8 +46,9 @@ pub use store::{
     DEFAULT_MAX_UNSPENT_NOTES, DEFAULT_MIN_NOTE_VALUE, MAX_CONFIGURED_NODES, MAX_SPENT_RETAINED, MAX_STORED_NOTES,
     MAX_UNSPENT_NOTES_LIMIT, MIN_CONFIGURED_NODES, PRUNE_RETENTION_BLOCKS, STATE_VERSION,
 };
+pub use store::{OwnShield, Recovery, SpendEmbargo, SpendStatus, MAX_OWN_SHIELDS, RESTORE_EMBARGO_BLOCKS, RESTORE_LAG_BOUND_BLOCKS};
 pub use tx::{
-    build_shield, build_transfer, build_unshield, BuiltTx, LockedTx, OutputRecord, OutputRole, ShieldRequest,
+    build_own_shield, build_shield, build_shield_with, build_transfer, build_unshield, BuiltTx, LockedTx, OutputRecord, OutputRole, RecordedShield, ShieldRequest,
     SpendOptions, TransferParams, TransferRequest, TxContext, UnprovenTx, UnshieldParams, UnshieldRequest,
     DEFAULT_EXPIRY_OFFSET, DEFAULT_MAX_FEE_QUANTA, MAX_EXPIRY_OFFSET,
 };

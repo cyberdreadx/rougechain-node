@@ -392,7 +392,7 @@ fn rw1_f7_a_format_1_state_is_migrated_with_its_local_marks_kept_as_locks() {
     let p = migrated.pending()[0].clone();
     assert_eq!((p.inputs.clone(), p.input_cms.clone(), p.expiry_height, p.status, p.legacy), (vec![five.position], vec![five.cm], synthetic, PendingStatus::Pending, true));
     assert_eq!(p.nullifiers, vec![five.nullifier.unwrap()]);
-    assert!(migrated.to_json().unwrap().contains("\"version\":4"));
+    assert!(migrated.to_json().unwrap().contains("\"version\":5"));
 
     // the rescan finds the notes again; the 5 note is locked from the moment it is found
     migrated.scan(&chain.page(0), &alice.scan_key()).unwrap();

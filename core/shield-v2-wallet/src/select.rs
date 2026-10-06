@@ -43,8 +43,12 @@ pub struct MergePlan {
 /// pending transaction** (REVIEW_WALLET_1 F-7) and — unless `allow_unverified` — **confirmed**
 /// by `WalletState::confirm_state` (F-1).
 fn spendable(state: &WalletState, allow_unverified: bool) -> Vec<&OwnedNote> {
+    // a view-only state cannot see spends: it offers nothing, and neither does a note whose
+    // nullifier is unknown (REVIEW_WALLET_4 RW4-3)
+    let blind = state.view_only_since().is_some();
     let mut v: Vec<&OwnedNote> = state
         .unspent()
+        .filter(|n| !blind && n.nullifier.is_some())
         .filter(|n| n.value > 0 && (allow_unverified || n.confirmed) && !state.is_locked(n.position) && state.tree().path(n.position).is_some())
         .collect();
     // ascending by value, then by position: deterministic

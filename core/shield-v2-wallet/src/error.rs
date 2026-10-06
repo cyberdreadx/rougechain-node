@@ -37,6 +37,27 @@ pub enum WalletError {
     /// The state in hand does not have the revision the caller expects: another writer has
     /// changed the stored state since this copy was loaded. Reload and repeat.
     StaleState,
+    /// A call would have left a state that `from_json` does not read back (an implementation
+    /// fault, caught before the state was handed out): the call did nothing and the caller's
+    /// state is unchanged (REVIEW_WALLET_4 RW4-5). For a STORED state that no longer reads, use
+    /// `WalletState::recover_locks`, never a new state.
+    StateInvariant,
+    /// The state was made from the phrase and has no lock history: an earlier copy of the wallet
+    /// may have a payment in flight. No spend is built before the confirmed height reaches
+    /// `until` (`None`: nothing confirmed yet, so the embargo has no base) — REVIEW_WALLET_4
+    /// RW4-1, `WalletState::spend_embargo`.
+    RestoredRecently { until: Option<u64> },
+    /// The state has been scanned without the nullifier key and cannot see spends: scan one
+    /// page with the full scan key first (REVIEW_WALLET_4 RW4-3).
+    ViewOnly,
+    /// The recipient address has this wallet's own `pk` and another encryption key: the note
+    /// would be the wallet's, encrypted to somebody else — lost at the next rescan. Such an
+    /// address can only be a mistake or an attack (REVIEW_WALLET_4 RW4-4).
+    MixedOwnAddress,
+    /// The note a shield would create is below the minimum note value: it costs more to spend
+    /// than it is worth, and a wallet does not store such a note from a stranger. Allowed only
+    /// on the caller's explicit decision (REVIEW_WALLET_4 RW4-11).
+    NoteBelowMinimum { value: u64, min: u64 },
     /// The state holds notes found without `nk` and cannot tell which of them were spent since:
     /// rebuild it by scanning from an empty state with the full scan key.
     RescanRequired,
@@ -74,6 +95,21 @@ impl fmt::Display for WalletError {
                 "the wallet's state is not confirmed up to its tree root: configure at least two nodes, scan to the tip and confirm the state before building",
             ),
             WalletError::StaleState => f.write_str("the state is not at the expected revision: another writer changed it; reload the stored state and repeat"),
+            WalletError::StateInvariant => f.write_str(
+                "the call would have left a wallet state that does not read back; nothing was changed (for a stored state that does not read: recover_locks, never a new state)",
+            ),
+            WalletError::RestoredRecently { until: Some(h) } => write!(
+                f,
+                "this wallet state was made from the recovery phrase: a payment of another copy of the wallet may still be in flight; no payment before height {h} is confirmed"
+            ),
+            WalletError::RestoredRecently { until: None } => f.write_str(
+                "this wallet state was made from the recovery phrase: a payment of another copy of the wallet may still be in flight; no payment before a state check has confirmed a height and 128 blocks more are confirmed",
+            ),
+            WalletError::ViewOnly => f.write_str("the state was scanned without the nullifier key and cannot see spends: scan a page with the full scan key first"),
+            WalletError::MixedOwnAddress => f.write_str(
+                "the recipient address has this wallet's own pk and another encryption key: the payment would be lost; such an address is a mistake or an attack",
+            ),
+            WalletError::NoteBelowMinimum { min, .. } => write!(f, "the shielded note would be below the minimum note value of {min} quanta: allow it explicitly or shield more"),
             WalletError::RescanRequired => f.write_str(
                 "the state was scanned without nk and spends may have been missed: rescan from an empty state with the full scan key",
             ),

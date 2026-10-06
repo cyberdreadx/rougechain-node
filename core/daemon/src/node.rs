@@ -16101,8 +16101,13 @@ mod shield_v2_wallet_interop_tests {
         /// Configures a wallet with these nodes (host labels). A wallet needs two for anything to
         /// be confirmed; where a test has ONE real node, that node stands in for two operators
         /// that hold the same chain (`own-1`, `own-2`).
+        ///
+        /// The wallets of these tests are NEW wallets: the user's statement that no other copy
+        /// has a payment in flight is recorded, without which a state made by
+        /// `WalletState::new` is under the restore embargo (REVIEW_WALLET_4 RW4-1).
         fn configure(state: &mut WalletState, ids: &[&str]) {
             state.set_nodes(&ids.iter().map(|id| Self::origin(id)).collect::<Vec<_>>()).unwrap();
+            let _ = state.assert_no_other_copy_has_a_pending_payment();
         }
         /// This node's report under the two names `configure(state, &["own-1", "own-2"])` set.
         fn own_reports(&self) -> [wallet::StateReport; 2] { [self.state_report("own-1"), self.state_report("own-2")] }

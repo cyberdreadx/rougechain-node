@@ -36,10 +36,14 @@ fn report_for(state: &str, id: &str) -> Value {
 /// report of `https://a.example`).
 const NODES: &str = r#"["https://a.example", "https://b.example"]"#;
 
-/// `new_state` and `set_nodes`: an empty state configured with [`NODES`] (revision 1).
+/// `new_state`, `set_nodes` and `assert_sole_copy`: an empty state configured with [`NODES`]
+/// for a NEW wallet — the user's statement that no other copy has a payment in flight, without
+/// which a state made by `new_state` is under the restore embargo (REVIEW_WALLET_4 RW4-1).
+/// Revision 2.
 fn fresh_state(address: &str) -> String {
     let s = api::new_state(address, "", 0).unwrap();
-    parse(api::set_nodes(&s, NODES, 0.0))["state"].to_string()
+    let s = parse(api::set_nodes(&s, NODES, 0.0))["state"].to_string();
+    parse(api::assert_sole_copy(&s, true, 1.0))["state"].to_string()
 }
 
 fn account_key() -> Vec<u8> {
@@ -95,6 +99,8 @@ fn address_scan_plan_build_end_to_end() {
     assert_eq!((configured["nodes"].clone(), configured["quorum"].as_u64(), configured["revision"].as_u64()), (json!(["https://a.example", "https://b.example"]), Some(2), Some(1)));
     assert!(api::set_nodes(&unconfigured, r#"["https://a.example", "b"]"#, 0.0).unwrap_err().starts_with("request:"), "not an http(s) origin");
     let state0 = configured["state"].to_string();
+    // a new wallet: the user's statement that lifts the restore embargo (REVIEW_WALLET_4 RW4-1)
+    let state0 = parse(api::assert_sole_copy(&state0, true, 1.0))["state"].to_string();
     assert_eq!(state0, fresh_state(address));
     let scanned = parse(api::scan(&state0, &page_with_one_shield(&SEED, 9 * Q), &key, rev(&state0)));
     // one node's listing: the note is there, unverified — not in the confirmed balance
@@ -107,7 +113,7 @@ fn address_scan_plan_build_end_to_end() {
     let pages = format!("[{}]", page_with_one_shield(&SEED, 9 * Q));
     assert_eq!(parse(api::scan_pages(&state0, &pages, &key, rev(&state0)))["state"], scanned["state"]);
     // every changing call returns the revision of the state it returns
-    assert_eq!((rev(&state0), scanned["revision"].as_u64(), rev(&unverified)), (1.0, Some(2), 2.0));
+    assert_eq!((rev(&state0), scanned["revision"].as_u64(), rev(&unverified)), (2.0, Some(3), 3.0));
     // nothing is built on a state that has no confirmed height — not even with `allow_unverified`
     let early = json!({ "chain_id": "test", "anchor": scanned["anchor"], "inputs": [parse(api::summary(&unverified))["notes"][0]["position"]], "recipient": them["address"], "amount": "5000000000", "fee": "1000000000" });
     assert!(api::build_transfer(&SEED, &unverified, &early.to_string(), rev(&unverified)).unwrap_err().starts_with("state_unconfirmed:"));
@@ -129,7 +135,10 @@ fn address_scan_plan_build_end_to_end() {
     let mut old_shape = report("b");
     old_shape.as_object_mut().unwrap().remove("ciphertext_acc");
     let c = parse(api::confirm_state(&unverified, &json!([{ "node_id": "https://a.example", "height": 1, "root": scanned["anchor"] }, old_shape, report("a")]).to_string(), rev(&unverified)));
-    assert_eq!((c["malformed"].as_u64(), c["report"]["agreeing"].as_u64(), c["report"]["matched_height"].is_null()), (Some(2), Some(1), true));
+    assert_eq!((c["malformed"].as_u64(), c["report"]["agreeing"].as_u64(), c["report"]["matched_height"].is_null()), (Some(1), Some(1), true));
+    // REVIEW_WALLET_4 RW4-12: the report that lacks ONLY the ciphertext hash is an outdated
+    // node, named — neither garbage (`malformed`) nor a dissenter
+    assert_eq!((c["outdated_nodes"].clone(), c["report"]["dissenting"].as_array().map(Vec::len)), (json!(["https://b.example"]), Some(0)));
     // a node the wallet is not configured with is nobody
     let c = parse(api::confirm_state(&unverified, &json!([report("a"), report("c"), report("d")]).to_string(), rev(&unverified)));
     assert_eq!((c["report"]["not_configured"].as_u64(), c["report"]["quorum"].as_u64(), c["report"]["matched_height"].is_null()), (Some(2), Some(2), true));

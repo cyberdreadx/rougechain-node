@@ -35,10 +35,14 @@ fn report_for(state: &str, id: &str) -> Value {
 /// report of `https://a.example`).
 const NODES: &str = r#"["https://a.example", "https://b.example"]"#;
 
-/// `new_state` and `set_nodes`: an empty state configured with [`NODES`] (revision 1).
+/// `new_state`, `set_nodes` and `assert_sole_copy`: an empty state configured with [`NODES`]
+/// for a NEW wallet — the user's statement that no other copy has a payment in flight, without
+/// which a state made by `new_state` is under the restore embargo (REVIEW_WALLET_4 RW4-1).
+/// Revision 2.
 fn fresh_state(address: &str) -> String {
     let s = api::new_state(address, "", 0).unwrap();
-    parse(api::set_nodes(&s, NODES, 0.0))["state"].to_string()
+    let s = parse(api::set_nodes(&s, NODES, 0.0))["state"].to_string();
+    parse(api::assert_sole_copy(&s, true, 1.0))["state"].to_string()
 }
 
 fn account_key() -> Vec<u8> {

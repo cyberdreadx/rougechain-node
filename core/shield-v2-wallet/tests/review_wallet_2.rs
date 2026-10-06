@@ -860,7 +860,7 @@ fn rw2_a_format_2_state_is_migrated_with_every_pending_entry_locked() {
     assert_eq!((m.next_height(), m.notes().len(), m.confirmed_height(), m.pending().len()), (0, 0, None, 2));
     assert!(m.pending().iter().all(|p| p.status == PendingStatus::Pending && p.seen_height.is_none() && !p.legacy && p.outputs.is_empty()));
     assert_eq!(m.pending()[0].input_cms, vec![now.note_at(pos3).unwrap().cm]);
-    assert!(m.to_json().unwrap().contains("\"version\":4"));
+    assert!(m.to_json().unwrap().contains("\"version\":5"));
 
     // the truth: ta was mined after all, tb never
     chain.block(&[&ta.body]).unwrap();
