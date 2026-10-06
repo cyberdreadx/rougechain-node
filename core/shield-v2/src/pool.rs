@@ -620,7 +620,11 @@ impl<S: PoolStore> Pool<S> {
             // check 18
             let new_total = match tx.kind {
                 TxKind::Shield => {
-                    let t = pool_total + (tx.v_in - tx.fee) as u128;
+                    // REVIEW_NODE_1 R1-6: checked, so a corrupt stored `pool_total` can neither
+                    // panic (debug) nor wrap past the cap (release); `fee ≤ v_in` by check 10.
+                    let t = pool_total
+                        .checked_add((tx.v_in - tx.fee) as u128)
+                        .ok_or(PoolError::CorruptState("pool_total overflow"))?;
                     if t > SHIELD_V2_POOL_CAP_QUANTA {
                         return Err(refuse(TxRefusal::PoolCapExceeded));
                     }

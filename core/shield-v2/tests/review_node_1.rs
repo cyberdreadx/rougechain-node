@@ -54,13 +54,13 @@ fn extreme_u64_amounts_are_refused_by_the_right_rule_and_never_panic() {
     assert_eq!(prepared.effects().txs[0].account_debit, m);
 }
 
-/// REVIEW_NODE_1 finding R1-6 (Low, defence in depth): check 18 for a shield is
+/// REVIEW_NODE_1 finding R1-6 (Low, defence in depth), FIXED: check 18 for a shield was
 /// `pool_total + (v_in − fee) as u128` with an UNCHECKED `u128` addition (`pool.rs`,
 /// `validate_block`). The invariant `pool_total ≤ 10^15` makes it unreachable through the rules,
 /// but spec §4.4 says the no-overpayment property must hold "even if ... an implementation were
-/// broken": on a corrupt state the addition panics in a debug build and WRAPS in a release build,
-/// where the wrapped total passes the cap check and the shield is accepted. Expected: a checked
-/// addition that refuses. This test FAILS until the addition is checked.
+/// broken": on a corrupt state the addition panicked in a debug build and WRAPPED in a release
+/// build, where the wrapped total passed the cap check and the shield was accepted. Now it is a
+/// `checked_add` that refuses with `PoolError::CorruptState`.
 #[test]
 fn review_r1_6_shield_cap_check_uses_an_unchecked_u128_addition() {
     let mut state = PoolState::genesis();
@@ -71,7 +71,8 @@ fn review_r1_6_shield_cap_check_uses_an_unchecked_u128_addition() {
     let shield = tx(TxKind::Shield, 1, anchor, 10, 0, 0);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pool.validate_block(A, &[shield])));
     match outcome {
-        Ok(Err(e)) => eprintln!("refused as {e:?} (expected)"),
+        Ok(Err(PoolError::CorruptState(what))) => assert_eq!(what, "pool_total overflow"),
+        Ok(Err(e)) => panic!("refused, but not as a corrupt state: {e:?}"),
         Ok(Ok(p)) => panic!("R1-6: accepted with a wrapped pool_total of {} (release build)", p.state_after().pool_total),
         Err(_) => panic!("R1-6: the addition panicked (debug build) instead of refusing"),
     }
