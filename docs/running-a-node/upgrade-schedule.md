@@ -44,9 +44,15 @@ because testnet's earliest blocks predate stored receipts. Proposer selection an
 > Completed: testnet 1360, mainnet 235. Kept as the template for the next scheduled upgrade.
 
 TOKEN_MINTING is a hard fork: from its height, `create_token` may carry `token_mintable` /
-`token_max_supply` (an old node drops those fields, computes a different block `tx_hash` and rejects
-the block), `mint_tokens` is applied under the new rules, and once a mintable token exists the header
-state root also commits the mint ledger. Every node must run the new binary **before** the height.
+`token_max_supply`, `mint_tokens` is applied under the new rules, and once a mintable token exists the
+header state root also commits the mint ledger. An old node drops the two new fields when it reads a
+block and applies `mint_tokens` under the old rules, so from the first mintable token or mint it
+computes a different state root and rejects the block. Every node must run the new binary **before**
+the height.
+
+> Corrected 2026-10-06: an earlier version of this page said an old node rejects such a block because
+> it "computes a different block `tx_hash`". That was wrong: what an old node disagrees on is the
+> state root.
 
 CONTRACT_NFT_ROYALTY is planned for the **same height**. It is a smaller fork: from its height every
 contract call links `host_nft_royalty_bps` / `host_nft_royalty_recipient`, so a call to a contract that

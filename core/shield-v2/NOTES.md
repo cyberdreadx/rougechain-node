@@ -405,9 +405,7 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
     * a signer-less envelope fails the signature loop (`pqc_verify("", …, "")`) and the block is
       refused with "Block has N invalid tx signatures";
     * the two payload fields do not exist in its `TxPayload`, which has no `deny_unknown_fields`,
-      so `serde_json` drops them on arrival (P2P `peer.rs`, `/api/blocks/import`); the header's
-      `tx_hash` is never compared at import (the TOKEN_MINTING runbook's claim that an old node
-      "computes a different block `tx_hash` and rejects the block" is not what the code does), so
+      so `serde_json` drops them on arrival (P2P `peer.rs`, `/api/blocks/import`), and
       the block is judged on the field-less transactions: the three signature formats over the
       field-less bytes, `tx_identity` / `compute_single_tx_hash` of the field-less struct, the
       CLI-envelope binding comparing the envelope's payload parsed WITHOUT the fields, and the
