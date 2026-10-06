@@ -58,6 +58,12 @@ fn key_vector(name: &str, phrase: &str) -> Value {
     assert_eq!(addr.to_bytes(), [pk.to_vec(), ek.clone()].concat());
     let text = addr.encode();
     assert_eq!(ShieldedAddress::decode(&text).unwrap(), addr);
+    // the integrity value of spec §5.3, recomputed here independently of the crate
+    let version = 2u8;
+    let check = Sha256::digest([b"rouge-shield/v2/address-check/v1".to_vec(), vec![version], addr.to_bytes()].concat())[..8].to_vec();
+    let payload = [vec![version], addr.to_bytes(), check.clone()].concat();
+    assert_eq!((payload.len(), text.len()), (1_225, 1_974));
+    assert_eq!(quantum_vault_shield_v2_wallet::bech32m::decode(&text).unwrap(), ("rshield".to_string(), payload.clone()));
     json!({
         "name": name,
         "recovery_phrase": phrase,
@@ -80,6 +86,10 @@ fn key_vector(name: &str, phrase: &str) -> Value {
         "ml_kem_768_dk_sha256": hx(&Sha256::digest(&dk)),
         "address_bytes_sha256": hx(&Sha256::digest(addr.to_bytes())),
         "address_fingerprint": addr.fingerprint(),
+        "address_version": version,
+        "address_check_tag": "rouge-shield/v2/address-check/v1",
+        "address_check": hx(&check),
+        "address_payload_sha256": hx(&Sha256::digest(&payload)),
         "address": text,
     })
 }
@@ -305,7 +315,7 @@ fn all_vectors() -> Vec<(&'static str, Value)> {
     let (transactions, state_root) = tx_and_state_vectors();
     vec![
         ("keys.json", json!({
-            "note": "Spec §5.2 key derivation and the spec §5.3 shielded address (bech32m, prefix rshield).",
+            "note": "Spec §5.2 key derivation and the spec §5.3 shielded address: bech32m, prefix rshield, of version (0x02) ‖ pk ‖ ek ‖ check, where check is the first 8 bytes of SHA-256(address_check_tag ‖ version ‖ pk ‖ ek). address_bytes_sha256 and address_fingerprint are over pk ‖ ek (1,216 bytes).",
             "wallets": [key_vector("wallet-1", PHRASE_1), key_vector("wallet-2", PHRASE_2)],
         })),
         ("note_encryption.json", note_vector()),

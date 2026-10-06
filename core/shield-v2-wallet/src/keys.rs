@@ -26,6 +26,38 @@ pub const KEM_DK_BYTES: usize = 2_400;
 pub const KEM_CT_BYTES: usize = 1_088;
 /// `pk` (32) ‖ `ek` (1,184).
 pub const ADDRESS_BYTES: usize = 32 + KEM_EK_BYTES;
+/// The version byte of the textual address form. Version 2 carries the integrity value; the
+/// first form (no version byte, bech32m checksum only — REVIEW_WALLET_1 F-2) is refused.
+pub const ADDRESS_VERSION: u8 = 2;
+/// Bytes of the integrity value inside the textual form.
+pub const ADDRESS_CHECK_BYTES: usize = 8;
+/// Domain tag of the integrity value.
+pub const ADDRESS_CHECK_TAG: &[u8] = b"rouge-shield/v2/address-check/v1";
+/// What the bech32m string carries: version ‖ `pk` ‖ `ek` ‖ check — 1,225 bytes.
+pub const ADDRESS_TEXT_BYTES: usize = 1 + ADDRESS_BYTES + ADDRESS_CHECK_BYTES;
+/// `rshield1` + 1,960 data characters + 6 checksum characters.
+pub const ADDRESS_TEXT_CHARS: usize = 8 + ADDRESS_TEXT_BYTES * 8 / 5 + 6;
+
+/// The first 8 bytes of `SHA-256("rouge-shield/v2/address-check/v1" ‖ version ‖ pk ‖ ek)`.
+fn address_check(version: u8, pk_ek: &[u8]) -> [u8; ADDRESS_CHECK_BYTES] {
+    let mut h = Sha256::new();
+    h.update(ADDRESS_CHECK_TAG);
+    h.update([version]);
+    h.update(pk_ek);
+    let d = h.finalize();
+    let mut out = [0u8; ADDRESS_CHECK_BYTES];
+    out.copy_from_slice(&d[..ADDRESS_CHECK_BYTES]);
+    out
+}
+
+/// The textual form of `pk_ek` (any length: the tests build damaged addresses with it).
+fn address_text(version: u8, pk_ek: &[u8]) -> String {
+    let mut v = Vec::with_capacity(1 + pk_ek.len() + ADDRESS_CHECK_BYTES);
+    v.push(version);
+    v.extend_from_slice(pk_ek);
+    v.extend_from_slice(&address_check(version, pk_ek));
+    bech32m::encode(SHIELDED_HRP, &v)
+}
 
 /// BIP-39: recovery phrase and optional passphrase → the 64-byte seed
 /// (PBKDF2-HMAC-SHA512, 2,048 rounds, salt `"mnemonic" ‖ passphrase`).
@@ -216,19 +248,47 @@ impl ShieldedAddress {
         Ok(Self { pk, ek })
     }
 
-    /// `rshield1…` — bech32m of the 1,216 bytes (1,960 characters). O-11.
+    /// `rshield1…` — bech32m of `version (0x02) ‖ pk ‖ ek ‖ check`, 1,974 characters, where
+    /// `check` is the first 8 bytes of `SHA-256("rouge-shield/v2/address-check/v1" ‖ version ‖
+    /// pk ‖ ek)`. Spec §5.3 (W-4, O-11).
     pub fn encode(&self) -> String {
-        bech32m::encode(SHIELDED_HRP, &self.to_bytes())
+        address_text(ADDRESS_VERSION, &self.to_bytes())
     }
 
-    /// Decodes and validates an `rshield1…` string. The error says whether the checksum, the
-    /// prefix, the length or the key material is wrong.
+    /// Decodes and validates an `rshield1…` string. The error says which check failed: the
+    /// bech32m checksum, the prefix, the format (an address of the first format, without the
+    /// integrity value, is refused by name), the length, the version, the integrity value, or the
+    /// key material.
+    ///
+    /// **What the integrity value guarantees.** The bech32m checksum alone is a code of length
+    /// 1,023: on a string of this length it catches every single changed character but not, for
+    /// example, the same change made to two characters 1,023 places apart. Any damage that
+    /// passes it changes the decoded bytes, and is then accepted only if the 64-bit truncated
+    /// SHA-256 over the decoded bytes matches too: for damage that was not searched for against
+    /// the hash, with probability 2^-64. (Somebody who can replace an address wholesale needs no
+    /// collision; this value is against accidents and blind tampering, not against that.)
     pub fn decode(s: &str) -> Result<Self, WalletError> {
         let (hrp, bytes) = bech32m::decode(s.trim())?;
         if hrp != SHIELDED_HRP {
             return Err(WalletError::Address("wrong prefix: a shielded address starts with rshield1"));
         }
-        Self::from_bytes(&bytes)
+        if bytes.len() == ADDRESS_BYTES {
+            return Err(WalletError::Address(
+                "old address format (no version byte and no integrity value): it is no longer accepted, ask the recipient for a current address",
+            ));
+        }
+        if bytes.len() != ADDRESS_TEXT_BYTES {
+            return Err(WalletError::Address("wrong length: a shielded address carries 1,225 bytes"));
+        }
+        if bytes[0] != ADDRESS_VERSION {
+            return Err(WalletError::Address("unknown address version (this wallet reads version 2)"));
+        }
+        let (pk_ek, check) = bytes[1..].split_at(ADDRESS_BYTES);
+        // not secret: an ordinary comparison
+        if check != address_check(ADDRESS_VERSION, pk_ek) {
+            return Err(WalletError::Address("integrity check failed (the address is damaged or was altered)"));
+        }
+        Self::from_bytes(pk_ek)
     }
 
     /// The first 8 bytes of SHA-256 of the 1,216 address bytes, hexadecimal: a short value two
@@ -303,7 +363,7 @@ mod tests {
     fn address_roundtrip_and_clear_errors() {
         let addr = ShieldedKeys::from_phrase(PHRASE, "").unwrap().address();
         let s = addr.encode();
-        assert_eq!(s.len(), 7 + 1 + 1946 + 6);
+        assert_eq!((s.len(), ADDRESS_TEXT_CHARS, ADDRESS_TEXT_BYTES), (1_974, 1_974, 1_225));
         assert!(s.starts_with("rshield1"));
         assert_eq!(ShieldedAddress::decode(&s).unwrap(), addr);
         assert_eq!(ShieldedAddress::decode(&format!("  {s}\n")).unwrap(), addr);
@@ -317,9 +377,24 @@ mod tests {
         assert!(err(core::str::from_utf8(&t).unwrap()).contains("checksum"));
         // truncated: the checksum no longer matches
         assert!(err(&s[..s.len() - 1]).contains("checksum"));
-        // a valid bech32m string of the wrong length
-        assert!(err(&bech32m::encode(SHIELDED_HRP, &addr.to_bytes()[..1215])).contains("length"));
-        assert!(err(&bech32m::encode(SHIELDED_HRP, &[addr.to_bytes(), vec![0]].concat())).contains("length"));
+        // a well-formed string of the wrong length
+        assert!(err(&address_text(ADDRESS_VERSION, &addr.to_bytes()[..1215])).contains("length"));
+        assert!(err(&address_text(ADDRESS_VERSION, &[addr.to_bytes(), vec![0]].concat())).contains("length"));
+        // the first address format (bech32m of the bare 1,216 bytes) is refused by name
+        assert!(err(&bech32m::encode(SHIELDED_HRP, &addr.to_bytes())).contains("old address format"));
+        // another version byte, with its own valid integrity value
+        assert!(err(&address_text(1, &addr.to_bytes())).contains("version"));
+        assert!(err(&address_text(3, &addr.to_bytes())).contains("version"));
+        // a valid bech32m checksum over a payload whose integrity value is wrong: every byte of
+        // the payload and of the value itself is covered
+        for i in [0usize, 1, 32, 33, 700, 1_216, 1_217, 1_224] {
+            let mut raw = vec![ADDRESS_VERSION];
+            raw.extend_from_slice(&addr.to_bytes());
+            raw.extend_from_slice(&address_check(ADDRESS_VERSION, &addr.to_bytes()));
+            raw[i] ^= 0x10;
+            let m = err(&bech32m::encode(SHIELDED_HRP, &raw));
+            assert!(m.contains(if i == 0 { "version" } else { "integrity" }), "byte {i}: {m}");
+        }
         // an account address is not a shielded address, and the reverse
         let acct = address_from_account(&[7u8; 32]);
         assert!(err(&acct).contains("prefix"));
@@ -328,11 +403,11 @@ mod tests {
         // right length, non-canonical pk word
         let mut b = addr.to_bytes();
         b[..4].copy_from_slice(&MODULUS.to_le_bytes());
-        assert!(err(&bech32m::encode(SHIELDED_HRP, &b)).contains("canonical"));
+        assert!(err(&address_text(ADDRESS_VERSION, &b)).contains("canonical"));
         // right length, an encapsulation key with a coefficient ≥ q
         let mut b = addr.to_bytes();
         b[32] = 0xff;
         b[33] = 0xff;
-        assert!(err(&bech32m::encode(SHIELDED_HRP, &b)).contains("ML-KEM"));
+        assert!(err(&address_text(ADDRESS_VERSION, &b)).contains("ML-KEM"));
     }
 }

@@ -3,9 +3,14 @@
 //! Written out here, not taken from the `bech32` crate, because a shielded address is 1,216
 //! bytes (spec §5.3, open issue O-11) and that crate refuses anything above the 1,023-character
 //! code length. The checksum polynomial, constant and character set are BIP-350's; the only
-//! difference from a segwit address encoder is that no length limit is applied. The 30-bit
-//! checksum detects every error of up to 4 characters only within the designed length; on a
-//! 1,960-character string it is a 1-in-2^30 integrity check, nothing more (see `NOTES.md`).
+//! difference from a segwit address encoder is that no length limit is applied.
+//!
+//! **The checksum does not protect a shielded address.** It is a BCH code of length 1,023
+//! characters: within that length it detects every error of up to 4 characters; beyond it, it
+//! still detects every single changed character, but the same change applied to two characters
+//! exactly 1,023 places apart is invisible to it (REVIEW_WALLET_1 F-2). The shielded address
+//! therefore carries its own integrity value inside the encoded data (`keys.rs`,
+//! `ShieldedAddress::decode`), which the decoder verifies in addition to this checksum.
 
 use crate::error::WalletError;
 
@@ -153,7 +158,7 @@ mod tests {
     /// A BIP-350 segwit v1 address: the witness program after the version character must come out.
     #[test]
     fn roundtrip_and_known_answer() {
-        for len in [0usize, 1, 2, 5, 31, 32, 33, 1216] {
+        for len in [0usize, 1, 2, 5, 31, 32, 33, 1216, 1225] {
             let bytes: Vec<u8> = (0..len).map(|i| (i * 131 + 7) as u8).collect();
             let s = encode("rshield", &bytes);
             assert!(s.starts_with("rshield1"));
