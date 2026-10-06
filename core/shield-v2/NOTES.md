@@ -5,7 +5,7 @@ Specification: `docs/SHIELDED_POOL_V2_SPEC.md` (SPEC v1, @9523076). Research sou
 place where the specification was ambiguous, where it differs from the research code, or where a
 choice had to be made that the specification does not fix. Stage 1 (items 1–18) is this crate;
 stage 2 (items 19–40) wires it into the daemon behind an activation height that is `None` on every
-network.
+network; items 41–48 record the fixes after the independent node review (`REVIEW_NODE_1.md`).
 
 ## Provenance of the port
 
@@ -169,21 +169,22 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
 
 19. **Activation is `None` everywhere.** `shield_v2::SHIELD_V2_ACTIVATION_HEIGHT = None` (mainnet)
     and `upgrades::TESTNET.shield_v2 = None`, read through `upgrades::current().shield_v2` like
-    every other upgrade, with the usual `#[cfg(test)]` thread-local override. Before activation —
-    and while it is `None` — a block carrying a `*_v2` transaction, or ANY transaction with a
-    `shield_v2_body` / `shield_v2_proof` field, is invalid at import (`shield_v2_tx_rule`, error
-    `NOT_ACTIVE_ERROR` / `FOREIGN_FIELDS_ERROR`), exactly the MONETARY_INTEGRITY behaviour (block
-    rejection, state restored). The V1 types `shield`, `shielded_transfer`, `unshield` are
-    untouched in `SUSPENDED_TX_TYPES` (asserted). The two payload fields are `Option<String>` with
-    `skip_serializing_if = "Option::is_none"`, so every historical transaction encodes, hashes and
-    identifies byte-identically (the pinned legacy hashes in `types` still pass; new test
-    `shield_v2_fields_serialize_only_when_set_and_roundtrip`).
+    every other upgrade, with the usual `#[cfg(test)]` thread-local override. The V1 types
+    `shield`, `shielded_transfer`, `unshield` are untouched in `SUSPENDED_TX_TYPES` (asserted).
+    The two payload fields are `Option<String>` with `skip_serializing_if = "Option::is_none"`, so
+    every historical transaction encodes, hashes and identifies byte-identically (the pinned legacy
+    hashes in `types` still pass; new test `shield_v2_fields_serialize_only_when_set_and_roundtrip`).
+    **Pre-activation behaviour REVISED after REVIEW_NODE_1 R1-1 — see item 41.** (Stage 2 as first
+    written refused, at import, a block carrying a `*_v2` type or either field before activation,
+    like MONETARY_INTEGRITY; the review showed that an old node accepts such a block, so the
+    refusal was a consensus split, and it is now node-local only.)
 
-20. **Foreign types with the V2 fields — refused at every height.** Spec §3 says a transaction
-    with either field is invalid BEFORE A; after A it only says the three types "MUST" have both and
-    nothing else. A non-V2 type carrying either field after A is refused as well (an old node would
-    drop the fields and compute a different hash; the TOKEN_MINTING rule treats its fields the same
-    way). Ambiguity resolved towards refusal; not a [P] value.
+20. **Foreign types with the V2 fields — refused from activation** (REVISED, R1-1). Spec §3 says a
+    transaction with either field is invalid BEFORE A; after A it only says the three types "MUST"
+    have both and nothing else. A non-V2 type carrying either field FROM A is refused
+    (`FOREIGN_FIELDS_ERROR`). BEFORE A the fields are consensus-invisible (item 41): they are
+    dropped at import as an old node drops them, so a non-V2 type carrying them is judged as the
+    field-less transaction. Ambiguity after A resolved towards refusal; not a [P] value.
 
 21. **Where each check of §3.6 is made, and in what order.** Checks 1–12 (`shield_v2_tx_rule`,
     stateless, in spec order; the lengths of check 3 and 4 and the lowercase-hex test of 5 are made
@@ -214,9 +215,10 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
     conserved across the three V2 blocks.
 
 23. **Signer-less envelope — every place that assumed a sender (spec O-5), and what was done.**
-    `shield_v2::skips_account_signature(tx)` is true only for `shielded_transfer_v2` /
-    `unshield_v2` with empty `from_pub_key` AND empty `sig` (anything else of those types goes
-    through the ordinary verification and then fails check 2):
+    `shield_v2::skips_account_signature(tx, height)` is true only FROM ACTIVATION (item 41) for
+    `shielded_transfer_v2` / `unshield_v2` with empty `from_pub_key` AND empty `sig` (anything
+    else of those types goes through the ordinary verification and then fails check 2; before
+    activation everything goes through the ordinary verification, as on an old node):
     1. `import_block` signature loop — skipped for signer-less V2;
     2. `add_tx_to_mempool` (P2P path) signature check — skipped;
     3. `mine_pending` re-verification of drained transactions — skipped;
@@ -242,7 +244,8 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
         `signed_payload` (sha256 of the signable encoding incl. the payload, hence the proof), so the
         uniqueness index and the mined-hash set work for signer-less transactions; the spec's
         warning that this identity must not be relied on for double-spend detection is respected
-        (the nullifier set is);
+        (the nullifier set is). Every field of the signer-less envelope that enters either is
+        pinned by check 2 — including `version` (MUST be 1) since R1-4;
     13. `v2_binding::verify_v2_binding_at` — trivially `Ok` without `signed_payload` (check 2 forbids
         one on signer-less types); a `shield_v2` WITH a non-envelope `signed_payload` is refused by
         the binding at mempool/producer time because `derive` knows no `shield_v2` (only the CLI
@@ -264,14 +267,27 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
     4,096 entries, cleared when full) remembers the `compute_single_tx_hash` of every transaction
     whose proof THIS node accepted — at mempool admission, in the producer's selection, or at block
     apply — so mempool → block costs one verification, and a block re-offered after a rollback costs
-    none. A refusal is never cached. The key covers body and proof, so a different proof of the
-    same statement is verified on its own. Per-block limit 8 bounds the cost of a hostile block
-    (§4.7). The cache is `Arc`-shared across the node's clones.
+    none. The key covers body and proof, so a different proof of the same statement is verified
+    on its own. Per-block limit 8 bounds the cost of a hostile block (§4.7). The cache is
+    `Arc`-shared across the node's clones. **R1-2:** a second, separate set of the same bound
+    remembers REFUSED hashes; it is read only by `verify_proof_admission` (mempool admission and
+    producer selection), never by block apply (`verify_proof`), which keeps consensus independent
+    of a negative cache even though a refusal is deterministic for the same bytes. Its size is
+    shown as `refused_proof_cache` in `/api/shield-v2/stats`.
 
-27. **Mempool (node-local SHOULDs of §4.6).** Admission runs the stateless rule, the pool's
-    checks for a one-transaction block at `tip + 1` (`Pool::validate_block`), the funding balance
-    for a shield, a nullifier-conflict scan over the queued V2 transactions (`quick_nullifiers`
-    reads the two nullifiers straight from the body hex), and the proof. Expired transactions and
+27. **Mempool (node-local SHOULDs of §4.6).** Admission runs — in this order, every cheap check
+    before the one expensive one (R1-2) — the nonce check, the binding and the other stateless
+    rules, the node-local pre-activation rule (item 41) and the stateless V2 rule, the replay
+    (`tx_included_at`) and mined-hash checks, the duplicate and mempool-full judgement (the
+    eviction itself is made at insertion, since the lock is not held across the proof), then for a
+    V2 transaction the pool's checks for a one-transaction block at `tip + 1`
+    (`Pool::validate_block`), the queue cap and the funding shadow (R1-5: `MAX_MEMPOOL_SHIELD_V2 =
+    64` queued V2 transactions at most — ≈ 26 MB at ~405 KB each, against ≈ 800 MB if `MAX_MEMPOOL`
+    alone bounded them; a shield is admitted only if the account's balance covers its `v_in` PLUS
+    the `v_in` of every shield already queued from the same `from_pub_key`, read by
+    `quick_shield_v_in` from the body hex), a nullifier-conflict scan over the queued V2
+    transactions (`quick_nullifiers` reads the two nullifiers straight from the body hex), and
+    LAST the proof (`verify_proof_admission`, both outcomes cached). Expired transactions and
     transactions whose anchor left the window are not dropped eagerly: the producer leaves them
     out when it drains the mempool (the daemon's producer drains everything and drops what its
     filters refuse — existing behaviour).
@@ -279,11 +295,15 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
 28. **Producer (§4.6 "MUST leave out any transaction that fails").** `shield_v2_select_for_block`
     evaluates the drained V2 transactions in order against the evolving pool state (a growing
     `Vec<PoolTx>` re-validated with `validate_block`), a balance shadow for shields from the same
-    account, the proof (cached), and the limit of 8; whatever fails is left out with a log line.
-    The shadow does not see ordinary transactions of the same block that could drain a shield's
-    account; if that happens `apply_balance_block` refuses the attempt, the producer rolls back as
-    for any failure and — new — drops the V2 transactions from the requeue when the error came from
-    a `shield_v2` rule, so it cannot loop on the same refused transaction.
+    account, the proof (cached, negative cache included), and the limit of 8; whatever fails is
+    left out with a log line. **R1-3:** a V2 transaction left out ONLY because the limit was
+    reached is not an invalidity — the function returns those entries separately and
+    `mine_pending` puts them (and their verified marks) straight back into the mempool before
+    producing, so they are sealed in a later block. The shadow does not see ordinary transactions
+    of the same block that could drain a shield's account; if that happens `apply_balance_block`
+    refuses the attempt, the producer rolls back as for any failure and drops the V2 transactions
+    from the requeue when the error came from a `shield_v2` rule, so it cannot loop on the same
+    refused transaction.
 
 29. **State root (§4.8).** `compute_state_root_for_height` appends the section
     (`PoolState::state_root_section`, this crate) after the balance root, the NFT/contract
@@ -311,10 +331,17 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
 32. **HTTP (read-only; nothing else).** `GET /api/shield-v2/stats` (activation, active flag,
     constants, and when the pool exists: next height, pool total, note and nullifier counts, tree
     root, nullifier accumulator, the anchor window) and `GET /api/shield-v2/notes?since=N&blocks=K`
-    (K clamped to 1..=256): every accepted V2 transaction of those blocks in chain order with
-    height, index, hash, type, `nf1`, `nf2`, and per output `cm_out`, leaf position, `kem_ct`,
-    `note_ct` — what a wallet scans by (§5.4) without ever asking for a path. `next_height` is the
-    cursor. The `UpgradeSchedule` already serialises into `/api/stats`, so `shield_v2: null`
+    (K clamped to 1..=256, and at most `SHIELD_V2_NOTES_MAX_TXS = 512` transactions per call —
+    R1-7; a call cut short by the cap ends at a block boundary and `next_height` is the first
+    height not listed): every accepted V2 transaction of those blocks in chain order with height,
+    index, hash, type, `nf1`, `nf2`, and per output `cm_out`, leaf position, `kem_ct`, `note_ct` —
+    what a wallet scans by (§5.4) without ever asking for a path. `next_height` is the cursor.
+    **R1-7:** the listing reads its fields from the body hex alone (`shield_v2::listing_fields`,
+    one 5,092-character decode per transaction) and never hex-decodes, parses or validates the
+    proof (the block was accepted by consensus); the remaining per-transaction cost is
+    `compute_single_tx_hash` (one JSON encoding + SHA-256 of the ≈ 400 KB transaction, one live at
+    a time) for the `tx_hash` field, and per height one chain-store block read. Documented at the
+    function. The `UpgradeSchedule` already serialises into `/api/stats`, so `shield_v2: null`
     appears there. Transactions enter only through the existing `/api/broadcast` → mempool path
     (nginx-blocked publicly; untouched). No relay changes.
 
@@ -352,12 +379,97 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
 
 39. **Not done / left open.** No wallet-side code (prover without a seed parameter, O-14; key
     derivation; note encryption) — out of scope for the node. No eager mempool expiry sweep (item
-    27). No activation runbook text for the payload-field rollout (spec §3, first paragraph) — the
-    rule is in place, the operator document is not. The §4.8 state-root vectors and the body /
-    binding vectors of O-15 are still produced by tests here, not by a cross-checked second
-    implementation. `shield_v2_notes_since` reads whole blocks from the chain store; an index of
-    V2 transactions per height would make a cold wallet scan cheaper (not needed before activation).
+    27). ~~No activation runbook text~~ — the runbook note is now in spec §3 (R1-1). The §4.8
+    state-root vectors and the body / binding vectors of O-15 are still produced by tests here,
+    not by a cross-checked second implementation. `shield_v2_notes_since` reads whole blocks from
+    the chain store; an index of V2 transactions per height would make a cold wallet scan cheaper
+    (not needed before activation). A per-peer budget for V2 verifications (R1-2's last
+    suggestion) is not implemented: the negative cache and the cheap-checks-first order bound the
+    cost per distinct hostile message, not per peer.
 
 40. **`cargo tree` was again run without `-j 1`** (it takes none); every other cargo invocation
     used the required resource wrapper and `-j 1`, one at a time, and the daemon tests were run per
     module in separate processes.
+
+## REVIEW_NODE_1 (2026-10-06) — what changed
+
+41. **R1-1 (Medium) — pre-activation consensus is the previous release's, exactly.** What
+    origin/main (1.6.3) does with a V2 transaction, established by reading it:
+    * the type name is unknown to it — `fee_and_type_sanity` refuses only `slash`,
+      `SUSPENDED_TX_TYPES` lists the V1 names only, every other per-transaction rule (GAME_READY,
+      TOKEN_MINTING, royalty cap, MONETARY_INTEGRITY, binding) ignores the type, and
+      `apply_balance_tx_inner` / the AMM / NFT / allowance arms end in `_ => {}`: a validly signed
+      bare `shield_v2` / `shielded_transfer_v2` / `unshield_v2` is applied as a **no-op** (nonce
+      written, sender indexed, no fee: `actual_fees_collected` only grows by what the ledger
+      actually deducted), counting as one transaction for the base-fee arithmetic;
+    * a signer-less envelope fails the signature loop (`pqc_verify("", …, "")`) and the block is
+      refused with "Block has N invalid tx signatures";
+    * the two payload fields do not exist in its `TxPayload`, which has no `deny_unknown_fields`,
+      so `serde_json` drops them on arrival (P2P `peer.rs`, `/api/blocks/import`); the header's
+      `tx_hash` is never compared at import (the TOKEN_MINTING runbook's claim that an old node
+      "computes a different block `tx_hash` and rejects the block" is not what the code does), so
+      the block is judged on the field-less transactions: the three signature formats over the
+      field-less bytes, `tx_identity` / `compute_single_tx_hash` of the field-less struct, the
+      CLI-envelope binding comparing the envelope's payload parsed WITHOUT the fields, and the
+      field-less block stored.
+    Stage 2 as first written refused all of that at import (`NOT_ACTIVE_ERROR` /
+    `FOREIGN_FIELDS_ERROR`), which an old node does not — a split below A, created by anyone able
+    to broadcast one validly signed transaction. Now: (a) `import_block` first runs
+    `strip_fields_before_activation`, which removes the two fields from every transaction of a
+    block below activation — the old deserialisation, made explicit; (b) `shield_v2_tx_rule` is
+    `Ok(None)` for every transaction below activation (no rule); (c) `skips_account_signature(tx,
+    height)` is false below activation (no exemption); (d) `check_block_limit` runs from
+    activation only; (e) `v2_binding::verify_binding` drops the two fields from the parsed
+    envelope payload below activation (what an old `TxPayload` parse yields). The refusal of V2
+    types and fields below activation is now `shield_v2_local_rule`, called by mempool admission
+    and by the producer's filter only — node-local, not consensus — so an upgraded node never
+    admits, relays or produces one. Nothing of this touches behaviour from activation. The
+    TOKEN_MINTING precedent (`token_minting_tx_rule` refusing its fields before activation) is
+    NOT followed: that rule has the same split in principle (an old node drops `token_mintable`
+    and accepts), and the review's point stands for it too; it is history now (mainnet 235) and
+    out of scope here. Tests: `shield_v2::tests::before_activation_consensus_is_the_previous_release_and_only_the_local_rule_refuses`
+    (unit), `node::shield_v2_daemon_tests::before_activation_a_block_with_a_v2_transaction_is_judged_by_the_previous_release_rules`
+    (real shield / signer-less / injected field on two nodes), and
+    `node::shield_v2_review_node_1_tests::review_r1_1_before_activation_import_equals_the_previous_release_verdict_and_root`
+    — ten probe blocks (bare names alone, after an ordinary transfer, nine in one block; a
+    signer-less envelope; a shield signed with its fields; an injected field; a signed field; a
+    CLI-envelope shield carrying the fields) imported by the stage-2 path with activation `None`
+    and again with activation above the tip, each compared with a model of the old rule set
+    (old-schema view of the block, the three signature formats, the pre-stage-2 rules) for the
+    verdict and — through a second node applying the old node's view, the same transaction under
+    a type name neither build knows — for the committed header root, the state root and the stored
+    block. `state_root_is_byte_identical_before_activation` unchanged and passing. Spec §3 (first
+    paragraph + runbook note), §3.6 check 1 and §4.6 amended.
+
+42. **R1-2 (Medium)** — item 27 (order) and item 26 (negative cache). Test
+    `review_r1_2_mempool_full_is_judged_only_after_the_proof_was_verified` (extended: the
+    negative cache and the duplicate short-circuit) and
+    `shield_v2::tests::a_refused_proof_is_cached_for_admission_only`.
+
+43. **R1-3 (Low)** — item 28 (requeue of the entries beyond the limit). Test
+    `review_r1_3_producer_drops_valid_v2_transactions_beyond_the_block_limit`.
+
+44. **R1-4 (Low)** — `shield_v2_tx_rule` check 2 refuses `version != 1` for the two signer-less
+    types (a `shield_v2`'s `version` is inside its signature and is left to it). Spec §3.1 and
+    §3.6 check 2 amended. Test `review_r1_4_signerless_envelope_version_is_not_pinned` plus the
+    boundary in `stateless_checks_in_spec_order_with_the_boundaries`.
+
+45. **R1-5 (Low)** — item 27 (funding shadow and `MAX_MEMPOOL_SHIELD_V2`). Test
+    `review_r1_5_mempool_admits_shields_beyond_the_funding_balance` (now asserts one of three
+    10-XRGE shields against 10 XRGE, 6 + 4 fit, the 65th is refused).
+
+46. **R1-6 (Low)** — `pool.rs` check 18 for a shield uses `checked_add` and refuses with
+    `PoolError::CorruptState("pool_total overflow")`. Test
+    `tests/review_node_1.rs::review_r1_6_shield_cap_check_uses_an_unchecked_u128_addition`
+    (now asserts the exact error).
+
+47. **R1-7 (Low)** — item 32 (`listing_fields`, `SHIELD_V2_NOTES_MAX_TXS`, cost documented).
+
+48. **R1-8, R1-9, R1-10 (Info) — accepted as stated, no code.** R1-8: the signature loop runs
+    before the cheap V2 refusals at import; accept/refuse is order-independent and only a staked
+    validator's block is parsed at all. R1-9: the extra sled database at start-up, the O(1)
+    snapshot/restore touching the pool tree on every block (a sled I/O error there now fails an
+    import), the indexer's empty-`from` skip (no historical transaction has an empty sender), and
+    the `shield_v2: null` / `active: false` surface are footprint, not behaviour. R1-10: the
+    concurrency note on `shield_v2_pool()` (`open_or_init` reached from admission and import at
+    the activation height) is recorded so nobody "fixes" the ordering.

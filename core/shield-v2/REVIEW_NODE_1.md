@@ -340,3 +340,50 @@ created for these runs was deleted afterwards.
 * No test of the full tree (2^32 leaves) beyond the author's fabricated-state test; no 32-bit build.
 * Reorg beyond the single-block rollback: the daemon has none; `recover_from_history` was read, not
   run on a large chain.
+
+## 5. Resolution (2026-10-06, branch `feat/shield-v2-node`)
+
+Every finding was fixed on the branch; the four `review_r1_*` regression tests that failed on
+`38aa788` pass, and the two documenting tests (R1-1, R1-5) were turned into regression tests of the
+new behaviour. Details per item are in `NOTES.md` items 41–48; the spec amendments are in
+`docs/SHIELDED_POOL_V2_SPEC.md` (§1 amendment note, §3 first paragraph + runbook note, §3.1, §3.6
+checks 1–2, §4.6).
+
+| Finding | Fix | Commit |
+|---|---|---|
+| R1-1 (Medium) | Below activation, consensus is the previous release's exactly: `import_block` strips the two payload fields (what an old `TxPayload` deserialisation does), `shield_v2_tx_rule` is `Ok(None)` for every transaction (no rule — a bare V2 type is an unknown type, applied as a no-op), `skips_account_signature` has a height and is false (no exemption; a signer-less envelope fails the signature rule as on an old node), `check_block_limit` runs from activation only, and the CLI-envelope binding compares the envelope payload with the fields dropped. The pre-activation refusal is now `shield_v2_local_rule`, called only by mempool admission and the producer. Tests: `review_r1_1_before_activation_import_equals_the_previous_release_verdict_and_root` (ten probe blocks vs a model of the old rule set, verdict + header root + state root + stored block, with activation `None` and above the tip), the rewritten `before_activation_a_block_with_a_v2_transaction_is_judged_by_the_previous_release_rules`, the unit test in `shield_v2.rs`; `state_root_is_byte_identical_before_activation` unchanged. Spec §3 (pre-activation paragraph, runbook note), §3.6 check 1, §4.6. | `8560097` (code), `c6fb49b` (spec) |
+| R1-2 (Medium) | `insert_tx_to_mempool`: nonce, binding, stateless rules, replay, mined, duplicate and mempool-full judgement all before `shield_v2_admission_checks`, whose own cheap checks precede the proof; `VerifyCache` gained a bounded (4,096) negative set read by `verify_proof_admission` (mempool, producer) and never by block apply. Test `review_r1_2_*` extended; `a_refused_proof_is_cached_for_admission_only`. | `8560097` |
+| R1-3 (Low) | `shield_v2_select_for_block` returns the entries beyond the limit separately; `mine_pending` puts them (with their verified marks) back into the mempool before producing. Test `review_r1_3_*`. | `8560097` |
+| R1-4 (Low) | `shield_v2_tx_rule` check 2 refuses `version != 1` for the two signer-less types. Spec §3.1, §3.6 check 2. Test `review_r1_4_*` + boundary. | `8560097` (code), `c6fb49b` (spec) |
+| R1-5 (Low) | Admission subtracts the `v_in` of the shields already queued from the same account (`quick_shield_v_in`) and caps queued V2 transactions at `MAX_MEMPOOL_SHIELD_V2 = 64` (≈ 26 MB). Test `review_r1_5_*` rewritten. | `8560097` |
+| R1-6 (Low) | `pool.rs` check 18: `checked_add` → `PoolError::CorruptState("pool_total overflow")`. Test `review_r1_6_*` asserts the exact error. | `ad78c62` |
+| R1-7 (Low) | `shield_v2_notes_since` reads the listing's fields from the body hex only (`shield_v2::listing_fields`), never touches the proof string, lists at most `SHIELD_V2_NOTES_MAX_TXS = 512` transactions per call (ending at a block boundary), and documents the remaining cost (block reads, `compute_single_tx_hash`). | `8560097` |
+| R1-8, R1-9, R1-10 (Info) | Accepted as stated; no code. NOTES item 48. | the commit that adds this section |
+
+Not done: a per-peer budget for V2 verifications (R1-2's last suggestion); the per-height V2
+index for the listing (NOTES 39). The TOKEN_MINTING precedent (refusing its fields before
+activation) has the same split in principle and was not changed — it is mainnet history (235).
+
+The daemon fixes share one commit (`8560097`): R1-1, R1-2 and R1-5 all rewrite the same lines of
+`insert_tx_to_mempool` and `shield_v2_admission_checks`, so a per-finding split would have produced
+intermediate commits that were never built or tested.
+
+Verification on the final source (resource wrapper, `-j 1`, one cargo at a time):
+
+```
+cargo build --release --locked -p quantum-vault-daemon -j 1        -> ok, 16 warnings, none in code touched here
+cargo test --locked -j 1 -p quantum-vault-daemon --no-run, then one process per module (43 modules):
+  TOTAL_PASSED=291 MODULE_FAILURES=0
+  node::shield_v2_review_node_1_tests 5/5, node::shield_v2_daemon_tests 9/9, shield_v2::tests 6/6,
+  upgrades::tests 4/4, node::strict_historical_replay_tests 3/3, node::xrge_supply_tests 9/9,
+  node::producer_and_unbonding_tests 4/4; storage crate 19/19
+cargo test --release --locked -p quantum-vault-shield-v2 -j 1 -- --test-threads=1
+  -> 35 passed, 0 failed (lib 2, pool 17, review2_wrapper 5, review_node_1 3, review_verifier 3, vectors 5)
+cargo tree -p quantum-vault-daemon -e normal,build,features -i quantum-vault-shield-v2
+  -> only `feature "default"`
+```
+
+Limits of the R1-1 evidence: the previous release's behaviour is established by reading
+`origin/main` (`0274e8e`) and modelled in the test; no `origin/main` binary was built and run
+against the same blocks on this host. The 16 release warnings were not compared with a baseline
+build of `46c9fbb`; each is in code this pass did not add.
