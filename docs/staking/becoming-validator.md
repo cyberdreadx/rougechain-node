@@ -85,19 +85,22 @@ Your node stores this keypair at `<data-dir>/node-keys.json`. **The network reje
 
 ## Prerequisites
 
-- **≥ 10,000 XRGE** (+ 1 XRGE fee) for the standard tier — see [tiers](#validator-tiers).
+- **≥ 10,000 XRGE** (+ 1 XRGE fee) — see [minimum stake](#minimum-stake).
 - A **server** — see [system requirements](../running-a-node/README.md#system-requirements) and [installation](../running-a-node/installation.md).
 - The **daemon** (`quantum-vault-daemon`) and the **CLI** (`rougechain`).
 
-## Validator tiers
+## Minimum stake
 
-Your tier is derived automatically from your total stake:
+The **10,000 XRGE** minimum is enforced by the node's API when it builds or accepts a stake request
+(`/api/v2/stake` and the CLI `stake` command), **not by consensus**: block apply accepts any positive
+stake that the balance covers, and one mainnet validator holds 9,000 XRGE. There are no validator
+tiers, no commission and no delegation — the `delegate` transaction type belonged to the suspended
+governance system (block 245) and never concerned staking. A consensus-enforced minimum of 100,000
+XRGE, with a 30-day grace period for existing validators, is part of the consensus redesign decided on
+2026-10-06, which is **not built**; see [Status & Roadmap](../status.md).
 
-| Tier | Minimum stake | Commission on delegations |
-|------|---------------|---------------------------|
-| Standard | 10,000 XRGE | 5% |
-| Operator | 100,000 XRGE | 10% |
-| Genesis | 1,000,000 XRGE | 15% |
+Mainnet has **three** staked validators (2026-10-06): about 100.09 M XRGE (the operator's producing
+validator), 10,000 XRGE and 9,000 XRGE. Only the largest produces blocks.
 
 ## Step 1 — Install and generate your node identity
 
@@ -139,7 +142,7 @@ Send **≥ 10,000 XRGE (+ 1 XRGE fee)** to your validator address (from `whoami`
 rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json stake 10000
 ```
 
-> The 10,000 minimum is enforced on **every** stake call — a smaller top-up is rejected. Each additional stake must itself be ≥ 10,000; totals accumulate.
+> The 10,000 minimum is enforced by the API on **every** stake call — a smaller top-up is rejected. Each additional stake must itself be ≥ 10,000; totals accumulate. It is not a consensus rule (see [Minimum stake](#minimum-stake)).
 
 Verify with the built-in diagnostic — it checks funded / staked / active / producing in one shot:
 
@@ -182,10 +185,10 @@ Since mainnet height 100 (Release 1), each block has exactly one **designated pr
 ## Security & slashing — read before you go live
 
 - **Dedicated key.** Keep only the stake in your validator key; never use your treasury wallet. (Done, if you followed Step 1.)
-- **One node per key.** **Never run two nodes with the same key** — two nodes can sign two different blocks or votes at one height (equivocation). Slashing on equivocation evidence is planned.
+- **One node per key.** **Never run two nodes with the same key** — two nodes can sign two different blocks or votes at one height (equivocation). Slashing on equivocation evidence is part of the planned consensus redesign and does not exist yet.
 - **Back up `node-keys.json`** offline. It is the only copy of your validator identity.
 - **Don't expose the daemon port.** Bind to localhost, front it with nginx + TLS, and firewall the RPC/API port. See [public-node security](../p2p-networking/public-node.md). Do **not** open port 5100 to the public internet.
-- **Stay online.** Automatic missed-block slashing is **frozen** since height 100 (a slash costs **10%** of stake plus a 20-block jail). But if you are the designated proposer and go offline, the chain stops producing blocks, and an offline validator's vote is missing from the ⅔-stake commit certificate. Alert on your node being offline or lagging the chain tip (`/api/health` height vs the network).
+- **Stay online.** **No slashing is active today**: automatic missed-block slashing is frozen since height 100 and the legacy `slash` transaction is rejected since height 245 (the 10 % / 20-block parameters remain in the code). But if you are the designated proposer and go offline, the chain stops producing blocks, and an offline validator's vote is missing from the ⅔-stake commit certificate. Alert on your node being offline or lagging the chain tip (`/api/health` height vs the network).
 - **Never run `--dev`** on a mainnet node — it enables unsafe key-accepting endpoints.
 - **Upgrades.** A node set up with the installer [updates itself](../running-a-node/auto-update.md) from **signed releases only**: it verifies the release keys' signatures, waits if your validator is the designated proposer with transactions pending, health-checks the node after the restart and rolls back if the check fails. If you would rather restart your validator yourself, set `MODE=notify` (or `PIN_VERSION`) in `/etc/rougechain/mainnet/update.conf` — then **you** must install mandatory releases before their upgrade height. Never use anything that builds and runs `main` unattended (the retired git-pull "auto-deploy" cron): that is unreviewed code, restarted at arbitrary times.
 

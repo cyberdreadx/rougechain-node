@@ -2,14 +2,18 @@
  * Bridge write flows, framework-free. Each mirrors apps/web's Bridge page step for step and goes
  * through @rougechain/core for every node call and every RougeChain signature:
  *
- *   ETH  deposit   eth_sendTransaction(value → custody) → personal_sign claim → POST /bridge/claim (poll)
- *   USDC deposit   eth_sendTransaction(USDC.transfer → custody) → personal_sign → POST /bridge/claim (poll)
+ *   ETH  deposit   bridge.depositETH(pubkey) with the amount as value — credited by the relayer, no claim
+ *   USDC deposit   approve(bridge) → bridge.depositERC20(usdc, amount, pubkey) — credited by the relayer, no claim
  *   XRGE deposit   approve(vault) → vault.deposit(amount, pubkey) → POST /bridge/xrge/claim (poll)
  *   claim existing personal_sign → POST /bridge/claim (poll)
  *   BTC claim      POST /bridge/btc/claim (poll)
  *   withdraw       createSignedBridgeWithdraw / signViaExtension → POST /bridge/withdraw | /bridge/xrge/withdraw
  *
- * The one addition: before every Base transaction the wallet's chain id is checked against the
+ * ETH / USDC deposits differ from apps/web (a plain transfer + signed claim): they call the bridge
+ * contract, whose deposit event names the RougeChain recipient, so the relayer credits it for any
+ * kind of Base wallet (a smart-contract wallet's plain transfer could never be claimed).
+ *
+ * The other addition: before every Base transaction the wallet's chain id is checked against the
  * bridge's Base chain, and the flow refuses on a mismatch (apps/web only asks the wallet to switch
  * when connecting).
  */
@@ -26,13 +30,16 @@ import { signViaExtension } from "@rougechain/core/extension-bridge";
 import {
   approveCalldata,
   assertChain,
+  BRIDGE_DEPOSIT_GAS,
+  bridgeDepositErc20Calldata,
+  bridgeDepositEthCalldata,
   claimMessageHex,
   toHex,
-  transferCalldata,
   vaultDepositCalldata,
   VAULT_DEPOSIT_GAS,
   type Eip1193Provider,
 } from "./evm";
+import type { InflightDeposit } from "./inflight";
 import { BRIDGE_FEE_XRGE, type BridgeAsset, type DepositAmount } from "./validate";
 import i18n from "../i18n";
 
@@ -40,11 +47,15 @@ export interface FlowCtx {
   /** Injected in tests so polling runs instantly. */
   sleep?: (ms: number) => Promise<void>;
   onStep?: (text: string) => void;
+  /** Called as soon as the wallet returns the deposit transaction hash, so the deposit stays tracked if the user leaves. */
+  onSent?: (record: InflightDeposit) => void;
+  /** The deposit transaction reverted on Base — nothing will be credited for it. */
+  onReverted?: (baseTxHash: string) => void;
 }
 
 export type FlowOutcome =
   | { kind: "success"; message: string; txHash?: string; txId?: string }
-  /** The transfer went through but isn't credited yet (info, not an error). */
+  /** The deposit went through but isn't credited yet (info, not an error). */
   | { kind: "pending"; message: string; txHash?: string };
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -92,6 +103,19 @@ async function waitReceipt(provider: Eip1193Provider, hash: string, sleep: (ms: 
     if (receipt) return receipt;
   }
   return null;
+}
+
+function sentRecord(p: EvmDepositParams, baseTxHash: string): InflightDeposit {
+  return {
+    baseTxHash,
+    asset: p.asset,
+    l1Symbol: L1_SYMBOL[p.asset],
+    amountLabel: p.asset === "XRGE" ? p.amount.l1Units.toString() : formatSix(p.amount.l1Units),
+    expectedL1Units: p.amount.l1Units.toString(),
+    recipientPubkey: p.recipientPubkey,
+    startedAt: Date.now(),
+    state: "sent",
+  };
 }
 
 export interface EvmDepositParams {
@@ -146,9 +170,11 @@ export async function depositFromBase(p: EvmDepositParams, ctx: FlowCtx = {}): P
       method: "eth_sendTransaction",
       params: [{ from: evmAddress, to: vaultAddr, data: vaultDepositCalldata(amountWei, p.recipientPubkey), gas: VAULT_DEPOSIT_GAS }],
     })) as string;
+    ctx.onSent?.(sentRecord(p, depositTx));
 
     ctx.onStep?.(i18n.t("bridge:steps.waitingDeposit"));
     const receipt = await waitReceipt(provider, depositTx, sleep);
+    if (receipt && receipt.status !== "0x1") ctx.onReverted?.(depositTx);
     if (!receipt || receipt.status !== "0x1") throw new Error(i18n.t("bridge:errors.depositTxFailed"));
 
     // The claim is honored only after Base confirmations; it's idempotent, so poll.
@@ -168,35 +194,45 @@ export async function depositFromBase(p: EvmDepositParams, ctx: FlowCtx = {}): P
     return { kind: "pending", message: `${i18n.t("bridge:toasts.xrgeArrivesAutomatically")}${lastError ? ` (${lastError})` : ""}`, txHash: depositTx };
   }
 
-  if (!p.custodyAddress) throw new Error(i18n.t("bridge:errors.notConfigured"));
+  const custody = p.custodyAddress;
+  if (!custody) throw new Error(i18n.t("bridge:errors.notConfigured"));
   const token = p.asset;
+  const amount = p.amount.baseUnits;
+
+  if (token === "USDC") {
+    ctx.onStep?.(i18n.t("bridge:steps.approvingToken", { symbol: token }));
+    const approveTxHash = (await provider.request({
+      method: "eth_sendTransaction",
+      params: [{ from: evmAddress, to: p.usdcAddress, data: approveCalldata(custody, amount) }],
+    })) as string;
+
+    ctx.onStep?.(i18n.t("bridge:steps.waitingApproval"));
+    const approveReceipt = await waitReceipt(provider, approveTxHash, sleep);
+    if (!approveReceipt || approveReceipt.status !== "0x1") throw new Error(i18n.t("bridge:errors.approvalFailedToken", { symbol: token }));
+
+    await assertChain(provider, p.chainId);
+  }
+
   ctx.onStep?.(i18n.t("bridge:steps.sendingToBridge", { symbol: token }));
   const txHash = (await provider.request({
     method: "eth_sendTransaction",
     params: [
       token === "ETH"
-        ? { from: evmAddress, to: p.custodyAddress, value: toHex(p.amount.baseUnits) }
-        : { from: evmAddress, to: p.usdcAddress, data: transferCalldata(p.custodyAddress, p.amount.baseUnits) },
+        ? { from: evmAddress, to: custody, value: toHex(amount), data: bridgeDepositEthCalldata(p.recipientPubkey), gas: BRIDGE_DEPOSIT_GAS }
+        : { from: evmAddress, to: custody, data: bridgeDepositErc20Calldata(p.usdcAddress, amount, p.recipientPubkey), gas: BRIDGE_DEPOSIT_GAS },
     ],
   })) as string;
-  await sleep(5000);
+  ctx.onSent?.(sentRecord(p, txHash));
 
-  ctx.onStep?.(i18n.t("bridge:steps.signingClaim"));
-  let sig = "";
-  try {
-    sig = (await provider.request({ method: "personal_sign", params: [claimMessageHex(txHash, p.recipientPubkey), evmAddress] })) as string;
-  } catch {
-    // Smart-contract wallets may not support personal_sign — the node handles an empty signature.
+  ctx.onStep?.(i18n.t("bridge:steps.waitingDeposit"));
+  const receipt = await waitReceipt(provider, txHash, sleep);
+  if (receipt && receipt.status !== "0x1") {
+    ctx.onReverted?.(txHash);
+    throw new Error(i18n.t("bridge:errors.depositReverted"));
   }
-
-  ctx.onStep?.(i18n.t("bridge:steps.waitingBase"));
-  const claim = await pollEvmClaim({ txHash, evmAddress, evmSignature: sig, recipient: p.recipientPubkey, token }, ctx, true);
-  const l1 = L1_SYMBOL[token];
-  if (claim.success) {
-    const human = token === "ETH" ? p.amount.l1Units : p.amount.baseUnits;
-    return { kind: "success", message: i18n.t("bridge:toasts.bridgedEvm", { amount: formatSix(human), from: token, to: l1 }), txHash };
-  }
-  return { kind: "pending", message: `${i18n.t("bridge:toasts.depositSentPending", { token: l1, tx: txHash.slice(0, 12) })}${claim.error ? ` (${claim.error})` : ""}`, txHash };
+  // No claim from the browser: the relayer credits the recipient named in the deposit event after
+  // Base confirmations. A receipt not seen yet is not a failure — the deposit stays tracked.
+  return { kind: "pending", message: i18n.t("bridge:toasts.depositSentAuto", { token: L1_SYMBOL[token] }), txHash };
 }
 
 function formatSix(units: bigint): string {

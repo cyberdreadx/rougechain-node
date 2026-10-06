@@ -7,8 +7,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { generateMnemonic, keypairFromMnemonic } from "@rougechain/core/mnemonic";
 import { serializePayload, verifyTransaction, type SignedTransaction } from "@rougechain/core/pqc-signer";
 import { getBtcDepositAddress } from "@rougechain/core/bridge";
-import { claimBtcDeposit, claimExistingDeposit, depositFromBase, withdrawFromRougeChain, CLAIM_ATTEMPTS } from "./flows";
-import { WrongChainError, approveCalldata, claimMessageHex, transferCalldata, vaultDepositCalldata } from "./evm";
+import { claimBtcDeposit, claimExistingDeposit, depositFromBase, withdrawFromRougeChain } from "./flows";
+import { encodeFunctionData, parseAbi, toFunctionSelector } from "viem";
+import { WrongChainError, approveCalldata, bridgeDepositErc20Calldata, bridgeDepositEthCalldata, claimMessageHex, transferCalldata, vaultDepositCalldata } from "./evm";
+import type { InflightDeposit } from "./inflight";
 import { parseDepositAmount, parseWithdrawAmount } from "./validate";
 import { API, instant, mockApi, mockProvider } from "./test-helpers";
 
@@ -108,30 +110,118 @@ describe("Base calldata matches apps/web byte for byte", () => {
   });
 });
 
+const BRIDGE_ABI = parseAbi([
+  "function depositETH(string rougechainPubkey) payable",
+  "function depositERC20(address token, uint256 amount, string rougechainPubkey)",
+  "function approve(address spender, uint256 amount)",
+]);
+const w64 = (hex: string) => hex.padStart(64, "0");
+/** Decode the trailing ABI `string` of calldata whose head has `headWords` 32-byte words. */
+function decodeString(data: string, headWords: number): string {
+  const body = data.slice(10);
+  const offset = parseInt(body.slice((headWords - 1) * 64, headWords * 64), 16) * 2;
+  const len = parseInt(body.slice(offset, offset + 64), 16);
+  return Buffer.from(body.slice(offset + 64, offset + 64 + len * 2), "hex").toString("utf8");
+}
+
+describe("RougeBridge deposit calldata (exact ABI encoding)", () => {
+  it("hand-computed vectors", () => {
+    expect(bridgeDepositEthCalldata("abc")).toBe("0x9b1c48e6" + w64("20") + w64("3") + "616263".padEnd(64, "0"));
+    expect(bridgeDepositErc20Calldata(USDC, 1_000_000n, "abc")).toBe(
+      "0x5a67cb87" + w64("036cbd53842c5426634e7929541ec2318f3dcf7e") + w64("f4240") + w64("60") + w64("3") + "616263".padEnd(64, "0"),
+    );
+    // exactly 32 bytes: no extra padding word; 33 bytes: padded to two words; multi-byte UTF-8 counts bytes
+    expect(bridgeDepositEthCalldata("a".repeat(32))).toBe("0x9b1c48e6" + w64("20") + w64("20") + "61".repeat(32));
+    expect(bridgeDepositEthCalldata("a".repeat(33))).toBe("0x9b1c48e6" + w64("20") + w64("21") + "61".repeat(33).padEnd(128, "0"));
+    expect(bridgeDepositEthCalldata("é")).toBe("0x9b1c48e6" + w64("20") + w64("2") + "c3a9".padEnd(64, "0"));
+  });
+
+  it("matches viem's encoder, selectors included, for a real 3,904-character key", () => {
+    expect(toFunctionSelector("depositETH(string)")).toBe("0x9b1c48e6");
+    expect(toFunctionSelector("depositERC20(address,uint256,string)")).toBe("0x5a67cb87");
+    for (const pub of [keys.publicKey, "ab".repeat(1952), "abc", "a".repeat(64), "é"]) {
+      expect(bridgeDepositEthCalldata(pub)).toBe(encodeFunctionData({ abi: BRIDGE_ABI, functionName: "depositETH", args: [pub] }));
+      expect(bridgeDepositErc20Calldata(USDC, 12_345_678n, pub)).toBe(
+        encodeFunctionData({ abi: BRIDGE_ABI, functionName: "depositERC20", args: [USDC as `0x${string}`, 12_345_678n, pub] }),
+      );
+    }
+    expect(keys.publicKey).toHaveLength(3904);
+    expect(approveCalldata(CUSTODY, 5n)).toBe(encodeFunctionData({ abi: BRIDGE_ABI, functionName: "approve", args: [CUSTODY, 5n] }));
+  });
+});
+
 describe("ETH deposit (Base → qETH)", () => {
-  it("sends value to custody, signs the claim, polls POST /bridge/claim", async () => {
-    let attempts = 0;
-    const api = mockApi({
-      "POST /bridge/claim": () => (++attempts < 3 ? { success: false, error: "pending confirmations" } : { success: true, txId: "l1tx" }),
-    });
+  it("one bridge.depositETH(pubkey) transaction carrying the value — no signature, no claim", async () => {
+    const api = mockApi({});
     const w = mockProvider({});
     const steps: string[] = [];
+    const sent: InflightDeposit[] = [];
+    const before = Date.now();
     const out = await depositFromBase(
       { asset: "ETH", provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("ETH", "0.25"), custodyAddress: CUSTODY, usdcAddress: USDC },
-      { sleep: instant, onStep: (s) => steps.push(s) },
+      { sleep: instant, onStep: (s) => steps.push(s), onSent: (r) => sent.push(r) },
     );
-    expect(out.kind).toBe("success");
-    expect(w.calls.map((c) => c.method)).toEqual(["eth_chainId", "eth_sendTransaction", "personal_sign"]);
     const txHash = `0x${"1".padStart(64, "a")}`;
-    expect(w.sent()).toEqual([{ from: EVM, to: CUSTODY, value: webEthValue(0.25) }]);
-    expect(w.calls[2].params).toEqual([webClaimMsgHex(txHash, keys.publicKey), EVM]);
-    const posts = api.posts();
-    expect(posts).toHaveLength(3);
-    for (const p of posts) {
-      expect(p.url).toBe(`${API}/bridge/claim`);
-      expect(p.body).toEqual({ evmTxHash: txHash, evmAddress: EVM, evmSignature: "0xsig", recipientRougechainPubkey: keys.publicKey, token: "ETH" });
-    }
-    expect(steps).toContain("Waiting for Base confirmations… (2/30)");
+    expect(out).toEqual({ kind: "pending", message: "Deposit sent. Your qETH will be credited automatically, usually in a few minutes — you can leave this page.", txHash });
+    expect(w.calls.map((c) => c.method)).toEqual(["eth_chainId", "eth_sendTransaction", "eth_getTransactionReceipt"]);
+    const [tx] = w.sent() as { from: string; to: string; value: string; data: string; gas: string }[];
+    expect(tx).toEqual({ from: EVM, to: CUSTODY, value: webEthValue(0.25), data: bridgeDepositEthCalldata(keys.publicKey), gas: "0x7A120" });
+    expect(tx.data.slice(0, 10)).toBe("0x9b1c48e6");
+    expect(decodeString(tx.data, 1)).toBe(keys.publicKey);
+    expect(w.calls.some((c) => c.method === "personal_sign")).toBe(false);
+    expect(api.calls).toEqual([]);
+    expect(sent).toEqual([
+      { baseTxHash: txHash, asset: "ETH", l1Symbol: "qETH", amountLabel: "0.25", expectedL1Units: "250000", recipientPubkey: keys.publicKey, startedAt: expect.any(Number), state: "sent" },
+    ]);
+    expect(sent[0].startedAt).toBeGreaterThanOrEqual(before);
+    expect(steps).toEqual(["Checking your Base wallet network…", "Sending ETH to the bridge…", "Waiting for deposit confirmation…"]);
+  });
+
+  it("onSent fires with the deposit hash before the receipt wait resolves", async () => {
+    mockApi({});
+    let release!: (r: { status: string }) => void;
+    const receipt = new Promise<{ status: string }>((r) => (release = r));
+    const w = mockProvider({ eth_getTransactionReceipt: () => receipt });
+    const onSent = vi.fn();
+    let settled = false;
+    const run = depositFromBase(
+      { asset: "ETH", provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("ETH", "0.1"), custodyAddress: CUSTODY, usdcAddress: USDC },
+      { sleep: instant, onSent },
+    ).finally(() => (settled = true));
+    await vi.waitFor(() => expect(w.calls.some((c) => c.method === "eth_getTransactionReceipt")).toBe(true));
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(onSent.mock.calls[0][0]).toMatchObject({ baseTxHash: `0x${"1".padStart(64, "a")}`, asset: "ETH" });
+    expect(settled).toBe(false);
+    release({ status: "0x1" });
+    expect((await run).kind).toBe("pending");
+  });
+
+  it("a reverted deposit is a failure (and reported so it is no longer tracked)", async () => {
+    const api = mockApi({});
+    const w = mockProvider({ eth_getTransactionReceipt: () => ({ status: "0x0" }) });
+    const onSent = vi.fn();
+    const onReverted = vi.fn();
+    await expect(
+      depositFromBase(
+        { asset: "ETH", provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("ETH", "0.1"), custodyAddress: CUSTODY, usdcAddress: USDC },
+        { sleep: instant, onSent, onReverted },
+      ),
+    ).rejects.toThrow(/deposit transaction failed on Base/);
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(onReverted).toHaveBeenCalledWith(`0x${"1".padStart(64, "a")}`);
+    expect(api.calls).toEqual([]);
+  });
+
+  it("no receipt yet after the wait is pending, not failed — the deposit stays tracked", async () => {
+    mockApi({});
+    const w = mockProvider({ eth_getTransactionReceipt: () => null });
+    const onReverted = vi.fn();
+    const out = await depositFromBase(
+      { asset: "ETH", provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("ETH", "0.1"), custodyAddress: CUSTODY, usdcAddress: USDC },
+      { sleep: instant, onReverted },
+    );
+    expect(out.kind).toBe("pending");
+    expect(onReverted).not.toHaveBeenCalled();
   });
 
   it("refuses when the wallet is on the wrong chain — nothing is sent", async () => {
@@ -152,32 +242,57 @@ describe("ETH deposit (Base → qETH)", () => {
     ).rejects.toBeInstanceOf(WrongChainError);
     expect(w.sent()).toHaveLength(0);
   });
-
-  it("an unconfirmed claim after 30 polls is reported as pending, not failed", async () => {
-    const api = mockApi({ "POST /bridge/claim": () => ({ success: false, error: "waiting" }) });
-    const w = mockProvider({ personal_sign: () => { throw new Error("smart wallet"); } });
-    const out = await depositFromBase(
-      { asset: "ETH", provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("ETH", "0.1"), custodyAddress: CUSTODY, usdcAddress: USDC },
-      { sleep: instant },
-    );
-    expect(out.kind).toBe("pending");
-    expect(api.posts()).toHaveLength(CLAIM_ATTEMPTS);
-    // personal_sign unsupported → empty signature, as apps/web
-    expect((api.posts()[0].body as { evmSignature: string }).evmSignature).toBe("");
-  });
 });
 
 describe("USDC deposit (Base → qUSDC)", () => {
-  it("transfers USDC to custody (6 decimals) and claims with token USDC", async () => {
-    const api = mockApi({ "POST /bridge/claim": () => ({ success: true }) });
+  const params = () => ({ asset: "USDC" as const, provider: undefined as never, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("USDC", "12.345678"), custodyAddress: CUSTODY, usdcAddress: USDC });
+
+  it("approve(bridge) → receipt → chain re-check → bridge.depositERC20(usdc, amount, pubkey) — no signature, no claim", async () => {
+    const api = mockApi({});
     const w = mockProvider({});
-    const out = await depositFromBase(
-      { asset: "USDC", provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("USDC", "12.345678"), custodyAddress: CUSTODY, usdcAddress: USDC },
-      { sleep: instant },
-    );
-    expect(out).toMatchObject({ kind: "success", message: "Bridged 12.345678 USDC → qUSDC!" });
-    expect(w.sent()).toEqual([{ from: EVM, to: USDC, data: webUsdcData(CUSTODY, 12.345678) }]);
-    expect(api.posts()[0]).toMatchObject({ path: "/bridge/claim", body: { token: "USDC", evmAddress: EVM, recipientRougechainPubkey: keys.publicKey } });
+    const sent: InflightDeposit[] = [];
+    const out = await depositFromBase({ ...params(), provider: w.provider }, { sleep: instant, onSent: (r) => sent.push(r) });
+    const depositHash = `0x${"2".padStart(64, "a")}`;
+    expect(out).toMatchObject({ kind: "pending", txHash: depositHash });
+    expect(w.calls.map((c) => c.method)).toEqual(["eth_chainId", "eth_sendTransaction", "eth_getTransactionReceipt", "eth_chainId", "eth_sendTransaction", "eth_getTransactionReceipt"]);
+    expect(w.calls[2].params).toEqual([`0x${"1".padStart(64, "a")}`]);
+    const [approve, deposit] = w.sent() as { from: string; to: string; data: string; gas?: string; value?: string }[];
+    expect(approve).toEqual({ from: EVM, to: USDC, data: `0x095ea7b3${CUSTODY.slice(2).padStart(64, "0")}${(12_345_678).toString(16).padStart(64, "0")}` });
+    expect(deposit).toEqual({ from: EVM, to: CUSTODY, data: bridgeDepositErc20Calldata(USDC, 12_345_678n, keys.publicKey), gas: "0x7A120" });
+    expect(deposit.data.slice(0, 10)).toBe("0x5a67cb87");
+    expect(deposit.data.slice(10, 74)).toBe(w64(USDC.slice(2).toLowerCase()));
+    expect(BigInt("0x" + deposit.data.slice(74, 138))).toBe(12_345_678n);
+    expect(decodeString(deposit.data, 3)).toBe(keys.publicKey);
+    expect(w.calls.some((c) => c.method === "personal_sign")).toBe(false);
+    expect(api.calls).toEqual([]);
+    // tracked by the deposit transaction, not the approval
+    expect(sent).toEqual([expect.objectContaining({ baseTxHash: depositHash, asset: "USDC", l1Symbol: "qUSDC", amountLabel: "12.345678", expectedL1Units: "12345678", state: "sent" })]);
+  });
+
+  it("stops when the approval reverts: no deposit sent, nothing tracked", async () => {
+    mockApi({});
+    const w = mockProvider({ eth_getTransactionReceipt: () => ({ status: "0x0" }) });
+    const onSent = vi.fn();
+    await expect(depositFromBase({ ...params(), provider: w.provider }, { sleep: instant, onSent })).rejects.toThrow(/USDC approval failed/);
+    expect(w.sent()).toHaveLength(1);
+    expect(onSent).not.toHaveBeenCalled();
+  });
+
+  it("refuses to deposit when the wallet left the chain after the approval", async () => {
+    mockApi({});
+    let reads = 0;
+    const w = mockProvider({ eth_chainId: () => (++reads === 1 ? "0x14a34" : "0x2105") });
+    await expect(depositFromBase({ ...params(), provider: w.provider }, { sleep: instant })).rejects.toBeInstanceOf(WrongChainError);
+    expect(w.sent()).toHaveLength(1);
+  });
+
+  it("a reverted deposit is a failure", async () => {
+    mockApi({});
+    let receipts = 0;
+    const w = mockProvider({ eth_getTransactionReceipt: () => ({ status: ++receipts === 1 ? "0x1" : "0x0" }) });
+    const onReverted = vi.fn();
+    await expect(depositFromBase({ ...params(), provider: w.provider }, { sleep: instant, onReverted })).rejects.toThrow(/deposit transaction failed on Base/);
+    expect(onReverted).toHaveBeenCalledWith(`0x${"2".padStart(64, "a")}`);
   });
 });
 
@@ -185,6 +300,7 @@ describe("XRGE deposit (Base vault → XRGE)", () => {
   it("approve → deposit(amount, pubkey) with 500k gas → POST /bridge/xrge/claim", async () => {
     const api = mockApi({ "POST /bridge/xrge/claim": () => ({ success: true, txId: "l1" }) });
     const w = mockProvider({});
+    const onSent = vi.fn();
     const out = await depositFromBase(
       {
         asset: "XRGE",
@@ -196,9 +312,12 @@ describe("XRGE deposit (Base vault → XRGE)", () => {
         usdcAddress: USDC,
         xrge: { vaultAddress: VAULT, tokenAddress: XRGE_TOKEN },
       },
-      { sleep: instant },
+      { sleep: instant, onSent },
     );
     expect(out.kind).toBe("success");
+    // tracked by the vault deposit (second transaction), in whole XRGE
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(onSent).toHaveBeenCalledWith(expect.objectContaining({ baseTxHash: `0x${"2".padStart(64, "a")}`, asset: "XRGE", l1Symbol: "XRGE", amountLabel: "5", expectedL1Units: "5", state: "sent" }));
     expect(w.sent()).toEqual([
       { from: EVM, to: XRGE_TOKEN, data: webXrgeApprove(VAULT, 5) },
       { from: EVM, to: VAULT, data: webXrgeDeposit(keys.publicKey, 5), gas: "0x7A120" },
@@ -216,13 +335,15 @@ describe("XRGE deposit (Base vault → XRGE)", () => {
   it("stops when the approval reverts (no deposit sent)", async () => {
     mockApi({});
     const w = mockProvider({ eth_getTransactionReceipt: () => ({ status: "0x0" }) });
+    const onSent = vi.fn();
     await expect(
       depositFromBase(
         { asset: "XRGE", provider: w.provider, evmAddress: EVM, chainId: BASE_SEPOLIA, recipientPubkey: keys.publicKey, amount: dep("XRGE", "1"), usdcAddress: USDC, xrge: { vaultAddress: VAULT, tokenAddress: XRGE_TOKEN } },
-        { sleep: instant },
+        { sleep: instant, onSent },
       ),
     ).rejects.toThrow(/approval failed/);
     expect(w.sent()).toHaveLength(1);
+    expect(onSent).not.toHaveBeenCalled();
   });
 });
 

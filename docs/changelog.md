@@ -4,6 +4,23 @@ All notable changes to RougeChain.
 
 ---
 
+## Mainnet: blocks 235 and 245 active; documentation brought up to date — 2026-10-06
+
+- Mainnet passed **block 235** (mintable tokens, contract royalty reads) and **block 245**
+  (monetary-integrity rule) in early October 2026; both operator nodes run release 1.6.3 and report
+  `upgrade_schedule` `235 / 235 / 245`. The height-245 rule is in force: a block carrying a `slash`
+  transaction, a faucet-flagged transaction, an invalid fee or one of the fifteen suspended types is
+  invalid. Shielded transfers, token locking, token staking pools, on-chain governance and vote
+  delegation are therefore **not available** — see [Status](status.md#suspended-since-block-245) for
+  why and what replaces them (shielded pool V2 in development, unaudited).
+- Documentation revised to match the running chain: `WHITEPAPER.md` (repository root)
+  v2.4 (upgrade table with 235 and 245; STARK and shielded-pool corrections; staking, fee, bridge and
+  messenger facts; the consensus redesign decided 2026-10-06 recorded as planned, not built),
+  [Status](status.md), staking, bridge, messaging and API pages. Live figures (3 validators, base fee
+  at the 0.001 floor, `__staking_rewards__` = 0, `__treasury__` ≈ 52 XRGE) were read from the node
+  API on 2026-10-06. The whitepaper PDF shipped with the web apps still reflects v2.3.
+- No code change.
+
 ## Node release 1.6.3: messenger and mail hardening — 2026-10-05
 
 - Not a consensus change (no activation height). A messenger directory entry can only be replaced

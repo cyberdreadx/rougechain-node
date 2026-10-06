@@ -31,8 +31,15 @@
 html {
   scroll-behavior: auto;
   scroll-padding-top: 92px;
+  /* Phones: do not let the browser inflate text (landscape) or pan the page sideways. `clip`
+     (unlike `hidden`) does not create a scroll container, so sticky headers keep working. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overflow-x: clip;
 }
 body {
+  max-width: 100%;
+  overflow-x: clip;
   margin: 0;
   background: var(--bg);
   color: var(--ink);
@@ -42,8 +49,19 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
+}
+/* iOS Safari zooms the whole page when a focused field's text is smaller than 16px, and stays
+   zoomed (the page then pans sideways). Fields are 16px on iOS only; desktop keeps the design
+   sizes. Larger display inputs are restored below. */
+@supports (-webkit-touch-callout: none) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 button,
 a,

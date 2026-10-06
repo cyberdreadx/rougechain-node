@@ -74,7 +74,7 @@ own** tokens and NFTs; players stock it by sending tokens/NFTs/XRGE to the contr
 | `host_block_hash(height, out) → i32` | From block **170**: the 32-byte hash of a finished block up to 256 back; `-1` otherwise. Use it to settle rolls |
 | `host_get_attached_amount() → i64` | From block **190**: the payment attached to this call, in quanta for XRGE or raw units for a token; `0` if none (always `0` in a cross-contract sub-call). See [Payable calls](#payable-calls) |
 | `host_get_attached_symbol(out, cap) → i32` | From block **190**: writes the attached symbol (`XRGE` or a token symbol, upper-case). Returns bytes written, `0` if nothing is attached, `-2` if `cap` is too small |
-| `host_nft_royalty_bps(col, clen) → i32` | **CONTRACT_NFT_ROYALTY** (built, activation not scheduled): the collection's royalty in basis points, `0`–`10000`; `-1` collection not found / invalid input. See [Selling NFTs from a contract](#nft-royalty) |
+| `host_nft_royalty_bps(col, clen) → i32` | **CONTRACT_NFT_ROYALTY** (mainnet block 235, testnet 1360): the collection's royalty in basis points, `0`–`10000`; `-1` collection not found / invalid input. See [Selling NFTs from a contract](#nft-royalty) |
 | `host_nft_royalty_recipient(col, clen, out, cap) → i32` | **CONTRACT_NFT_ROYALTY**: writes the royalty recipient in canonical ledger form (`rouge1…`, or a 40-hex contract address) and returns its length; `-1` not found / invalid input, `-2` `cap` too small |
 
 Addresses a contract passes are normalised: paying the value `host_get_caller` returns (a public
@@ -105,10 +105,10 @@ A complete example — a loot box paying NFTs, tokens or XRGE — is in
 
 ## Selling NFTs from a contract: royalties (CONTRACT_NFT_ROYALTY)
 
-> **Status: built, activation not scheduled.** Until the CONTRACT_NFT_ROYALTY height is set
-> (`GET /api/stats` → `upgrade_schedule.contract_nft_royalty`, `null` today), these two functions do
-> not exist: a contract importing them can be published, but every call to it fails, exactly like a
-> contract importing any unknown function.
+> **Status: LIVE on mainnet since block 235 and on testnet since block 1360** (`GET /api/stats` →
+> `upgrade_schedule.contract_nft_royalty`). Below that height these two functions do not exist: a
+> contract importing them can be published, but every call to it fails, exactly like a contract
+> importing any unknown function.
 
 `host_nft_transfer` moves an NFT **without** paying royalty, and the royalty a wallet `nft_transfer`
 with a `salePrice` pays only applies to wallet sales. A contract that sells NFTs — an escrow

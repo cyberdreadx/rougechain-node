@@ -12,6 +12,10 @@
 
 [build.environment]
   NODE_VERSION = "20.19.0"
+  # ETH / USDC bridge deposits. The form now deposits through the bridge contract (credited
+  # automatically by the relayer, any wallet type) and tracks a deposit until it is credited.
+  # Set to "false" to pause the form again.
+  VITE_EVM_DEPOSIT_ENABLED = "true"
 
 [[headers]]
   for = "/assets/*"

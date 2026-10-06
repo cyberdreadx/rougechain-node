@@ -105,8 +105,8 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 | `/api/token/:symbol/transactions` | GET | Get token transactions |
 | `/api/burn-address` | GET | Get official burn address |
 | `/api/burned` | GET | Get burned token stats |
-| `/api/v2/token/create` | POST | Create token (signed); `mintable` / `max_supply` from TOKEN_MINTING activation (not scheduled) |
-| `/api/v2/token/mint` | POST | Mint more of a mintable token, creator only (signed) — **not active yet** |
+| `/api/v2/token/create` | POST | Create token (signed); `mintable` / `max_supply` since TOKEN_MINTING (mainnet block 235) |
+| `/api/v2/token/mint` | POST | Mint more of a mintable token, creator only (signed); live since mainnet block 235 |
 | `/api/v2/token/metadata/update` | POST | Update token metadata (signed) |
 | `/api/v2/token/metadata/claim` | POST | Claim metadata ownership (signed) |
 
@@ -134,7 +134,11 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 | `/api/v2/stake` | POST | Stake tokens (signed) |
 | `/api/v2/unstake` | POST | Unstake tokens (signed) |
 
-### Token Staking Pools
+### Token Staking Pools (suspended since block 245)
+
+> `create_staking_pool`, `token_stake` and `token_unstake` are suspended transaction types since
+> mainnet block 245 (testnet 1390): no block may carry them. These read routes answer with empty data
+> on mainnet (no pool was ever created). See [Status](../status.md#suspended-since-block-245).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -205,25 +209,38 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 | `/api/bridge/xrge/withdrawals` | GET | List XRGE withdrawals |
 | `/api/bridge/xrge/withdrawals/:txId` | DELETE | Fulfill XRGE withdrawal |
 
-### Shielded Transactions
+### Shielded Transactions (suspended since block 245)
+
+> The V1 shielded pool is **suspended**: `shield`, `shielded_transfer` and `unshield` are refused
+> (`this transaction type is suspended`) and a block carrying them is invalid. The mainnet pool is
+> empty (`shielded_supply` 0). A redesigned pool (V2) is in development and unaudited — see
+> [Status](../status.md#suspended-since-block-245).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v2/shielded/shield` | POST | Shield tokens (signed) |
-| `/api/v2/shielded/transfer` | POST | Private transfer (signed) |
-| `/api/v2/shielded/unshield` | POST | Unshield tokens (signed) |
-| `/api/shielded/stats` | GET | Shielded pool statistics |
+| `/api/v2/shielded/shield` | POST | Refused: suspended |
+| `/api/v2/shielded/transfer` | POST | Refused: suspended |
+| `/api/v2/shielded/unshield` | POST | Refused: suspended |
+| `/api/shielded/stats` | GET | Shielded pool statistics (pool total 0 on mainnet) |
 | `/api/shielded/nullifier/:hash` | GET | Check nullifier |
 
-### Rollup (Phase 3)
+### Rollup (research prototype — not part of consensus)
+
+> The rollup accumulator batches transfers in memory and proves them with a STARK, but nothing in
+> consensus reads a batch: a submitted transfer moves no funds and enters no block.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/v2/rollup/status` | GET | Rollup status |
 | `/api/v2/rollup/batch/:id` | GET | Get rollup batch |
-| `/api/v2/rollup/submit` | POST | Submit rollup transfer (signed) |
+| `/api/v2/rollup/submit` | POST | Submit rollup transfer |
 
-### Governance
+### Governance (suspended since block 245)
+
+> On-chain governance (`create_proposal`, `cast_vote`, `execute_proposal`, `delegate`, `undelegate`)
+> is **suspended**: no block may carry these types, and none was ever used on mainnet. These read
+> routes return empty lists on mainnet. Treasury decisions for Regenerate use the node-hosted
+> [Regenerate votes](regenerate.md) in the meantime.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

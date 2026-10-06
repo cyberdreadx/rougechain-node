@@ -1,6 +1,7 @@
 # RougeChain node release — mintable tokens and royalty-aware contracts (2026-10)
 
-**Mandatory upgrade for every mainnet validator and full node — install it before block 235.**
+**Mandatory upgrade for every mainnet validator and full node.** Block 235 has passed; the current
+release is [1.6.3](release-1.6.3.md), which contains these changes and the block-245 rule.
 Two consensus changes activate at the same height:
 
 | Change | Constant (`core/daemon/src/node.rs`) | Activation height |

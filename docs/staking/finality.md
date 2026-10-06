@@ -13,10 +13,14 @@ of total stake, checked against the validator set for that height. A node reject
 valid certificate, and a producer waits for its parent's certificate before building on it. Check any
 height with `GET /api/finality/:height`.
 
-**What Release 2a does not include:** a fallback proposer, skip certificates and the slashing tied to
-them (Release 2b); slashing on equivocation evidence is planned as Release 3. If the designated
-proposer is offline, no block is produced until it returns. Stake is still concentrated in few keys, so
-the ⅔ quorum is currently met by the largest validator alone.
+**What Release 2a does not include:** a fallback proposer, skip certificates, rotating proposers and
+slashing on evidence. Those were planned as "Release 2b" and "Release 3"; on 2026-10-06 they were
+folded into a broader consensus redesign (Tendermint-style rounds, rotating stake-weighted proposers,
+a capped active set, a consensus-enforced minimum stake, evidence-based slashing) that is **decided
+but not built** — see [Status & Roadmap](../status.md). If the designated proposer is offline, no
+block is produced until it returns. Three validators are staked and the largest holds more than
+99.9 % of the stake, so the ⅔ quorum is currently met by that validator alone. No slashing of any
+kind is active; the legacy `slash` transaction is rejected since block 245.
 
 ## Legacy behavior (blocks 0–149)
 

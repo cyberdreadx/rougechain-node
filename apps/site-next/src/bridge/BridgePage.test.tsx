@@ -1,5 +1,5 @@
 /** /bridge page: every gate state, and each write flow driven through the UI with mocked node + wallets. */
-import { act, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,6 +13,8 @@ import { Toaster } from "../wallet/toast";
 import { resetBrowserState, seedAppsWebLockedWallet, seedAppsWebWallet } from "../wallet/test-utils";
 import BridgePage from "./BridgePage";
 import { flowTiming } from "./DepositPanels";
+import { bridgeDepositEthCalldata } from "./evm";
+import { addInflight, listInflight } from "./inflight";
 import { bridgeArea } from "../features/bridge";
 import { API, instant, mockApi, mockProvider } from "./test-helpers";
 import i18n from "../i18n";
@@ -171,13 +173,39 @@ describe("gates", () => {
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(await screen.findByText("No bridge activity yet")).toBeInTheDocument();
   });
+
+  it("recent activity lists this wallet's bridge mints and withdrawals as the node returns them", async () => {
+    testnet();
+    const w = await seedAppsWebLockedWallet();
+    const item = (txId: string, tx_type: string, payload: object, blockTime: number) => ({ txId, blockHash: "h", blockHeight: 247, blockTime, direction: "in", tx: { tx_type, payload } });
+    nodeRoutes(w.signingPublicKey, {
+      [`GET /address/${w.signingPublicKey}/transactions`]: () => ({
+        success: true,
+        total: 4,
+        transactions: [
+          item("a".repeat(64), "bridge_mint", { amount: 150000000, to_pub_key_hex: w.signingPublicKey }, Date.now() - 60_000),
+          item("b".repeat(64), "transfer", { amount: 100 }, Date.now() - 120_000),
+          item("c".repeat(64), "bridge_mint", { amount: 2500000, token_symbol: "qUSDC" }, Date.now() - 180_000),
+          item("d".repeat(64), "bridge_withdraw", { amount: 100, token_symbol: "XRGE" }, Date.now() - 240_000),
+        ],
+      }),
+    });
+    renderBridge();
+    const card = within(await screen.findByRole("region", { name: "Recent bridge activity" }));
+    expect(await card.findByText(/150,000,000 XRGE/)).toBeInTheDocument();
+    expect(card.getByText(/2\.50 qUSDC/)).toBeInTheDocument();
+    expect(card.getByText(/100 XRGE/)).toBeInTheDocument();
+    expect(card.getAllByText("Bridged in")).toHaveLength(2);
+    expect(card.getAllByText("Bridged out")).toHaveLength(1);
+    expect(card.queryByText("No bridge activity yet")).not.toBeInTheDocument();
+  });
 });
 
 describe("deposit Base → RougeChain", () => {
-  it("ETH with an injected wallet: connect, review, send, claim", async () => {
+  it("ETH with an injected wallet: connect, review, one bridge deposit — then it is tracked across tabs and reloads until credited", async () => {
     testnet();
     const w = seedAppsWebWallet();
-    const api = nodeRoutes(w.signingPublicKey, { "POST /bridge/claim": () => ({ success: true, txId: "l1" }) });
+    const api = nodeRoutes(w.signingPublicKey);
     const eth = mockProvider({
       wallet_switchEthereumChain: () => null,
       eth_requestAccounts: () => [EVM],
@@ -185,7 +213,7 @@ describe("deposit Base → RougeChain", () => {
       eth_call: () => "0x0",
     });
     Object.assign(window, { ethereum: { ...eth.provider, isMetaMask: true } });
-    renderBridge();
+    const { unmount } = renderBridge();
     await screen.findByRole("region", { name: "Bridge" });
     await userEvent.click(await panel().findByRole("button", { name: /Connect MetaMask \(Base Sepolia\)/ }));
     expect(await screen.findByText(`Connected 0x3333…3333`)).toBeInTheDocument();
@@ -209,11 +237,77 @@ describe("deposit Base → RougeChain", () => {
     expect(api.posts()).toHaveLength(0); // nothing sent before confirming
 
     await userEvent.click(screen.getByRole("button", { name: "Confirm and open wallet" }));
-    expect(await screen.findByText("Bridged 0.25 ETH → qETH!")).toBeInTheDocument();
-    expect(eth.sent()).toEqual([{ from: EVM, to: CUSTODY, value: "0x3782dace9d90000" }]);
-    expect(api.posts().map((p) => [p.url, p.body])).toEqual([
-      [`${API}/bridge/claim`, { evmTxHash: `0x${"1".padStart(64, "a")}`, evmAddress: EVM, evmSignature: "0xsig", recipientRougechainPubkey: w.signingPublicKey, token: "ETH" }],
-    ]);
+    expect(await screen.findByText(/Deposit sent\. Your qETH will be credited automatically, usually in a few minutes — you can leave this page\./)).toBeInTheDocument();
+    expect(eth.sent()).toEqual([{ from: EVM, to: CUSTODY, value: "0x3782dace9d90000", data: bridgeDepositEthCalldata(w.signingPublicKey), gas: "0x7A120" }]);
+    expect(eth.calls.some((c) => c.method === "personal_sign")).toBe(false);
+    expect(api.posts()).toHaveLength(0); // no claim: the relayer credits it
+
+    // tracked outside the tab panels
+    const txHash = `0x${"1".padStart(64, "a")}`;
+    expect(listInflight("testnet")).toEqual([expect.objectContaining({ baseTxHash: txHash, asset: "ETH", amountLabel: "0.25", recipientPubkey: w.signingPublicKey, state: "sent" })]);
+    const card = () => within(screen.getByRole("region", { name: "Your deposits" }));
+    expect(card().getByText("0.25 ETH")).toBeInTheDocument();
+    expect(card().getByText("Sent — waiting for Base confirmations")).toBeInTheDocument();
+    expect(panel().queryByText("0.25 ETH")).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: /Withdraw/ }));
+    expect(await screen.findByLabelText("Amount (qETH)")).toBeInTheDocument();
+    expect(card().getByText("Sent — waiting for Base confirmations")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /Deposit/ }));
+    expect(card().getByText("Sent — waiting for Base confirmations")).toBeInTheDocument();
+
+    // leave the page and come back (a reload): still there, and credited once the node shows the mint
+    unmount();
+    renderBridge();
+    expect(await screen.findByText("Sent — waiting for Base confirmations")).toBeInTheDocument();
+    cleanup();
+    nodeRoutes(w.signingPublicKey, {
+      [`GET /address/${w.signingPublicKey}/transactions`]: () => ({
+        transactions: [{ txId: "c".repeat(64), blockHeight: 300, blockTime: Date.now(), direction: "in", tx: { tx_type: "bridge_mint", payload: { amount: 250_000, token_symbol: "qETH", to_pub_key_hex: w.signingPublicKey } } }],
+      }),
+    });
+    renderBridge();
+    expect(await screen.findByText("Credited ✓ (+0.25 qETH)")).toBeInTheDocument();
+    await userEvent.click(card().getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("region", { name: "Your deposits" })).toBeNull();
+  });
+
+  it("a reverted deposit is reported as failed and not left in the tracked list", async () => {
+    testnet();
+    const w = seedAppsWebWallet();
+    nodeRoutes(w.signingPublicKey);
+    const eth = mockProvider({
+      wallet_switchEthereumChain: () => null,
+      eth_requestAccounts: () => [EVM],
+      eth_getBalance: () => "0xde0b6b3a7640000",
+      eth_call: () => "0x0",
+      eth_getTransactionReceipt: () => ({ status: "0x0" }),
+    });
+    Object.assign(window, { ethereum: { ...eth.provider, isMetaMask: true } });
+    renderBridge();
+    await screen.findByRole("region", { name: "Bridge" });
+    await userEvent.click(await panel().findByRole("button", { name: /Connect MetaMask/ }));
+    await userEvent.type(await screen.findByLabelText("Amount (ETH)"), "0.25");
+    await screen.findByText("Balance: 1 ETH");
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm and open wallet" }));
+    expect(await screen.findByText(/The deposit transaction failed on Base, so nothing was deposited/)).toBeInTheDocument();
+    expect(listInflight("testnet")).toEqual([]);
+    expect(screen.queryByRole("region", { name: "Your deposits" })).toBeNull();
+  });
+
+  it("a tracked deposit belongs to its wallet and network: shown for a locked wallet too, hidden for another key", async () => {
+    testnet();
+    const w = await seedAppsWebLockedWallet();
+    nodeRoutes(w.signingPublicKey);
+    const rec = { baseTxHash: `0x${"9".repeat(64)}`, asset: "USDC" as const, l1Symbol: "qUSDC", amountLabel: "10", expectedL1Units: "10000000", recipientPubkey: w.signingPublicKey, startedAt: Date.now(), state: "sent" as const };
+    addInflight("testnet", rec);
+    addInflight("testnet", { ...rec, baseTxHash: `0x${"8".repeat(64)}`, amountLabel: "77", recipientPubkey: "another-wallet" });
+    addInflight("mainnet", { ...rec, baseTxHash: `0x${"7".repeat(64)}`, amountLabel: "88" });
+    renderBridge();
+    const card = within(await screen.findByRole("region", { name: "Your deposits" }));
+    expect(card.getByText("10 USDC")).toBeInTheDocument();
+    expect(card.queryByText("77 USDC")).toBeNull();
+    expect(card.queryByText("88 USDC")).toBeNull();
   });
 
   it("refuses to connect a wallet that stays on the wrong chain", async () => {
@@ -260,13 +354,15 @@ describe("deposit Base → RougeChain", () => {
     await userEvent.click(screen.getByRole("button", { name: "Confirm and open wallet" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Approve Base Sepolia transaction" });
-    expect(within(dialog).getByText("Token transfer")).toBeInTheDocument();
+    // the first of the two USDC transactions: the approval for the bridge contract
+    expect(within(dialog).getByText("Allow the bridge to spend your tokens")).toBeInTheDocument();
     expect(within(dialog).getByText("0x036CbD53842c5426634e7929541eC2318f3dCF7e")).toBeInTheDocument();
     expect(within(dialog).getByText(/Base Sepolia testnet/)).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
     expect(await screen.findByText("Request rejected in your wallet")).toBeInTheDocument();
     expect(rpc).not.toContain("eth_sendRawTransaction");
     expect(api.posts().filter((p) => p.url.startsWith(API))).toHaveLength(0);
+    expect(listInflight("testnet")).toEqual([]);
   });
 });
 

@@ -85,7 +85,7 @@ Add a wallet to unlock the signing tools:
 | **Contracts** | `list_contracts`, `get_contract`, `get_contract_state`, `get_contract_events`, `query_contract` (free read-only dry run), `get_tx_receipt` |
 | **Social** | `get_global_timeline`, `get_post`, `get_user_posts`, `get_post_replies`, `get_track_stats`, `get_artist_stats` |
 | **Mail & Messaging** | `resolve_name`, `reverse_lookup_name`, `list_messenger_wallets` |
-| **Governance & Fees** | `list_proposals`, `get_fee_info` |
+| **Governance & Fees** | `list_proposals` (on-chain governance is suspended since block 245; returns an empty list on mainnet), `get_fee_info` |
 
 ### ✍️ Write tools (write mode only — signed with ML-DSA-65)
 

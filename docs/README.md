@@ -6,18 +6,21 @@ Welcome to **RougeChain** — a post-quantum secure Layer 1 blockchain built wit
 
 | Component | Status |
 |---|---|
-| RougeChain mainnet | **LIVE** |
-| Consensus Release 1 (tx-integrity @90, proposer selection @100) | **LIVE — mandatory upgrade**, see [Mandatory upgrade](running-a-node/mandatory-upgrade-2026-09.md) |
-| R1 production bridge | **LIVE** |
-| XRGE / qETH / qUSDC bridge paths | **TESTED / USABLE** |
+| RougeChain mainnet (height 251 on 2026-10-06) | **LIVE** — 3 staked validators, one producing every block |
+| Consensus Release 1 (tx-integrity @90, proposer selection @100) | **LIVE** |
 | Verified BFT finality (FINALITY_V2) | **LIVE since block 150** |
-| Game-ready contracts (tokens, NFTs, randomness) | **LIVE since block 160** — mandatory upgrade, see [2026-09-28 release](running-a-node/mandatory-upgrade-2026-09-28.md) |
+| Game-ready contracts (tokens, NFTs, randomness, payable calls) | **LIVE since blocks 150–190** |
+| Mintable tokens, contract royalty reads | **LIVE since block 235** |
+| Monetary-integrity rule; shielded / token-lock / token-staking / governance / delegation types **suspended** | **LIVE since block 245** — see [Status](status.md#suspended-since-block-245) |
+| Current node release | **1.6.3** (1.6.2 is the minimum to follow the chain) — [upgrade notice](running-a-node/mandatory-upgrade-2026-10-245.md), [release notes](running-a-node/release-1.6.3.md) |
+| R1 production bridge (XRGE / qETH / qUSDC) | **LIVE** — ETH/USDC contract deposits auto-claimed (reopened 2026-10-05); operator-run, unaudited |
+| Bitcoin bridge | Deposits **LIVE**; withdrawals **switched off** in the site |
 | V3 XRGE bridge | **AUDIT CANDIDATE / NOT ACTIVATED** |
 
 RougeChain is post-quantum-secured at the L1 level. The current production XRGE bridge remains on
 the hardened R1 architecture, which still relies on classical authorization on the Base side. A V3
-XRGE bridge using ML-DSA-65 post-quantum authorization has been built and is undergoing final
-rehearsal before production activation. It is not live. Details: [Status & Roadmap](status.md) ·
+XRGE bridge using ML-DSA-65 post-quantum authorization has been built and rehearsed; it is not
+deployed and awaits an external audit. Details: [Status & Roadmap](status.md) ·
 [Security Overview](security.md).
 
 ## What is RougeChain?
@@ -38,7 +41,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **Client-Side Signing** | Private keys never leave your browser |
 | **AMM/DEX** | Uniswap V2-style liquidity pools and token swaps |
 | **Token Burning** | Official burn address with on-chain tracking |
-| **Proof of Stake** | Energy-efficient consensus with validator staking |
+| **Proof of Stake** | Validator staking; today one designated proposer (largest stake) produces every block |
 | **P2P Network** | Decentralized peer-to-peer block and transaction propagation |
 | **Base Bridge (R1)** | Bridge XRGE, ETH (qETH) and USDC (qUSDC) between Base mainnet and RougeChain — classical authorization on the Base side |
 | **Custom Tokens** | Create your own tokens on the network |
@@ -51,8 +54,8 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **CLI Wallet** | Command-line wallet with full chain access and social commands |
 | **SDK** | `@rougechain/sdk` npm package for building dApps |
 | **EIP-1559 Dynamic Fees** | Base fee auto-adjusts per block, fee burning for deflationary pressure |
-| **Token Mint Authority** | Ongoing minting for custom tokens with supply cap enforcement |
-| **Validator Unbonding** | Unbonding queue with 500-block delay. Missed-block auto-slashing has been frozen since proposer selection activated (block 100); equivocation slashing is planned, not live |
+| **Token Mint Authority** | Creator-only minting for tokens created mintable since block 235, with an optional supply cap |
+| **Validator Unbonding** | Unbonding queue with 500-block delay. No slashing is active: missed-block auto-slashing has been frozen since block 100 and the legacy `slash` transaction is rejected since block 245; evidence-based slashing is part of the planned consensus redesign |
 | **Finality** | Verified BFT finality (FINALITY_V2) is live since block 150: every block carries its parent's ≥⅔-stake certificate — see [Finality](staking/finality.md) |
 | **WebSocket Subscriptions** | Topic-based real-time event streaming (blocks, txs, accounts, tokens) |
 | **HD Wallet Derivation** | BIP-44-like PQC key derivation from master seed (HMAC-SHA256) |
@@ -133,10 +136,10 @@ authorization on the Base side. The post-quantum **V3** XRGE bridge is built but
 | Token Creation | 100 XRGE |
 | Pool Creation | 10 XRGE |
 | Swap | 0.3% of input (to LPs) + 1 XRGE |
-| Minimum Stake | 10,000 XRGE |
+| Minimum Stake | 10,000 XRGE (enforced by the node API, not by consensus) |
 | Unbonding Period | 500 blocks |
 
-> **EIP-1559 Fee Model:** The base fee adjusts ±12.5% per block based on transaction volume (target: 10 txs/block). **50% of the base fee is burned**; the remaining tip pool is split proposer 20% / validators 70% (stake-weighted) / treasury 10%. Check current fees via `GET /api/fee`.
+> **EIP-1559 Fee Model:** The base fee adjusts ±12.5% per block based on transaction volume (target: 10 txs/block), floor 0.001 XRGE (where mainnet has sat since September 2026). **50% of the base fee is burned**; the remaining tip pool is split proposer 20% / validators 70% (stake-weighted) / treasury 10%. The 0.1 XRGE minimum-tip floor in the code draws from a reserve that is empty on mainnet, so it pays nothing. Check current fees via `GET /api/fee`.
 
 ### Burn Address
 

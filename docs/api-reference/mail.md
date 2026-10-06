@@ -2,7 +2,7 @@
 
 Endpoints for the PQC-encrypted mail system. Mail uses ML-KEM-768 encryption with a Content Encryption Key (CEK) pattern for multi-recipient support, ML-DSA-65 unified signatures, and name registry with atomic registration.
 
-> **v2 API (March 2026):** All write operations now use `/api/v2/` endpoints that require ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection. Legacy unsigned endpoints return HTTP 410 (Gone) in production.
+> **v2 API (March 2026):** All write operations now use `/api/v2/` endpoints that require ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection. Legacy unsigned endpoints return HTTP 410 (Gone) in production; since node release 1.6.3 (2026-10-05) so do the legacy read routes `GET /api/mail/inbox`, `/api/mail/sent`, `/api/mail/trash` and `/api/mail/message/:id` — use the signed `POST /api/v2/mail/folder` and `/api/v2/mail/message` below. Mail is node-hosted (stored by the node, not in blocks); a mailbox is owned by the ML-DSA-65 signing key that registered the wallet, and mail names and folders follow that wallet only.
 
 ## Signed Request Format
 

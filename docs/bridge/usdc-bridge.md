@@ -1,7 +1,9 @@
 # USDC Bridge (qUSDC)
 
-> **Status: LIVE (hardened R1 bridge), tested end-to-end.** qUSDC uses classical Base-side
-> authorization and is **outside the scope of the V3 post-quantum XRGE bridge**.
+> **Status: LIVE (hardened R1 bridge), tested end-to-end; deposits reopened 2026-10-05** through
+> the contract's `depositERC20` with automatic claiming (the manual claim route is closed at the
+> public endpoint). qUSDC uses classical Base-side authorization (single operator hot key; unaudited)
+> and is **outside the scope of the V3 post-quantum XRGE bridge**.
 
 qUSDC is a 1:1 representation of **USDC on Base mainnet** on RougeChain, with 6 decimals. It uses
 the same `RougeBridge` contract as qETH (`0x0c09C764AdC024497729cd452ECfeE8869d35d83`).

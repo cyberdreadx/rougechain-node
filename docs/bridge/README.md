@@ -1,7 +1,11 @@
 # Bridge Overview
 
-> **Status:** the **R1 production bridge is LIVE** on Base mainnet. XRGE, qETH and qUSDC paths have
-> been tested end-to-end. Base-side authorization is **classical**: XRGE uses a Safe multisig plus a capped relayer
+> **Status (2026-10-06):** the **R1 production bridge is LIVE** on Base mainnet. XRGE, qETH and qUSDC
+> paths have been tested end-to-end. ETH and USDC deposits through the site go through the RougeBridge
+> contract's `depositETH` / `depositERC20` and are claimed automatically (paused for a few days and
+> **reopened 2026-10-05**); the manual claim route is **closed at the public endpoint**. The bridge is
+> operator-run (deposit watcher, relayers, `bridge_mint` key) and **has not been externally audited**.
+> Base-side authorization is **classical**: XRGE uses a Safe multisig plus a capped relayer
 > key; qETH/qUSDC (`RougeBridge`) use a single operator owner/release key, with a 2-of-3 Safe multisig
 > guardian that can pause the bridge and cancel queued large releases. The post-quantum **V3 XRGE bridge is built but NOT activated** — see
 > [V3 Post-Quantum XRGE Bridge](v3-xrge-bridge.md) and [Status & Roadmap](../status.md).
@@ -35,9 +39,9 @@ RougeChain supports bridging assets between **Base mainnet** (EVM, chain id `845
 2. The **deposit watcher** in the relayer detects the deposit event and auto-claims it
    on L1 — the node verifies the deposit on-chain and mints the L1 asset (qETH, qUSDC or
    XRGE) to the recipient encoded in the deposit. No manual step is required.
-3. As a fallback, the user can still call the **claim** endpoint with the EVM tx hash
-   (e.g. if the watcher is disabled). Claims are deduped, so auto- and manual claims of
-   the same deposit can't double-mint.
+3. The manual **claim** endpoint still exists in the node (and claims are deduped, so an auto-
+   and a manual claim of one deposit cannot double-mint), but on the public mainnet endpoint it is
+   **closed at the reverse proxy**; it is an operator fallback, not a user step.
 
 > Every claim is verified against the **actual on-chain Base deposit** (the `Transfer`
 > to the custody contract / vault) — never a caller-supplied amount — and requires a

@@ -2,8 +2,10 @@
 
 Bridge ETH from Base mainnet to RougeChain as **qETH**, and back.
 
-> **Status: LIVE (hardened R1 bridge), tested end-to-end.** qETH uses classical Base-side
-> authorization and is **outside the scope of the V3 post-quantum XRGE bridge**.
+> **Status: LIVE (hardened R1 bridge), tested end-to-end; deposits reopened 2026-10-05** through
+> the contract's `depositETH` with automatic claiming. qETH uses classical Base-side authorization
+> (the RougeBridge owner and release key is a single operator hot key; unaudited) and is **outside the
+> scope of the V3 post-quantum XRGE bridge**.
 
 ## Deposit (ETH → qETH)
 
@@ -26,8 +28,10 @@ The node verifies before minting:
 - The transaction has at least the required confirmation depth (default 6)
 - It hasn't been claimed before (auto-claim and manual claim share one dedup store)
 
-**Manual fallback:** if the watcher is disabled, use the **Bridge In** tab — paste the
-EVM tx hash, sign the claim message with your EVM wallet, and click **Claim**.
+**Manual claim:** the node's manual claim route (`POST /api/bridge/claim`, which needs a signature
+from the depositing EVM wallet) is **closed at the public mainnet endpoint**. A deposit that the
+watcher has not credited is handled by the operators; the Bridge page tracks the deposit until it is
+credited.
 
 ### Conversion Rate
 

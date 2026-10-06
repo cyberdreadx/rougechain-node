@@ -4,7 +4,7 @@ Endpoints for the end-to-end encrypted PQC messenger.
 
 All messages are encrypted client-side using ML-KEM-768 key encapsulation and AES-GCM. The server only stores encrypted blobs — it cannot read message contents.
 
-> **v2 API (March 2026):** All write operations now use `/api/v2/` endpoints that require ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection. Legacy unsigned endpoints return HTTP 410 (Gone) in production.
+> **v2 API (March 2026):** All write operations now use `/api/v2/` endpoints that require ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection. Legacy unsigned endpoints return HTTP 410 (Gone) in production; since node release 1.6.3 (2026-10-05) so do the legacy read routes `GET /api/messenger/conversations` and `GET /api/messenger/messages` — use the signed `POST …/conversations/list` and `POST …/messages/list` below. Messenger data is node-hosted, not on-chain.
 
 ## Signed Request Format
 
@@ -34,6 +34,12 @@ Content-Type: application/json
 ```
 
 Register your wallet's encryption public key so others can send you encrypted messages and mail. **This is required before receiving mail from other apps.** Requires a signed request.
+
+> **Ownership (node release 1.6.3).** The entry is owned by the signing key (`from` / `public_key`).
+> Re-registering replaces an entry only if the request is signed by that key — `id`, `displayName` and
+> `encryptionPublicKey` can be updated by the owner, never by another wallet. If `encryptionPublicKey`
+> is already registered to another wallet the request fails with
+> `This encryption key is already registered to another wallet`. Nodes before 1.6.3 do not enforce this.
 
 ### Request Body (signed)
 

@@ -2,6 +2,14 @@
 
 RougeChain includes two built-in communication systems — both fully end-to-end encrypted with post-quantum cryptography.
 
+> **Where the data lives.** Messenger, mail and the name registry are **node-hosted services, not
+> chain state**: every write is an ML-DSA-65-signed request, but the ciphertext and directory are
+> stored in the node's own databases, are not in blocks and are not replicated by consensus. A wallet's
+> messaging identity is its ML-DSA-65 **signing key**. Since node release 1.6.3 (2026-10-05) a
+> directory entry can be replaced only by the wallet that owns it, an encryption key already registered
+> to another wallet is refused, and the unauthenticated legacy read routes return `410 Gone`
+> ([release notes](../running-a-node/release-1.6.3.md)).
+
 ## Overview
 
 | Feature | Messenger | Mail |
@@ -9,7 +17,7 @@ RougeChain includes two built-in communication systems — both fully end-to-end
 | **Purpose** | Real-time chat | Async email |
 | **Encryption** | ML-KEM-768 + AES-GCM | ML-KEM-768 + AES-GCM |
 | **Addresses** | Wallet public keys | `@rouge.quant` / `@qwalla.mail` names |
-| **Media** | Images, videos (auto-compressed) | Text + attachments (up to 2 MB) |
+| **Media** | Images, videos (auto-compressed) | Text + attachments (up to 3 MB) |
 | **Self-destruct** | ✅ Configurable timer | ❌ |
 | **Folders** | — | Inbox, Sent, Trash |
 | **Threading** | Conversations | Reply chains |
@@ -109,7 +117,7 @@ Names are unique and first-come-first-served.
 | `@rouge.quant` | Website and browser extension |
 | `@qwalla.mail` | QWalla mobile app |
 
-Both domains resolve against the same on-chain name registry — the domain is a client-side display choice only.
+Both domains resolve against the same node-hosted name registry (not chain state) — the domain is a client-side display choice only.
 
 ### Getting Started
 
@@ -131,7 +139,9 @@ All mail, messenger, and name registry write operations require ML-DSA-65 signed
 - **`nonce`** — 16 bytes of random hex (prevents replay attacks)
 - **`signature`** — ML-DSA-65 signature over the canonical JSON payload
 
-The server verifies the signature, validates the timestamp, confirms the sender owns the wallet, and rejects duplicate nonces. Legacy unsigned endpoints return HTTP 410 (Gone) in production.
+The server verifies the signature, validates the timestamp, confirms the sender owns the wallet, and rejects duplicate nonces. Legacy unsigned endpoints return HTTP 410 (Gone) in production — since release 1.6.3 this includes the legacy **read** routes (`GET /api/mail/inbox`, `/sent`, `/trash`, `/api/mail/message/:id`, `/api/messenger/conversations`, `/api/messenger/messages`); clients use the signed `POST /api/v2/mail/folder`, `/api/v2/messenger/conversations/list` and `/api/v2/messenger/messages/list`.
+
+**Directory ownership (release 1.6.3).** The messenger directory maps a wallet to its display name, signing key and ML-KEM-768 encryption key. A re-registration replaces an entry only when it is signed by the key that owns it; a registration whose encryption key is already registered to another wallet is refused with `This encryption key is already registered to another wallet`. Mail names and mail folders follow the owning wallet only. Nodes before 1.6.3 do not enforce this.
 
 ## Trust-on-First-Use (TOFU)
 
@@ -156,6 +166,8 @@ The messenger tracks public key fingerprints (SHA-256 hash) for contacts:
 | **Unified signatures** | Mail signed over all encrypted parts (subject + body + attachment) |
 | **CEK multi-recipient** | Efficient per-recipient key wrapping without re-encryption |
 | **Atomic name registry** | Compare-and-swap prevents race conditions on name claims |
+| **Directory ownership** | Since node 1.6.3: only the owning signing key can replace a directory entry; a taken encryption key is refused |
+| **Node-hosted** | Not on-chain: stored by the node you talk to, not replicated by consensus |
 | **Vaulted keys** | Private keys persisted only as an AES-256-GCM encrypted blob (vault password required); active session keys in sessionStorage |
 
 ## Notifications & Unread Badges
