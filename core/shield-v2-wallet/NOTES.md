@@ -1,7 +1,8 @@
 # Shielded pool V2 — wallet core: implementation notes
 
-Specification: `docs/SHIELDED_POOL_V2_SPEC.md` (SPEC v1, amended 2026-10-06, W-1 … W-13). Branch
-`feat/shield-v2-wallet-core`, from `main` @4aeb25b (which contains the node side).
+Specification: `docs/SHIELDED_POOL_V2_SPEC.md` (SPEC v1, amended 2026-10-06, W-1 … W-15). Branch
+`feat/shield-v2-wallet-core`, from `main` @4aeb25b (which contains the node side); the settlement
+redesign after the second review is on `fix/shield-v2-wallet-settlement` (§11).
 
 Three pieces:
 
@@ -21,6 +22,14 @@ answered since (the "Resolution" section of that file maps each to its commit; �
 what changed). **The fixes themselves have not been reviewed by a second person**, and they are
 not small: a new state format, a new address format, a new randomness construction for the
 builders. They need the same second reading before a UI is built on them.
+
+That second reading happened (`REVIEW_WALLET_2.md`, of `60d1e2b`): **two High findings, both in
+the fix of F-7**, both ending in the double payment that fix was written to prevent, plus one
+Medium and five Low. The settlement of pending transactions was redesigned in answer, not
+patched: state format 3, `confirm_state`, `resolve()` without a policy. §11 describes it and
+supersedes what §6 items 3, 4 and 7 and §8 said about the state, the root check and pending
+transactions; those items are rewritten below. **The redesign has not been reviewed by a second
+person either.**
 
 ---
 
@@ -112,10 +121,10 @@ builders. They need the same second reading before a UI is built on them.
 | 11 | §3.5, §3.6 | a shield with `fee = v_in` is valid on the node | Refused by the builder (it shields nothing). Also refused: a zero transfer amount, a zero `v_out`, a deposit above the pool cap. Spec W-6 |
 | 12 | §5.5 | "SHOULD place the payment and the change in a random order" | One random bit per transaction orders the two output slots, for all three types. `BuiltTx::outputs` records which slot is which for the sender; a receiver tries both |
 | 13 | §5.5 | input slot order | Not randomised (real notes in the order given, a dummy second). The proof hides which slot is real |
-| 14 | §5.5 | anchor and expiry | The caller passes the anchor **and the height it belongs to** (`TxContext::anchor_height`: the wallet's scanned height; the node's tip for a shield). The builder checks that every real input's path leads to the anchor (`AnchorMismatch` otherwise) and that `anchor_height < expiry_height ≤ anchor_height + 128` (`MAX_EXPIRY_OFFSET`, the anchor window). `TxContext::new` sets the default, **anchor height + 64** (`DEFAULT_EXPIRY_OFFSET`). The builder has no chain view, so a caller can lie about `anchor_height`; `WalletState::mark_pending` therefore checks the bound again against the state's own scanned height. Before the first block from activation the node's stats report `pool: null`; the anchor is then the empty-tree root (`WalletState::new(..).anchor()`). Spec W-11 |
-| 15 | §5.4 | "kept current as leaves are appended" | `TreeTracker`: frontier + one 32-sibling path per unspent non-zero note; 32 hashes per appended leaf plus 32 comparisons per tracked note. Checked against the reference sparse tree, the stage-1 `Pool` and a real node (root and frontier) |
-| 16 | §5.4 | "MUST follow reorganisations" | The tracker cannot undo an append. `scan` requires each page to continue the state exactly (`from_height`, and the leaf position of every output) and refuses otherwise, leaving the state untouched (the page is validated and trial-decrypted completely before the state is changed, in place — no copy of the state per page); recovery is a rescan from `WalletState::fresh_for_rescan()`, which keeps the pending transactions. A reorganisation that replaces already-scanned blocks is noticed at the next mismatching leaf or by `confirm_roots` (`diverged`). The pending-release rule assumes blocks at or below a transaction's expiry are not replaced afterwards; the chain has no reorganisation handling in the node today. Spec W-5, W-10 |
-| 17 | §5.4 | zero-value notes addressed to the wallet (its own zero change) | **Not stored** (REVIEW_WALLET_1 I-7): the leaf is appended to the tree, no note and no path are kept. Anybody can send them; there is nothing to spend. A dust note with a non-zero value is still stored and tracked (about 2 kB of state each) — the sender pays a fee per two of them; pruning them is not done |
+| 14 | §5.5 | anchor and expiry | The caller passes the anchor **and the height it belongs to** (`TxContext::anchor_height`: the wallet's scanned height; the node's tip for a shield). The builder checks that every real input's path leads to the anchor (`AnchorMismatch` otherwise) and that `anchor_height < expiry_height ≤ anchor_height + 128` (`MAX_EXPIRY_OFFSET`; the number is the anchor window's size, but the window itself does not bound a transaction's life — in an idle pool a root stays an accepted anchor indefinitely — so this bound on `expiry_height` is the ONLY one; REVIEW_WALLET_2 I-1). `TxContext::new` sets the default, **anchor height + 64** (`DEFAULT_EXPIRY_OFFSET`). The builder has no chain view, so a caller can lie about `anchor_height`; `WalletState::mark_pending` therefore checks the bound again against the state's own scanned height. Before the first block from activation the node's stats report `pool: null`; the anchor is then the empty-tree root (`WalletState::new(..).anchor()`). Spec W-11 |
+| 15 | §5.4 | "kept current as leaves are appended" | `TreeTracker`: frontier + ONE map of the tree nodes on the tracked notes' paths (paths share their upper nodes: two to three nodes per note instead of 32; §11); 32 hashes and 32 map lookups per appended leaf, whatever the number of tracked notes. Checked against the reference sparse tree, the stage-1 `Pool` and a real node (root and frontier) |
+| 16 | §5.4 | "MUST follow reorganisations" | The tracker cannot undo an append. `scan` requires each page to continue the state exactly (`from_height`, and the leaf position of every output) and refuses otherwise, leaving the state untouched (the page is validated and trial-decrypted completely before the state is changed, in place — no copy of the state per page); recovery is a rescan from `WalletState::fresh_for_rescan()`, which keeps the pending transactions — every one as pending and locked (§11). A reorganisation that replaces already-scanned blocks is noticed at the next mismatching leaf or by `confirm_state` (`diverged`: the root or the nullifier hash no longer matches). A settlement assumes that blocks at or below the CONFIRMED height are not replaced afterwards; the chain has no reorganisation handling in the node today. Spec W-5, W-10 |
+| 17 | §5.4 | zero-value notes addressed to the wallet (its own zero change) | **Not stored** (REVIEW_WALLET_1 I-7): the leaf is appended to the tree, no note and no path are kept. Anybody can send them; there is nothing to spend. A note below the state's minimum note value (default: the minimum fee) is counted and not stored either; spent notes are pruned (§11, REVIEW_WALLET_2 RW2-7) |
 | 18 | §5.4 | "its own record of what it sent" | Not persisted by this crate. `BuiltTx::outputs` (slot, role, value, `r`, `cm`) is what a UI stores; a restore does not recover it (O-10) |
 | 19 | §5.4 | notes of a transaction that is submitted but not yet mined | In the state (REVIEW_WALLET_1 F-7): `BuiltTx::pending()` → `WalletState::mark_pending` records the two nullifiers, the input positions, the expected change and `expiry_height`, and locks the inputs; `scan` marks the entry mined when a nullifier appears; `resolve` releases the inputs when the scan has passed the expiry height without them. See §6 item 7 and §8. Spec W-11 |
 | 20 | §2.11 | the entry-point table named `prove_spend(trace, public, seed)` | Replaced by the implemented signature. Spec W-1 |
@@ -180,13 +189,16 @@ matters on low-end phones and is one more reason to prove in a worker that is th
 
 ## 5. The WebAssembly package (`core/shield-v2-wasm`)
 
-* Exports (20): `constants`, `shielded_address`, `parse_address`, `export_scan_key`,
+* Exports (21): `constants`, `shielded_address`, `parse_address`, `export_scan_key`,
   `new_state`, `scan`, `scan_pages`, `summary`, `plan_payment`, `plan_self_merge`, `build_shield`,
   `attach_signature`, `build_transfer`, `build_unshield`, `mark_pending`, `pending`,
-  `note_rejection`, `resolve_pending`, `confirm_roots`, `rescan_state`. Each returns
+  `note_rejection`, `resolve_pending`, `confirm_state` (and `confirm_roots`, its former name: the
+  same call), `rescan_state`. The seven that change a state — `scan`, `scan_pages`,
+  `mark_pending`, `note_rejection`, `resolve_pending`, `confirm_state`, `rescan_state` — take
+  `expected_revision` and return `{ state, revision, … }` (§6 item 3, §11). Each returns
   `Result<string, Error>`: JSON text, or an error whose message starts with a code (`entropy:`,
   `fee_below_minimum:`, `fee_above_maximum:`, `anchor_mismatch:`, `note_locked:`,
-  `rescan_required:`, …). The JSON shapes are declared for TypeScript in a custom section.
+  `note_unverified:`, `stale_state:`, `rescan_required:`, …). The JSON shapes are declared for TypeScript in a custom section.
 * **No error message quotes an argument** (REVIEW_WALLET_1 F-6): a message is a code, a fixed
   sentence and, for JSON that does not parse, the parser's category with line and column — never
   `serde_json`'s own text, which quotes the offending value (a twice-encoded scan key used to
@@ -239,59 +251,94 @@ Nothing below was built.
    background thread), with a progress state and a cancel that terminates the worker.
 3. **Storing the state.** `WalletState` holds note values and `r`. It must be encrypted at rest
    with the wallet's existing vault key — and authenticated: a tampered blob can show a wrong
-   balance — never synced in clear. It is versioned (`version: 2`; version 1 is read and
-   migrated, §8). **Persist the state returned by `mark_pending` before submitting**: a wallet
-   that loses the pending record has lost the lock.
+   balance — never synced in clear. It is versioned (`version: 3`; versions 1 and 2 are read and
+   migrated to an empty state that keeps the locks, §11). **Persist the state returned by
+   `mark_pending` before submitting**: a wallet that loses the pending record has lost the lock.
+   **One writer at a time, enforced by the revision** (§11): keep the `revision` every changing
+   call returns next to the stored state, pass the STORED revision as `expected_revision`, and
+   store a result only if the stored revision is still that one (one storage transaction, or a
+   Web Lock around read–call–write). A `stale_state:` error means another tab or worker wrote in
+   between: reload and repeat. Two DEVICES on one phrase share no storage and cannot share
+   locks — that is the `superseded` outcome of item 7, not an error.
 4. **Sync and what a balance means.** Page through `/api/shield-v2/notes` from `next_height`,
-   apply each page with `scan`; on a `listing:` error or a `diverged` root check, rebuild from
-   `rescan_state` (it keeps the pending transactions).
-   **A listing from one node cannot be authenticated.** The earlier text here said a hostile node
-   "can hide notes but cannot forge them"; that was wrong (REVIEW_WALLET_1 F-1). A note is checked
-   against the commitment and the nullifiers of the same listing, and nothing ties one node's
-   listing to the chain — the chain has no light-client proofs yet. A node that knows the wallet's
-   address can list a payment that is on no chain, and its `latest_anchor` is then the root of
-   the tree it made the wallet build, so comparing with it proves nothing.
-   What the core does: every note is `unverified` when found. After scanning, ask **each node of
-   a set you chose** for its `/api/shield-v2/stats` and pass `(node_id, tip_height,
-   pool.latest_anchor)` per node to `confirm_roots`. Notes at or below the highest height at
-   which at least `quorum` distinct nodes reported the wallet's own root become `confirmed`
-   (default quorum 2; one node ⇒ everything stays unverified). `summary` reports the confirmed
-   and the unverified balance separately; `plan_payment` uses unverified notes only with
-   `allow_unverified = true`.
+   apply each page with `scan`; on a `listing:` error, or when `confirm_state` reports `diverged`
+   and it is your listing that disagrees, rebuild from `rescan_state` (it keeps every pending
+   transaction, as pending and locked) against another node.
+   **A listing from one node cannot be authenticated.** A note is checked against the commitment
+   and the nullifiers of the same listing, and nothing ties one node's listing to the chain —
+   the chain has no light-client proofs yet. A node that knows the wallet's address can list a
+   payment that is on no chain; it can list one of your transactions as mined while it holds it
+   back; it can swap the nullifiers of a transaction so that a spend is hidden (REVIEW_WALLET_1
+   F-1, REVIEW_WALLET_2 RW2-1, RW2-2).
+   What the core does: it rebuilds BOTH halves of the pool state from the listing — the
+   commitment tree and the pool's running nullifier hash — and every note is `unverified` when
+   found. After scanning, ask **each node of a set you chose** for `/api/shield-v2/stats` and
+   pass its **`report` object** (`height`, `tree_root`, `nullifier_acc`, `note_count`,
+   `nullifier_count` — one consistent read of the node's pool record; do NOT pair `tip_height`
+   with `pool.latest_anchor` as these notes said before, RW2-6) plus a `node_id` to
+   `confirm_state`. The highest height at which a quorum of distinct nodes reported exactly the
+   wallet's four values becomes the confirmed height; notes at or below it are `confirmed`.
+   * **`node_id` is the endpoint YOU configured** (its URL). Never a name, key or address the
+     node returned: distinctness is by this string and nothing else.
+   * The quorum is 2 by default and never less than a strict majority of the nodes in the call
+     (four asked ⇒ three). One node ⇒ everything stays unverified, unless it is your own node
+     and you say so with quorum 1.
+   * **Any conflicting report ⇒ nothing is confirmed in that call** and `report.diverged` is
+     true with `report.conflicts` (the heights). The caller resolves it: ask again (nodes are
+     not always at one height — only reports for the SAME height can form a quorum, so query
+     the nodes together and retry), drop a node, or rescan elsewhere.
+   * `summary` reports the confirmed and the unverified balance separately; `plan_payment` uses
+     unverified notes only with `allow_unverified = true`, and `build_transfer` /
+     `build_unshield` refuse an unverified input (`note_unverified:`) unless their parameters say
+     `allow_unverified: true` too.
    What the UI must do (spec §5.4, normative): **never present an incoming shielded payment as
-   final on one node's word** — show it as unconfirmed until the quorum check passes; a
+   final on one node's word** — show it as unconfirmed until its height is confirmed; a
    merchant-facing integration must use its own node (and says so with quorum 1 for it).
-   What this is, honestly: the word of several nodes instead of one — the same trust a wallet
-   places in a node for ordinary account balances today, not a proof. The node ids are the
-   caller's labels; choosing nodes that are in fact independent is the caller's job, and two
-   names for one node defeat the check. Header-committed proofs of the pool root come with the
-   consensus / light-client work.
+   What a confirmed balance is: exact **as of the confirmed height**. Show that height. A spend
+   above it that your listing node hides is unknown to the wallet — and cannot be confirmed.
+   What this is, honestly: the word of the nodes you asked instead of one — the same trust a
+   wallet places in a node for ordinary account balances today, not a proof. A majority of the
+   nodes asked, lying together, is believed; two endpoints of one operator are two nodes to the
+   wallet. Header-committed proofs of the pool state come with the consensus / light-client work.
+   **Dust.** Incoming notes below the state's `min_note_value` (default: the minimum fee,
+   1 XRGE; set in `new_state`, changed only by `rescan_state`) are counted in
+   `summary.below_minimum` and not stored: they are in no balance. Tell the user. `plan_payment`
+   returns `change_below_min_note_value` when a payment's own change would be such a note: warn
+   before building it, or choose another amount. `over_capacity` counts notes that arrived
+   beyond 65,536 stored notes.
 5. **Privacy of the scan.** The wallet downloads everything and never asks for one position.
    The node still learns the wallet's IP address and sync cadence — and more; see §10.
 6. **Anchor and expiry policy.** Use `latest_anchor` and the height it belongs to; leave the
    expiry at the default (`TxContext::new`: anchor height + 64). The builder refuses an expiry
    at or below the anchor's height or more than 128 blocks above it.
-7. **Pending transactions.** `build_transfer` / `build_unshield` return a `pending` record.
+7. **Pending transactions.** `build_transfer` / `build_unshield` return a `pending` record (both
+   nullifiers, both output commitments, the inputs, the expected change, the expiry).
    **`mark_pending` it and persist the state BEFORE the transaction is sent anywhere.** From then
-   on its inputs are locked: not selected, not accepted by a builder. They are unlocked by
-   exactly two observations in scanned chain data, both made by the core:
-   (a) `scan` sees one of the transaction's nullifiers → mined; the inputs are spent, the change
-   arrived as a note; `resolve_pending` returns the entry under `mined`;
-   (b) `resolve_pending` finds the scanned height at or above `expiry_height` with no nullifier
-   seen → it can never be mined (the node refuses a V2 transaction whose expiry is below the
-   block's height); the entry is returned under `expired` and the inputs are spendable again.
-   With the default expiry that is at most 64 blocks after the build.
-   **Nothing a node answers to the submission releases anything.** The earlier text here said
-   "release on expiry or rejection"; releasing on a rejection is unsafe (REVIEW_WALLET_1 F-7): a
-   signer-less transaction that has left the wallet stays valid until its expiry, and a node that
-   answers "rejected" while keeping it can have it mined after the wallet has paid again from
-   other notes. A rejection is recorded with `note_rejection` — a flag for the UI ("the node
-   refused it; it is still pending until block N"). The UI shows the payment as pending until (a)
-   or (b) and offers no "try again" before then; a payment made meanwhile from other notes is a
-   second payment.
-   `resolve_pending(state, require_confirmed = true)` applies (b) to the height `confirm_roots`
-   last confirmed instead of the height one node's listing reached: a node that lies about the
-   chain's height then cannot trigger a release. Use it whenever the wallet has a quorum.
+   on its inputs are locked: not selected, not accepted by a builder. A lock ends in exactly one
+   way: `resolve_pending` settles the entry **at the confirmed height** (item 4) and returns it
+   under one of three names —
+
+   | Returned under | Means | Show the user |
+   |---|---|---|
+   | `mined` | a confirmed transaction has both its nullifiers and both its outputs | "paid"; the change is in the confirmed balance |
+   | `superseded` | another confirmed transaction spent one of its inputs (the same phrase on another device, usually): it can never be mined | "**not** paid — one of its notes was spent elsewhere"; the other input is free again |
+   | `expired` | the confirmed height is at or above its expiry and none of its nullifiers appeared | "not paid — expired"; the inputs are free; a retry is safe |
+
+   Everything else is still pending, and still locked: what `scan` reports (`pending_seen_mined`,
+   `pending_seen_superseded` — one node's listing), a "rejected" answer (`note_rejection`: a flag
+   for the UI, "the node refused it; it is still pending until block N"), a scanned height one
+   node claims. There is no `require_confirmed` flag any more and no other call that releases a
+   lock (RW2-5). With the default expiry a transaction that is never mined is released at most
+   64 blocks after the build **plus the time it takes to get that height confirmed**: a wallet
+   that cannot reach a quorum keeps its locks. That is the price of not paying twice.
+   **Offer "try again" only for `superseded` and `expired`.** A signer-less transaction that has
+   left the wallet stays valid until its expiry, and a node that answers "rejected", or lists it
+   and withholds it, can have it mined after the wallet has paid again from other notes
+   (REVIEW_WALLET_1 F-7, REVIEW_WALLET_2 RW2-1). A payment made meanwhile from other notes is a
+   second payment; the core cannot stop the user from making one, only refuse to call the first
+   one dead.
+   The expected change is not money until then: `expected_change` is reported for display and is
+   in none of the balances.
    Shields are not recorded: a shield spends no note (it is an account transaction with a nonce).
    Store `BuiltTx.outputs` as the outgoing record — the chain will not give it back — and treat
    it as secret: `value` and `r` open the note (I-3).
@@ -333,24 +380,33 @@ Whatever the option, Qwalla's entropy must be the platform generator (`SecRandom
 
 ## 7. Not done
 
-* No second review of the fixes of §8 (the review covered `abab9a8`).
-* No light-client verification of anything: `confirm_roots` is a quorum of node statements, not a
+* No second review of the redesign of §11 (the second review covered `60d1e2b`).
+* No light-client verification of anything: `confirm_state` is a quorum of node statements, not a
   proof (spec §5.4).
 * `wasm-bindgen-cli` and `wasm-pack` are not installed on this host, so the JavaScript bindings
   were not generated and nothing was run in a browser or in Node; the `.wasm` was built and its
   surface was tested natively.
 * No measurement of proving inside WebAssembly, on a phone, or on a quiet host.
-* No reorganisation handling beyond "refuse and rescan" (with the pending list kept).
-* No replacement ("bump") of a pending transaction: its inputs wait for (a) or (b) of §6 item 7.
+* No reorganisation handling beyond "refuse and rescan" — but the rescan is now safe: every
+  pending entry is carried over as pending and locked and settles again from confirmed data
+  (REVIEW_WALLET_2 I-11 said the old path was not acceptable: it was RW2-1).
+* No replacement ("bump") of a pending transaction: its inputs wait for a settlement of §6 item 7.
+* A wallet that reaches no quorum settles nothing and keeps its locks; there is no fallback to
+  one node (deliberately).
+* The revision check is half of a compare-and-swap; the other half — storing only if the stored
+  revision is unchanged — is the client's storage transaction and is not built.
 * The privacy mitigations of §10 are documentation: nothing in the core rounds `since`, delays a
   submission or picks a route.
 * The address fingerprint is still 8 bytes (the review suggests 16); `ScanKey::from_parts` still
-  cannot check that `nk` belongs to `pk` (I-5); dust notes of non-zero value are still stored
-  (I-7); the shielded address is the same on every network (I-8).
+  cannot check that `nk` belongs to `pk` (I-5); the shielded address is the same on every
+  network (I-8). (Dust: §11.)
 * No `signed_payload` signing format for shields, no outgoing-history store, no QR encoding.
 * No change to `core/wasm-prover` (V1) or to any client package.
 
 ## 8. After REVIEW_WALLET_1: what changed
+
+*(Format 2 and its migration are described here as they were at `60d1e2b`. Format 3 — §11 —
+replaces them; `confirm_roots` below is `confirm_state` now.)*
 
 **The state (format 2).** `WalletState` JSON, `"version": 2`:
 
@@ -444,3 +500,96 @@ Spec §5.8 (W-13). Documentation only — nothing below is enforced or done by t
 | a shield's note value (`v_in − fee`, public) | a later unshield of the same amount is linkable at any pool size | nothing a wallet can do except warn; unshield other amounts |
 | a self-merge followed by a payment | a visible two-step pattern | merge ahead of need, not right before paying |
 | the network address of every request | — | the user's own node, or a transport that hides it |
+
+## 11. After REVIEW_WALLET_2: the settlement redesign
+
+`REVIEW_WALLET_2.md` found that the wallet decided a pending transaction's fate on evidence one
+node controls: "mined" from a nullifier in one node's listing, "expired" from the absence of
+nullifiers that the confirmed root does not commit. Its "Resolution" section maps every finding
+to a commit. The principle the redesign follows:
+
+> **The wallet believes nothing about a transaction's fate that it cannot tie to data a quorum of
+> nodes vouches for.**
+
+**1. Both halves of the listing are authenticated.** The node's pool state (spec §4.8) is the
+commitment tree and the running nullifier hash `nullifier_acc`. The wallet already rebuilt the
+tree; it now also feeds every `nf1`, `nf2` of the listing, in order, through the pool's own
+`nullifier_acc_step` (exported from `quantum_vault_shield_v2::pool`; not re-implemented), and
+keeps `(root, nullifier_acc, note_count, nullifier_count)` per height. `confirm_state` compares
+all four. The daemon interop tests check the wallet's hash against the node's consensus value
+after every block.
+
+**2. Settlement rules** (`WalletState::resolve`, spec §5.5), with `C` the confirmed height:
+
+| Outcome | Condition | Effect |
+|---|---|---|
+| `mined` | a transaction at a height ≤ `C` has both nullifiers AND both output commitments of the entry | inputs spent; the change is a confirmed note |
+| `superseded` | a different transaction at a height ≤ `C` has one of its nullifiers | never minable; only the inputs whose own nullifier appeared are spent, the others are released |
+| `expired` | `C ≥ expiry_height` and none of its nullifiers appeared up to `C` | never minable; all inputs released |
+| stays pending, **locked** | anything else: seen above `C`, "rejected", a scanned height nobody confirmed, no confirmed height at all | — |
+
+`scan` only *notes* what a listing shows (`status: seen_mined / seen_superseded`, `seen_height`).
+`ReleasePolicy` is gone. `fresh_for_rescan` resets every entry to `pending`. A lock is held by
+the input note's commitment (`input_cms`), so it follows the note through a rescan (I-5).
+
+**3. State format 3.** `"version": 3`:
+
+| Field | Content |
+|---|---|
+| `revision` | goes up by one with every change of the state |
+| `pk`, `next_height` | as before |
+| `min_note_value` | incoming notes below it are counted, not stored |
+| `tree` | `note_count`, `frontier`, `root`, `tracked` (leaf positions), `nodes`: `[level, index, digest]` for exactly the tree nodes on the tracked leaves' paths — each once |
+| `nullifier_acc`, `nullifier_count` | the pool's running nullifier hash as rebuilt from the listing |
+| `notes[]` | one array per note: `[value, r, rho, position, cm, nullifier, height, spent_height, tx_hash, output_index]`. `spent` and `confirmed` are not stored (recomputed on read) |
+| `pending[]` | `tx_type`, `nullifiers` (two), `outputs` (two), `inputs`, `input_cms`, `input_total`, `change`, `expiry_height`, `status` (`pending` / `seen_mined` / `seen_superseded`), `seen_height`, `rejected_hint`, `legacy` |
+| `checkpoints[]` | `(height, root, nullifier_acc, note_count, nullifier_count)` at each of the last 256 heights at which the pool changed |
+| `confirmed_height`, `blind` | as before |
+| `below_minimum`, `over_capacity`, `pruned` | `{count, total}`: notes not stored (dust; beyond 65,536), and spent notes dropped |
+
+**Migration** (`from_json` does it; `to_json` writes format 3 only). Formats 1 and 2 have no
+nullifier hash and it cannot be computed afterwards, so their notes could never be confirmed:
+**both migrate to an EMPTY state that keeps the locks**, to be scanned from the activation height
+(the rescan finds every note again).
+* *From 2:* every pending entry is kept as pending and locked — also one format 2 called `mined`.
+  The lock is by the input notes' commitments (by position if the format-2 state was itself in
+  the middle of a rescan and had no notes). The entry has both nullifiers and the change
+  commitment but not both outputs: it is `mined` when a confirmed transaction has exactly its
+  nullifier pair and its change commitment.
+* *From 1:* every note format 1 had marked spent locally becomes a `legacy` lock on that note
+  (its commitment, its nullifier if known). A `legacy` lock whose nullifier appears is returned
+  under `superseded`, which for it means only "its input was spent on the confirmed chain".
+* *A lock without an expiry* (format 1; format 2 migrated from 1) gets **`expiry_height` = the
+  old state's scanned height + 128** — the builders' maximum expiry distance — and settles by
+  the same confirmed rules. It is no longer permanent (I-2). Format 1 itself did not bound the
+  expiry it accepted, so a transaction built by a format-1 client with a longer expiry is not
+  covered; no client was ever released on format 1.
+
+**4. Dust (RW2-7).** Measured (`rw2_f7_dust_…`, 241 notes): **598 bytes of state JSON per stored
+note** with one note per transaction (3.1 shared tree nodes each; two when both outputs of a
+transaction are the wallet's), against 2,718 before; a note below `min_note_value` costs the
+state nothing but two counters. With the default minimum (the minimum fee, 1 XRGE) a stored note
+costs its sender ≥ 1 XRGE of value — which the victim receives and can spend — plus half a fee:
+**1 MB of victim state = 1,672 notes = 836 XRGE in fees + 1,672 XRGE handed to the victim**
+(before: 368 notes of one quantum each, 184 XRGE in fees and nothing else). The
+state stops storing at 65,536 notes (≈ 39 MB at that rate; under 206 MB in the worst case of 32
+unshared nodes per note, which no chain can produce), counts the rest in `over_capacity`, and
+`to_json` refuses to write more than `from_json` reads (256 MiB) — it cannot get there. Spent
+notes leave the state 256 blocks after their spend is confirmed, into `pruned`.
+What the default costs an honest user: a payment or a change of less than 1 XRGE is not stored.
+A client that wants every note sets `min_note_value` to 1.
+
+**5. Lost updates (I-3).** `revision`, `expected_revision`, `stale_state:` — §6 item 3.
+
+**6. What is still trust in nodes**, plainly:
+* Everything the wallet calls confirmed is the word of the nodes it asked. A strict majority of
+  them lying together — or one operator behind most of the endpoints the client configured — is
+  believed: forged incoming notes become "confirmed", and a transaction can be settled as
+  expired while it is really minable, or as mined while it is not.
+* The confirmed balance is exact as of the confirmed height only. Above it the wallet shows one
+  node's listing, labelled unverified.
+* Liveness: a node that withholds a transaction, lies in its listing or reports garbage can keep
+  a wallet's notes locked — until an honest quorum confirms the expiry height — but can no longer
+  make the wallet pay twice or show a balance it does not have.
+* Privacy from the node is unchanged (§10): asking several nodes for `stats` tells several nodes
+  that this address is syncing.
