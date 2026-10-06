@@ -23,6 +23,21 @@ matches the chain; (W-6) §5.5 — a wallet does not build a shield whose `fee` 
 pending); (W-8) §8.1, new §8.4 — the wallet vectors, normative (O-15). No constant, tag, encoding
 or parameter of §2 changed, and no consensus rule.
 
+*Amended 2026-10-06 after the wallet core review (`core/shield-v2-wallet/REVIEW_WALLET_1.md`,
+findings F-1 … F-7):* (W-9) §5.3, §8.4, §9.1 O-11, §9.2 — the textual shielded address carries a
+version byte and an 8-byte integrity value; the first textual form is withdrawn and MUST be
+refused (F-2); `keys.json` regenerated; (W-10) §5.4 — a wallet MUST NOT present an incoming
+payment as final on one node's word: notes are *unverified* until the wallet's tree root has been
+matched against a quorum of nodes, and what that does and does not prove (F-1); what a state
+scanned with the viewing key alone must remember (F-3); every listed string is validated before it
+is stored (F-4); (W-11) §5.5 — pending transactions: inputs stay locked until the scanned chain
+shows the transaction mined or expired, never on a node's answer; `expiry_height` is bounded;
+a fee ceiling (F-7); (W-12) §3.4, §5.6 item 6, §5.7 — every random value of a transaction comes
+from one hedged per-transaction generator (F-5); (W-13) new §5.8 — privacy from the node. Wallet
+rules only: no constant, tag, encoding or parameter of §2 changed, no body or ciphertext format
+of §3, and no consensus rule; the vectors `note_encryption.json`, `transactions.json` and
+`state_root.json` are byte-for-byte unchanged.
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -649,7 +664,11 @@ For output j, with the recipient's ML-KEM-768 public key `ek` (part of its shiel
    40 bytes of ciphertext followed by the 16-byte tag: 56 bytes.
 
 The key is used for one message, so the fixed nonce is safe. A sender MUST use a fresh
-encapsulation for every output of every transaction.
+encapsulation for every output of every transaction. *(W-12.)* "Fresh" MUST NOT rest on the
+operating system's generator alone: the two outputs of a payment to the sender's own address go to
+the same `ek`, and one repeated 32-byte encapsulation randomness would give both notes one key
+under the fixed nonce. A wallet MUST derive the encapsulation randomness of each output so that it
+differs per output slot and per transaction even if the generator repeats (§5.6 item 6).
 
 For an output that has no recipient (the zero-value note of a shield or an unshield), the sender
 MUST fill both fields the same way, encapsulating to a freshly generated ML-KEM-768 key that it
@@ -970,17 +989,38 @@ user MAY give it to an auditor.
 A shielded address is `(pk, ek)`: the 32-byte digest encoding of `pk` followed by the 1,184-byte
 ML-KEM-768 encapsulation key — 1,216 bytes.
 
-**Textual form [P] (W-4, O-11).** Bech32m (BIP-350: the same character set, generator and
-checksum constant `0x2bc830a3`) of the 1,216 bytes with the human-readable prefix `rshield`, with
-no length limit applied: `rshield1` + 1,946 data characters + 6 checksum characters = 1,960
-characters, lowercase (an all-uppercase string decodes to the same address; mixed case is
-invalid). A decoder MUST refuse a wrong checksum, a prefix other than `rshield`, a payload that is
-not exactly 1,216 bytes, a `pk` that is not a canonical digest (§2.8) and an encapsulation key
-that fails the modulus check of FIPS 203 §7.2, each with its own error. At this length the
-six-character checksum is a 30-bit integrity check and no longer guarantees detection of a few
-mistyped characters; the transport is copy-paste or a QR code, never typing. A wallet SHOULD show
-the *address fingerprint* — the first 8 bytes of SHA-256 of the 1,216 address bytes, hexadecimal —
-so that two people can compare an address out of band. Not consensus; vectors in §8.4.
+**Textual form [P] (W-4, W-9, O-11).** Bech32m (BIP-350: the same character set, generator and
+checksum constant `0x2bc830a3`) with the human-readable prefix `rshield` and no length limit, of
+the 1,225 bytes
+
+`version (1 byte, 0x02) ‖ pk (32) ‖ ek (1,184) ‖ check (8)`
+
+where `check` is the first 8 bytes of
+`SHA-256("rouge-shield/v2/address-check/v1" ‖ version ‖ pk ‖ ek)` (the tag is 32 ASCII bytes).
+That is `rshield1` + 1,960 data characters + 6 checksum characters = 1,974 characters, lowercase
+(an all-uppercase string decodes to the same address; mixed case is invalid).
+
+A decoder MUST verify, each with its own error: the bech32m checksum; the prefix `rshield`; the
+payload length (exactly 1,225 bytes — a payload of exactly 1,216 bytes is the withdrawn first form
+of this section and MUST be refused as such, not repaired); the version byte (`0x02`; any other
+value is refused); **`check`**; that `pk` is a canonical digest (§2.8); and that the encapsulation
+key passes the modulus check of FIPS 203 §7.2.
+
+*Why `check` exists, and what it guarantees.* The bech32m checksum is a BCH code of length 1,023
+characters. On a string of this length it still detects every single changed character, but not
+more: the same change applied to two characters exactly 1,023 places apart leaves it valid, and
+the string then decodes to a different, fully valid `(pk, ek)` — a payment to it is lost for
+everybody. `check` closes that: any change to the string that passes the bech32m checksum changes
+the decoded bytes, and is accepted only if the 64-bit truncated hash matches as well — for damage
+that was not searched for against the hash, with probability 2^-64. It is an integrity value
+against accidents and blind tampering, not an authenticator: whoever can replace an address
+wholesale can compute a correct `check` for their own address.
+
+The transport is copy-paste or a QR code, never typing. A wallet SHOULD show the *address
+fingerprint* — the first 8 bytes of SHA-256 of the 1,216 bytes `pk ‖ ek`, hexadecimal — so that
+two people can compare an address out of band; it MUST show and compare all of it (a fingerprint
+of which only a few characters are compared is found by search in minutes). Not consensus; vectors
+in §8.4.
 
 ### 5.4 Note data: what the wallet keeps and what a restore recovers
 
@@ -1007,7 +1047,51 @@ A wallet that keeps the frontier and per-note paths instead of the whole tree ca
 append. It MUST check that every listed output is at the leaf position its own tree expects next
 and MUST refuse a listing that is not, and it SHOULD compare its tree root with the node's latest
 anchor after scanning to the tip; after a reorganisation, or on any mismatch, it rebuilds from an
-empty state by scanning from A.
+empty state by scanning from A — keeping its record of pending transactions (§5.5).
+
+*(W-10.)* **What one node's listing proves.** A note that passes the recipient check is
+authenticated against `cm_out_j` and the nullifiers *of the same listing*. Nothing ties a listing
+to the chain: the chain has no light-client proofs yet (block headers commit the pool state,
+§4.8, but a wallet has no way to verify a header). **A single node's listing therefore cannot be
+authenticated.** A node that knows a wallet's address — every payer knows it — can list a
+transaction that was never mined, with a note the wallet accepts; and the comparison with "the
+node's latest anchor" above does not help, because the lying node reports the root of the tree it
+made the wallet build. Such a note cannot be spent on the real chain, so nothing is stolen from
+the pool; the damage is a payment that is shown and does not exist. The rules:
+
+* A wallet MUST keep a confirmation status per note. A note is **unverified** when it is found.
+  It becomes **confirmed** only when the wallet's own tree root at a height at or above the
+  note's has been compared with the root reported for that height by a set of nodes the user or
+  the application chose, and at least a quorum of *distinct* nodes reported exactly that root.
+  The default quorum is 2. With one node the note stays unverified. (The root at a height commits
+  to every output up to that height, so a matching root means those nodes hold the note; a
+  listing with an invented transaction gives another root.)
+* A wallet MUST report confirmed and unverified balances separately, MUST NOT spend an unverified
+  note unless the caller explicitly asks for it, and **MUST NOT present an incoming shielded
+  payment as final on one node's word**: the user interface shows it as unconfirmed until the
+  quorum check has passed.
+* A merchant-facing integration — anything that releases goods or credits an account on an
+  incoming shielded payment — MUST use its own node, and says so by setting the quorum to 1 for
+  that node.
+* If a quorum of the chosen nodes agrees on a root that is *not* the wallet's, the wallet's
+  listing does not match their chain: it rebuilds from an empty state against another node.
+
+This is not a new weakness of the shielded pool and the quorum is not a proof: it is the word of
+several nodes instead of one — **the same trust a wallet places in a node today for ordinary
+account balances**, which are also shown "as reported by the node". Proofs against a
+header-committed pool root (so that a wallet needs no node's word at all) come with the consensus
+and light-client work, which is outside this specification.
+
+*(W-10, F-3.)* A state that holds a note found with `(dk, pk)` alone has no nullifier for it. It
+MUST remember every nullifier that appears on chain from then on, so that the spends can be
+applied when `nk` is supplied; if it cannot (its memory for them is bounded), it MUST refuse to
+continue with `nk` and require a rescan, rather than show as unspent a note that may be spent.
+
+*(W-10, F-4.)* A listing is input from the network. A wallet MUST validate every string of it
+before storing anything — nullifiers, commitments and ciphertexts as fixed-length lowercase
+hexadecimal, the transaction hash as exactly 64 lowercase hexadecimal characters, the type as one
+of the three of §3 — and MUST bound the size of a page it accepts. It MUST NOT store a zero-value
+note (nothing can be done with it; anybody can send them).
 
 **The wallet stores**, for every note it owns: `value`, `rho`, `r`, the leaf position, `cm`, the
 transaction that created it, and whether its nullifier `H(3; nk ‖ rho)` has appeared on chain. It
@@ -1039,7 +1123,10 @@ through conforming ciphertexts.
 
 * The wallet chooses an `anchor` from the anchor window, SHOULD use the most recent root it has,
   and sets `expiry_height` no later than the last height at which that anchor is accepted (§4.3
-  item 8).
+  item 8). *(W-11.)* `expiry_height` MUST be above the height the anchor belongs to and at most
+  128 blocks (the anchor window) above it; a wallet SHOULD use exactly **anchor height + 64**
+  (§5.8). The bound is what lets a wallet release the inputs of a transaction that was never
+  mined in bounded time (below).
 * It builds the body (§3.2), computes `binding = binding_from_bytes(body)`, and proves the
   statement of §2.7 for the public inputs taken from the body. The nullifiers must be fixed before
   the output commitments can be computed, because each output's `rho` is `H_rho(nf1, nf2, j − 1)`.
@@ -1052,6 +1139,37 @@ through conforming ciphertexts.
   build a transfer whose payment is zero or an unshield it cannot pay for.
 * If the prover reports that a proof exceeds 200,000 bytes, that is an implementation fault, not a
   condition to retry: under the pinned parameters it cannot happen (§7, C-1).
+* *(W-11.)* A wallet SHOULD refuse a `fee` above a ceiling the caller sets (default: 10 × the
+  minimum fee of §3.5): the fee is whatever the inputs exceed the outputs by, and a unit mistake
+  would otherwise burn a note.
+
+*(W-11.)* **Pending transactions.** A `shielded_transfer_v2` or `unshield_v2` has no signer and no
+nonce. Once it has left the wallet — handed to any node, relay or proxy — it stays valid until
+`expiry_height` (§3.6 check 7), **whatever anybody answered when it was submitted**. A node that
+answers "rejected" and keeps the transaction can have it mined later. If the wallet meanwhile
+builds the "same" payment again from *other* notes, both transactions are valid and the payee is
+paid twice. Therefore:
+
+* Before a transaction leaves it, the wallet MUST record it in its persistent state: its two
+  nullifiers, the notes it spends, the change it expects and its `expiry_height`.
+* The notes it spends are **locked**: the wallet MUST NOT select them or hand them to a builder
+  again until one of two things has been observed **in scanned chain data**:
+  (a) one of the transaction's nullifiers appears in the listing — it was mined, its inputs are
+  spent, its change arrives through the ordinary scan; or
+  (b) the wallet has scanned through a height at or above `expiry_height` and neither nullifier
+  appeared — the node refuses a V2 transaction whose `expiry_height` is below the block's height,
+  so it can never be mined, and the inputs are released.
+* A response to the submission — an error, a timeout, "rejected" — MUST NOT release anything. A
+  wallet MAY record it as a hint for the user interface.
+* A user interface MUST show such a payment as pending until (a) or (b), and MUST NOT offer "try
+  again" for it before then; a second payment made in the meantime is a second payment.
+* A wallet that rebuilds its state (§5.4) MUST carry the pending records over.
+
+The scanned height in (b) comes from a listing, and a node that lies about the chain's height
+could advance it. A wallet that uses the quorum check of §5.4 SHOULD apply (b) to the highest
+height at which that check passed, not to the height one node reported: a matching root at a
+height at or above `expiry_height` shows that the tree those nodes hold does not contain the
+transaction's outputs.
 
 ### 5.6 Randomness: the blinding seed and `r` (closes F-6 and L-5)
 
@@ -1080,6 +1198,29 @@ Requirements:
    protocol constant; another prover MAY hedge differently as long as 1–3 hold.
 5. The fixed seeds of the test vectors (§8) exist only to make bytes reproducible. A wallet MUST
    NOT use a fixed seed.
+6. *(W-12.)* Everything else a transaction draws at random — the `r` of each output, the
+   ML-KEM-768 encapsulation randomness of each output (§3.4), the `d`, `z` of the discarded key
+   and the random `pk` of a zero-value output, the `sk`, `rho`, `r` of each dummy input (§5.7) and
+   the order of the output slots (§5.5) — MUST be hedged in the same spirit as item 4, because a
+   generator that repeats is exactly as harmful there: two notes of one transaction encrypted
+   under one key, one `r` for every note a wallet ever makes (and `r` is what a payee is given),
+   repeated dummy nullifiers. The wallet core derives all of it from **one generator per
+   transaction**:
+
+   `prk = HMAC-SHA256(key = 32 bytes of OS entropy; "rouge-shield/v2/wallet/tx-randomness/v1" ‖
+   counter (u64 LE) ‖ the spending key (absent for a shield) ‖ the transaction's inputs and
+   outputs)`, and each value is
+   `HKDF-Expand(prk, use label ‖ slot index (1 byte) ‖ draw number (u32 LE))`,
+
+   where `counter` counts the transactions assembled by the process, the transaction's inputs and
+   outputs are its type, chain tag, anchor, expiry, fee, input notes (position, value, `rho`, `r`),
+   recipient and amounts in a fixed encoding, there is one label per use, and field elements are
+   taken by rejection sampling of 31-bit draws. Requirements 1 and 3 hold unchanged: one read of
+   the operating system's generator per transaction; if it fails or returns only zero bytes,
+   building fails — the hedge is never a substitute for it. As in item 4 the construction is not
+   observable from outside and is not a protocol constant; what is required is the property: no
+   two draws of one wallet coincide unless the generator, the counter, the key and the whole
+   transaction coincide, and never two draws inside one transaction.
 
 **What breaks if a seed is reused or leaks.** Whoever learns the seed can strip every mask and
 read the whole witness from the proof: spending key, values, positions. Two proofs of *different*
@@ -1097,7 +1238,8 @@ predictable or repeated lets an observer test guesses of `(value, pk)` against t
 
 For every dummy input — both inputs of a shield, the second input of a one-note transfer or
 unshield — the wallet MUST draw a fresh `sk`, a fresh `rho` and a fresh `r` (8 uniform field
-elements each) from the operating system's generator, **for that transaction only**. They MUST NOT
+elements each) from the operating system's generator (*W-12:* through the per-transaction hedged
+generator of §5.6 item 6, which is keyed by it), **for that transaction only**. They MUST NOT
 be derived from the recovery phrase, from a counter or from any stored state, and MUST NOT be
 reused. The wallet need not keep them after the transaction is accepted. The same holds for the
 random `pk` of a zero-value output.
@@ -1109,6 +1251,33 @@ nobody else can cause it, because producing given nullifiers needs their preimag
 rules are what protect recipients against a sender that repeats dummy secrets on purpose; this
 rule keeps honest wallets from tripping over them — for example a wallet restored from a backup
 that also restored a random-number state.
+
+### 5.8 Privacy from the node (W-13)
+
+The proof hides what a transaction spends and creates. It does not hide the wallet from the node
+it talks to, and three things a wallet does are visible there. None of them is a consensus matter;
+all of them are a wallet's to mitigate.
+
+* **`expiry_height` is public and chosen by the wallet.** Two clients that pick it differently —
+  "tip + 100", "tip + 20", a wall-clock rule — sort their users into groups on chain. Every
+  wallet SHOULD use the one fixed offset of §5.5, anchor height + 64, so that the expiry carries
+  no more than the anchor already does.
+* **The anchor links a transaction to a sync.** The anchor says how recent the sender's view was
+  (§6), and the node that served the listing knows which client had synced to exactly that
+  height just before. A transaction that then arrives through *any* route with that anchor is
+  probably that client's. A wallet SHOULD wait a random time between its last sync and
+  submitting, and MAY submit through a different node or route than the one it scans from.
+* **`since` fingerprints the client.** Each listing request names the height the client has
+  reached. A client that asks for `since = 48,113` after having asked for `48,100` is the same
+  client, whatever network address it uses now; and its `since` is the anchor of what it sends
+  next. A wallet SHOULD round `since` down to a fixed stride (for example a multiple of 64) and
+  drop from the answer the blocks it has already applied before it scans the rest, so that many
+  clients ask the same question, and SHOULD NOT sync at intervals that identify it.
+
+Also true and not fixable by a wallet: a shield's note value is public (`v_in − fee`), so a later
+unshield of the same amount is linkable at any pool size, not only a small one; a self-merge
+followed by a payment is a visible two-step pattern; and the node sees the network address of
+every request (§6). A wallet that wants none of this runs its own node.
 
 ---
 
@@ -1344,7 +1513,7 @@ derivation), §5.3 (shielded address) and §4.8 (state-root section). Files, in
 
 | File | Content | SHA-256 |
 |---|---|---|
-| `keys.json` | two wallets from fixed BIP-39 recovery phrases (no passphrase): the 64-byte seed, both HKDF outputs, `sk` (bytes and the 8 reduced elements), `nk`, `pk`, the ML-KEM-768 seeds `d`, `z`, the encapsulation and decapsulation keys, the address bytes' SHA-256, the address fingerprint and the `rshield1…` string | `abbe9ad64605a0232e80ec507f3cfa4897c5f014fbacbc6523388d2d2364e8ba` |
+| `keys.json` | two wallets from fixed BIP-39 recovery phrases (no passphrase): the 64-byte seed, both HKDF outputs, `sk` (bytes and the 8 reduced elements), `nk`, `pk`, the ML-KEM-768 seeds `d`, `z`, the encapsulation and decapsulation keys, the SHA-256 of the address bytes `pk ‖ ek`, the address fingerprint, and the textual address of §5.3 with its version byte, the tag and value of `check` and the SHA-256 of the 1,225 encoded bytes (regenerated for W-9; the key material is unchanged) | `36487f52bcf42ff62e335955558f0bd7ffc39c8bc8580ff4744abb6d4059672b` |
 | `note_encryption.json` | one encrypted note to wallet-1 with the ML-KEM encapsulation randomness `m` fixed: `kem_ct`, the shared secret, the AES key, the plaintext, `note_ct`. The commitment is the one of §8.2 | `bac08d6170fa294780e25ad5fa59b724df6c123d756dee643eed1755278077bc` |
 | `transactions.json` | one `shield_v2`, one `shielded_transfer_v2`, one `unshield_v2` on chain id `rougechain-devnet-1`, chained (the transfer spends the shield's note, the unshield spends the transfer's change): every body field, the full witness, the 2,546 body bytes, the binding, the 216 public-input bytes, and which wallet can read which output | `39ea4d3949e84b8ab3971a2ea1546ec092aa81d0670defff9a61f04b828c7246` |
 | `state_root.json` | the pool state and the §4.8 section `root_after` at activation and after each of the three transactions, applied one per block from activation height 3 | `62a6a4ffd6599eea1832608e29dfd6c6c499c5b1bc756c8fb06564597dce997e` |
@@ -1352,7 +1521,10 @@ derivation), §5.3 (shielded address) and §4.8 (state-root section). Files, in
 Rules for an implementation checked against them:
 
 * **Keys.** From `bip39_seed` it MUST reproduce `sk_okm`, `sk`, `nk`, `pk`, `view_okm`, the two
-  ML-KEM keys and the address string.
+  ML-KEM keys, `address_check` and the address string; it MUST decode the address string back to
+  `pk ‖ ek`, and MUST refuse the bech32m encoding of the bare 1,216 bytes (the withdrawn first
+  form) and the same string with any byte of its payload changed and the bech32m checksum
+  recomputed.
 * **Note encryption.** With the stated `m` as the randomness of `ML-KEM-768.Encaps` it MUST
   reproduce `kem_ct`, `shared_secret`, `aes_256_gcm_key` and `note_ct`; decapsulating with
   wallet-1's key MUST return the plaintext, and wallet-2's key MUST fail the tag.
@@ -1458,7 +1630,13 @@ payload is far beyond the length bech32m's checksum was designed for. *Recommend
 with prefix `rshield` for now, QR codes and copy-paste as the only transport, and a wallet-side
 integrity check on import; decide before wallets ship. Not consensus. *Status 2026-10-06 (W-4):*
 implemented as recommended and fixed provisionally in §5.3, with the address fingerprint as the
-wallet-side check; still to be confirmed by the owner.
+wallet-side check; still to be confirmed by the owner. *Status 2026-10-06 (W-9):* the review of
+the wallet core showed that the bech32m checksum alone accepts two changed characters 1,023
+places apart at this length; the textual form now carries a version byte and an 8-byte
+domain-tagged SHA-256 integrity value that the decoder MUST verify, and the first form is
+withdrawn (it was never used on any network). Still provisional; still to be confirmed by the
+owner (a shorter address — for example a hash of `ek` resolved through a directory — remains the
+open design question).
 
 **O-12 — Form of the nullifier-set commitment.** The design says "as a digest" and no more. §4.8
 uses a running hash in insertion order, which costs two hashes per transaction; the alternative in
@@ -1506,4 +1684,5 @@ To be confirmed or changed by the owner before the first testnet activation.
 | `SHIELD_V2_ANCHOR_WINDOW` | §4.3 | 128, the design's estimate (O-8) |
 | `SHIELD_V2_POOL_CAP_QUANTA` on testnet | §4.4 | the same 10^15 as mainnet; the owner's decision names mainnet only |
 | State-root tag and layout | §4.8 | `rougechain.stateroot.shield_v2.v1`, running nullifier hash (O-12) |
-| Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, 1,960 characters; fingerprint = first 8 bytes of SHA-256 of the address bytes (O-11, W-4) |
+| Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, of `0x02 ‖ pk ‖ ek ‖ check`: 1,974 characters; `check` = first 8 bytes of SHA-256(`"rouge-shield/v2/address-check/v1"` ‖ `0x02` ‖ `pk` ‖ `ek`); fingerprint = first 8 bytes of SHA-256 of `pk ‖ ek` (O-11, W-4, W-9) |
+| Wallet defaults (not consensus) | §5.4, §5.5 | root-check quorum 2; `expiry_height` = anchor height + 64, at most + 128; fee ceiling 10 × the minimum fee (W-10, W-11) |
