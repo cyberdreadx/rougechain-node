@@ -156,9 +156,18 @@ pub fn pub_key_to_address(public_key_hex: &str) -> Result<String, String> {
             pk_bytes.len()
         ));
     }
-    let hash = sha256(&pk_bytes);
+    address_from_hash(&sha256(&pk_bytes))
+}
+
+/// The `rouge1…` address whose 32-byte payload is `hash` — the inverse of [`address_to_hash`].
+/// `pub_key_to_address` is `address_from_hash(SHA-256(pubkey_bytes))`; the shielded pool V2 uses
+/// it for the `account` field of an `unshield_v2` (spec §3.3), which is such a payload.
+pub fn address_from_hash(hash: &[u8]) -> Result<String, String> {
+    if hash.len() != 32 {
+        return Err(format!("invalid address hash length: expected 32, got {}", hash.len()));
+    }
     let hrp = bech32::Hrp::parse(ROUGE_HRP).map_err(|e| format!("HRP error: {}", e))?;
-    bech32::encode::<bech32::Bech32m>(hrp, &hash)
+    bech32::encode::<bech32::Bech32m>(hrp, hash)
         .map_err(|e| format!("Bech32m encode error: {}", e))
 }
 

@@ -186,6 +186,14 @@ pub struct TxPayload {
     pub token_mintable: Option<bool>,                      // Some(true): the creator may mint more later
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_max_supply: Option<u64>,                     // Cap on total issuance (initial + minted)
+    // SHIELD_V2 (docs/SHIELDED_POOL_V2_SPEC.md §3.1 [P]): the envelope of the three `*_v2` shielded
+    // transaction types, from that upgrade's activation height (`None` on every network). `None` is
+    // omitted from the encoding, so every transaction without them — all of history — encodes,
+    // hashes and identifies byte-identically to before these fields existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shield_v2_body: Option<String>,                    // the 2,546-byte body, lowercase hex (5,092 chars)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shield_v2_proof: Option<String>,                   // the proof bytes, lowercase hex (≤ 400,000 chars)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -492,6 +500,29 @@ mod tests {
         // a legacy JSON (no keys) decodes to None/None
         let legacy: TxPayload = serde_json::from_str(r#"{"token_symbol":"A"}"#).unwrap();
         assert_eq!((legacy.token_mintable, legacy.token_max_supply), (None, None));
+    }
+
+    /// SHIELD_V2 envelope fields (spec §3.1): omitted when `None` (the pinned legacy hashes above
+    /// already prove history is untouched), emitted and round-tripped when set.
+    #[test]
+    fn shield_v2_fields_serialize_only_when_set_and_roundtrip() {
+        let enc0 = String::from_utf8(encode_tx_v1(&legacy_token_txs()[0])).unwrap();
+        assert!(!enc0.contains("shield_v2_body") && !enc0.contains("shield_v2_proof"));
+        let mut tx = TxV1 {
+            version: 1, tx_type: "shielded_transfer_v2".into(), from_pub_key: String::new(), nonce: 0,
+            payload: TxPayload { shield_v2_body: Some("00".repeat(2546)), shield_v2_proof: Some("ab".into()), ..Default::default() },
+            fee: 0.0, sig: String::new(), signed_payload: None,
+        };
+        let enc = String::from_utf8(encode_tx_v1(&tx)).unwrap();
+        assert!(enc.contains(&format!(r#""shield_v2_body":"{}","shield_v2_proof":"ab""#, "00".repeat(2546))), "{}", &enc[..80]);
+        let back: TxV1 = serde_json::from_str(&enc).unwrap();
+        assert_eq!(back.payload, tx.payload);
+        // the identity covers the payload, hence the proof bytes (spec §3.1, last paragraph)
+        let id = tx_identity(&tx);
+        tx.payload.shield_v2_proof = Some("ac".into());
+        assert_ne!(tx_identity(&tx), id);
+        let legacy: TxPayload = serde_json::from_str(r#"{"token_symbol":"A"}"#).unwrap();
+        assert_eq!((legacy.shield_v2_body, legacy.shield_v2_proof), (None, None));
     }
 
     /// A post-fork header carries the field and it survives a round-trip.
