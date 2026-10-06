@@ -473,3 +473,37 @@ payload fields), `core/crypto/src/lib.rs` (`address_from_hash`).
     the `shield_v2: null` / `active: false` surface are footprint, not behaviour. R1-10: the
     concurrency note on `shield_v2_pool()` (`open_or_init` reached from admission and import at
     the activation height) is recorded so nobody "fixes" the ordering.
+
+## Wallet prover (2026-10-06) — the `prover` feature
+
+Full notes: `core/shield-v2-wallet/NOTES.md` §1. What changed in this crate:
+
+49. **New feature `prover`** (off by default): `prover.rs` with
+    `prove_spend(witness, public) -> Result<Vec<u8>, ProveError>` — no seed parameter; 32 bytes
+    of operating-system entropy per proof, hedged with the witness, the public inputs and a
+    per-process call counter (spec §5.6, W-7); statement check before proving; length cap;
+    self-verification. `test-prover` now implies `prover`.
+50. **The seeded research prover** `verifier::prove_spend(trace, public, seed)` is unchanged in
+    behaviour and is compiled only under `all(feature = "prover", any(test, feature =
+    "test-prover"))`. Its body moved into the crate-private `prove_trace_seeded`, which the wallet
+    prover also calls; the length check stays in both public callers.
+51. **`trace.rs` is compiled with `prover`** (private module) as well as with `test-prover`
+    (public module). The three items that name the research `JoinSplit` — `TraceInputs::honest`,
+    `honest_trace`, `public_inputs_from_trace` — are gated on `test-prover`. No other line of the
+    ported builder changed. `witness.rs` gained `impl From<&JoinSplit> for SpendWitness` (tests).
+52. **A default build is unchanged**: no new dependency, no new code. `getrandom`, `zeroize` and
+    Blake3's `zeroize` feature come with `prover` only. Asserted with
+    `cargo tree -p quantum-vault-daemon -e normal,build,features -i quantum-vault-shield-v2`
+    (default feature only) and by the absence of `quantum-vault-shield-v2-wallet` /
+    `quantum-vault-shield-v2-wasm` from `cargo tree -p quantum-vault-daemon -e normal,build`.
+    The two wallet crates are workspace members but not default members; never build a node with
+    `--workspace`.
+53. **New tests**: `src/prover.rs` unit tests (entropy failure is an error; a stuck generator
+    does not repeat the blinding; fresh seeds; a false witness is refused before proving) and
+    `tests/prover.rs` (two proofs of one witness differ and both verify; the API has no seed
+    parameter; a source scan for public seeded functions outside the test configuration). Both
+    need `--features test-prover`. `cargo tree` takes no `-j`; every other cargo invocation used
+    the resource wrapper and `-j 1`.
+54. **The wallet test vectors** of spec §8.4 are in `vectors/wallet/`; they are generated and
+    checked by `core/shield-v2-wallet/tests/vectors.rs` and by the daemon's interop module, not
+    by this crate's tests.

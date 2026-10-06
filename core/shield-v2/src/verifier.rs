@@ -254,20 +254,17 @@ pub fn verify_spend(public: &PublicInputs, proof_bytes: &[u8]) -> Result<(), Ver
     }
 }
 
-// ---- prover: TEST ONLY ---------------------------------------------------------------------------
+// ---- prover ------------------------------------------------------------------------------------
 
-/// TEST ONLY (`test-prover` feature). The research prover for the one built-in parameter set,
-/// ported verbatim: proves whatever trace it is given (no validation of the witness; an
-/// inconsistent trace yields a proof the verifier refuses) and returns the canonical postcard
-/// bytes of the proof.
+/// The proving step itself, for the one built-in parameter set: proves whatever trace it is given
+/// and returns the canonical postcard bytes of the proof. The proof is a deterministic function
+/// of (trace, public inputs, `seed`) — the seed is the ONLY entropy of the blinding (spec §5.6).
 ///
-/// This is NOT the wallet prover of spec §5.6: it takes the blinding seed from its caller, which
-/// production code MUST NOT do (open issue O-14). It exists so that this crate's tests can push
-/// forged traces through the production verifier and reproduce the test vectors of spec §8.3.
-///
-/// Fails if the proof is longer than [`MAX_PROOF_BYTES`].
-#[cfg(feature = "test-prover")]
-pub fn prove_spend(
+/// Crate-private on purpose: the two callers are [`crate::prover::prove_spend`], which draws the
+/// seed itself and has no seed parameter, and the test-only [`prove_spend`] below. No length check
+/// here; both callers make it.
+#[cfg(feature = "prover")]
+pub(crate) fn prove_trace_seeded(
     trace: p3_matrix::dense::RowMajorMatrix<Felt>,
     public: &PublicInputs,
     seed: [u8; 32],
@@ -275,7 +272,27 @@ pub fn prove_spend(
     let pis = public.to_values();
     let proof: Proof<ProductionConfig> = p3_uni_stark::prove(&production_config(seed), &JoinSplitAir::new(), trace, &pis)
         .map_err(|e| format!("{e:?}"))?;
-    let bytes = postcard::to_allocvec(&proof).map_err(|e| format!("serialize: {e:?}"))?;
+    postcard::to_allocvec(&proof).map_err(|e| format!("serialize: {e:?}"))
+}
+
+/// TEST ONLY (`test-prover` feature). The research prover for the one built-in parameter set,
+/// ported verbatim: proves whatever trace it is given (no validation of the witness; an
+/// inconsistent trace yields a proof the verifier refuses) and returns the canonical postcard
+/// bytes of the proof.
+///
+/// This is NOT the wallet prover of spec §5.6: it takes the blinding seed from its caller, which
+/// production code MUST NOT do. The wallet prover is [`crate::prover::prove_spend`] (`prover`
+/// feature), which has no seed parameter. This one exists so that this crate's tests can push
+/// forged traces through the production verifier and reproduce the test vectors of spec §8.3.
+///
+/// Fails if the proof is longer than [`MAX_PROOF_BYTES`].
+#[cfg(all(feature = "prover", any(test, feature = "test-prover")))]
+pub fn prove_spend(
+    trace: p3_matrix::dense::RowMajorMatrix<Felt>,
+    public: &PublicInputs,
+    seed: [u8; 32],
+) -> Result<Vec<u8>, String> {
+    let bytes = prove_trace_seeded(trace, public, seed)?;
     if bytes.len() > MAX_PROOF_BYTES {
         return Err(format!("proof is {} bytes, above the verifier's cap of {MAX_PROOF_BYTES}", bytes.len()));
     }
