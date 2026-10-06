@@ -1,6 +1,6 @@
 # CLI Wallet
 
-The RougeChain CLI (`rougechain`) is a command-line wallet and chain interaction tool. It provides full access to wallet management, transfers, staking, governance, mail, messenger, and the social layer — all with ML-DSA-65 signed requests.
+The RougeChain CLI (`rougechain`) is a command-line wallet and chain interaction tool. It provides full access to wallet management, transfers, staking, mail, messenger, and the social layer (plus governance commands for a feature that is suspended since block 245) — all with ML-DSA-65 signed requests.
 
 ## Installation
 
@@ -119,7 +119,13 @@ rougechain history --limit 50
 rougechain history <pubkey-hex>
 ```
 
-## Governance
+## Governance (suspended since block 245)
+
+> On-chain governance is **suspended**: since mainnet block 245 a block may not carry `cast_vote` or
+> `delegate`, so `vote` and `delegate` cannot take effect on any network at or past the
+> monetary-integrity height, and `proposals` lists nothing on mainnet (no proposal was ever created).
+> The commands remain in the CLI for the day governance is restored. See
+> [Status](../status.md#suspended-since-block-245).
 
 ```bash
 # List proposals
@@ -280,9 +286,9 @@ request.
 | `pools` | List liquidity pools |
 | `finality` | Finality status |
 | `history` | Transaction history |
-| `proposals` | List governance proposals |
-| `vote` | Cast governance vote |
-| `delegate` | Delegate voting power |
+| `proposals` | List governance proposals (suspended since block 245; empty on mainnet) |
+| `vote` | Cast governance vote (suspended since block 245) |
+| `delegate` | Delegate voting power (suspended since block 245) |
 | `register-name` | Register mail name |
 | `release-name` | Release mail name |
 | `resolve-name` | Resolve name → wallet |

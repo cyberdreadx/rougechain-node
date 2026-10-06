@@ -1,9 +1,11 @@
 # Bitcoin Bridge (BTC ⇄ qBTC)
 
-> **Status: separate system, staged rollout.** The Bitcoin bridge is independent of the Base
-> bridge (R1) and is **not part of the V3 XRGE bridge**. On mainnet, BTC payouts (qBTC → BTC) are
-> currently **not being served** while the rollout is staged. Do not send significant value; check
-> [Status & Roadmap](../status.md).
+> **Status (2026-10-06): deposits live, withdrawals switched off.** The Bitcoin bridge is independent
+> of the Base bridge (R1) and is **not part of the V3 XRGE bridge**. On mainnet, BTC → qBTC deposits
+> are verified and credited. qBTC → BTC **withdrawals are disabled in the site** because the Bitcoin
+> relayer has been stopped since the F49 upgrade while a hardening of its payout path awaits
+> deployment; a withdrawal submitted directly to the API would wait unpaid until the relayer is
+> reopened. Do not send significant value; check [Status & Roadmap](../status.md).
 
 Bridges native **Bitcoin** to **qBTC** on RougeChain L1 and back. qBTC held on RougeChain is controlled
 by ML-DSA-65 keys. The BTC backing it sits in a Bitcoin custody address protected by Bitcoin's own
