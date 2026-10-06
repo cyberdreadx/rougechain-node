@@ -11,6 +11,18 @@ treatment, mirrored exactly — plus the activation runbook note it used to defe
 pin of the signer-less envelope (§3.1, §3.6 check 2; R1-4), and the mempool / producer SHOULDs of
 §4.6 (R1-2, R1-3, R1-5). No frozen constant, encoding or consensus rule from A changed.
 
+*Amended 2026-10-06 with the wallet core (`core/shield-v2-wallet`, `core/shield-v2-wasm`, the
+`prover` feature of `core/shield-v2`; notes in `core/shield-v2-wallet/NOTES.md`):* (W-1) §2.11 —
+the wallet prover's signature is `prove_spend(witness, public)`; (W-2) §3.1 — which bytes the
+account key of a `shield_v2` signs when the wallet core builds it, and how absent payload fields
+are written; (W-3) §3.4 / §5.2 — "no salt" and "32 zero bytes" are the same HKDF input; (W-4)
+§5.3 and §9.2 — the textual form of a shielded address is fixed provisionally (O-11); (W-5) §5.4 —
+what scanning needs besides the viewing key, and how a wallet learns that its listing no longer
+matches the chain; (W-6) §5.5 — a wallet does not build a shield whose `fee` equals `v_in`; (W-7)
+§5.6 — the hedge of item 4 as implemented, with a per-call counter (O-14 implemented, review
+pending); (W-8) §8.1, new §8.4 — the wallet vectors, normative (O-15). No constant, tag, encoding
+or parameter of §2 changed, and no consensus rule.
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -438,7 +450,7 @@ The node and the wallet use the cryptographic layer through these functions and 
 | Function | Used by | Role |
 |---|---|---|
 | `verify_spend(public: &PublicInputs, proof_bytes: &[u8]) -> Result<(), VerifyError>` | node; wallet (self-check) | the verifier of §2.9. The only function whose result is consensus |
-| `prove_spend(trace, public, seed)` behind a wrapper that draws the seed itself (§5.6) | wallet | the prover for the same fixed parameter set |
+| `prove_spend(witness: &SpendWitness, public: &PublicInputs) -> Result<Vec<u8>, ProveError>` — no seed parameter; the seed is drawn inside (§5.6). Cargo feature `prover` of the verifier crate, never enabled in a node build (W-1) | wallet | the prover for the same fixed parameter set. It checks the statement of §2.7 before proving, refuses a proof above the maximum length and runs `verify_spend` on its own output |
 | `PublicInputs::from_bytes` / `to_bytes`, `digest_from_bytes` / `digest_to_bytes` | both | the encodings of §2.8 |
 | `binding_from_bytes` | both | §2.8 |
 | `derive_rho`, `receive_note`, the commitment and nullifier functions | wallet | §2.4, §2.5 |
@@ -557,6 +569,12 @@ Additional rules for `shield_v2`:
   contain both hexadecimal strings and from which the payload fields are derived by the
   signed-payload binding rule. A `shield_v2` whose body or proof is not inside the signed bytes is
   invalid.
+* *(W-2, wallet core.)* The wallet core returns a `shield_v2` unsigned, together with the bytes of
+  `encode_tx_for_signing` for the envelope it built (`version` 1, the two payload fields set, `fee`
+  0.0, no `signed_payload`); the account key signs exactly those bytes and the hexadecimal
+  signature becomes `sig`. The wallet core never holds the account's secret key. In the chain's
+  JSON encoding of the envelope the two V2 fields are present and every other payload field is
+  either omitted or `null`, as the chain's own encoder writes it; both read back as absent.
 
 Additional rules for `shielded_transfer_v2` and `unshield_v2` (no public sender):
 
@@ -624,6 +642,8 @@ For output j, with the recipient's ML-KEM-768 public key `ek` (part of its shiel
 
 1. `(kem_ct_j, ss) = ML-KEM-768.Encaps(ek)`; `kem_ct_j` is 1,088 bytes, `ss` 32 bytes.
 2. `key = HKDF-SHA256(ikm = ss, salt = 32 zero bytes, info = "rouge-shield/v2/note", L = 32)`.
+   (A salt of 32 zero bytes is what RFC 5869 uses when no salt is given; "no salt" in §5.2 is the
+   same input — W-3.)
 3. `plaintext = value (u64 LE, 8 bytes) ‖ r (digest, 32 bytes)` — 40 bytes.
 4. `note_ct_j = AES-256-GCM(key, nonce = 12 zero bytes, aad = cm_out_j (32 bytes), plaintext)` —
    40 bytes of ciphertext followed by the 16-byte tag: 56 bytes.
@@ -948,9 +968,19 @@ user MAY give it to an auditor.
 ### 5.3 Shielded address
 
 A shielded address is `(pk, ek)`: the 32-byte digest encoding of `pk` followed by the 1,184-byte
-ML-KEM-768 encapsulation key — 1,216 bytes. Its textual encoding (a bech32m string with a prefix
-of its own, so that it cannot be mistaken for a `rouge1` address) is not fixed by the inputs: open
-issue O-11.
+ML-KEM-768 encapsulation key — 1,216 bytes.
+
+**Textual form [P] (W-4, O-11).** Bech32m (BIP-350: the same character set, generator and
+checksum constant `0x2bc830a3`) of the 1,216 bytes with the human-readable prefix `rshield`, with
+no length limit applied: `rshield1` + 1,946 data characters + 6 checksum characters = 1,960
+characters, lowercase (an all-uppercase string decodes to the same address; mixed case is
+invalid). A decoder MUST refuse a wrong checksum, a prefix other than `rshield`, a payload that is
+not exactly 1,216 bytes, a `pk` that is not a canonical digest (§2.8) and an encapsulation key
+that fails the modulus check of FIPS 203 §7.2, each with its own error. At this length the
+six-character checksum is a 30-bit integrity check and no longer guarantees detection of a few
+mistyped characters; the transport is copy-paste or a QR code, never typing. A wallet SHOULD show
+the *address fingerprint* — the first 8 bytes of SHA-256 of the 1,216 address bytes, hexadecimal —
+so that two people can compare an address out of band. Not consensus; vectors in §8.4.
 
 ### 5.4 Note data: what the wallet keeps and what a restore recovers
 
@@ -966,6 +996,18 @@ decrypted `(value, r)`. Only a note that passes that check is the wallet's. The 
 — never from the sender or from a message outside the chain — and MUST follow reorganisations: a
 note in a block that is no longer on the chain does not exist, and its `rho` may be reused by a
 different transaction on the other fork (L-1, rule 6).
+
+*(W-5.)* The viewing key alone decrypts; it does not complete the scan. The recipient check needs
+the wallet's `pk` (public: it is in the address), and knowing which notes are spent needs `nk`.
+A scanner therefore holds `(dk, pk)` to find incoming notes and their values, and `(dk, pk, nk)`
+to also see spends; neither can spend, which needs `sk`. What a user gives an auditor under §5.2
+is `(dk, pk)` — incoming notes only.
+
+A wallet that keeps the frontier and per-note paths instead of the whole tree cannot undo an
+append. It MUST check that every listed output is at the leaf position its own tree expects next
+and MUST refuse a listing that is not, and it SHOULD compare its tree root with the node's latest
+anchor after scanning to the tip; after a reorganisation, or on any mismatch, it rebuilds from an
+empty state by scanning from A.
 
 **The wallet stores**, for every note it owns: `value`, `rho`, `r`, the leaf position, `cm`, the
 transaction that created it, and whether its nullifier `H(3; nk ‖ rho)` has appeared on chain. It
@@ -1005,6 +1047,9 @@ through conforming ciphertexts.
 * Output slots have no consensus meaning. A wallet SHOULD place the payment and the change in a
   random order. A receiving wallet MUST try both slots of every transaction.
 * A wallet MUST NOT spend the same note in both input slots (the verifier refuses `nf1 = nf2`).
+* *(W-6.)* The node accepts a `shield_v2` with `fee = v_in` (§3.6 check 10: `fee ≤ v_in`); it
+  creates two zero-value notes and shields nothing. A wallet SHOULD NOT build one, and SHOULD NOT
+  build a transfer whose payment is zero or an unshield it cannot pay for.
 * If the prover reports that a proof exceeds 200,000 bytes, that is an implementation fault, not a
   condition to retry: under the pinned parameters it cannot happen (§7, C-1).
 
@@ -1026,6 +1071,13 @@ Requirements:
 4. The prover SHOULD additionally mix the witness and the public inputs into the blinding
    (`H(OS entropy ‖ witness ‖ public inputs)`), so that a generator that repeats does not repeat
    the masks across different statements. This is a hardening on top of 1–3, not a substitute.
+   *(W-7.)* The wallet prover does this as
+   `seed = Blake3-keyed(key = the 32 bytes of OS entropy; "rouge-shield/v2/prover/blinding-seed/v1"
+   ‖ counter (u64 LE) ‖ public inputs (216 bytes, §2.8) ‖ witness)`, where `counter` counts the
+   proofs started by the process, so that a generator that repeats within one process does not
+   repeat the masks even for the same statement, and `witness` is every private value of §2.7 in
+   a fixed order. The construction is not observable from outside the prover and is not a
+   protocol constant; another prover MAY hedge differently as long as 1–3 hold.
 5. The fixed seeds of the test vectors (§8) exist only to make bytes reproducible. A wallet MUST
    NOT use a fixed seed.
 
@@ -1179,11 +1231,13 @@ SHA-256 of the files at the commit of §1.1:
 | `unshield.public.bin` | `f640477bcdbe2f7d308bcaa6e9d844df08c0149a7ebf1f91dd4e992096f8ea4d` |
 | `unshield.proof.bin` | `9caf22b6a9cf9e3e99f35ec59150cac6153be2ce9cb729563adf1566e2bc80eb` |
 
-**Scope of the vectors.** They cover the cryptographic layer only. Their `binding` values are
-hashes of arbitrary test bytes, not of a body of §3.2, and their anchors are roots of test trees.
-**No vector exists yet** for the body encoding, the binding of a real body, note encryption, key
-derivation, the state-root section of §4.8, or the node-rule regression pair of §4.2. They MUST be
-produced and added to this section before the first testnet activation (open issue O-15).
+**Scope of the vectors above.** They cover the cryptographic layer only. Their `binding` values
+are hashes of arbitrary test bytes, not of a body of §3.2, and their anchors are roots of test
+trees. The body encoding, the binding of a real body, note encryption, key derivation, the
+shielded address and the state-root section of §4.8 are covered by the wallet vectors of §8.4
+(W-8, O-15). The node-rule regression pair of §4.2 is not a file: it is the first test of the node
+implementation (`shield_v2_daemon_tests`), built in the test process because the three vectors
+above cannot serve (their bindings are not bindings of a body).
 
 ### 8.2 Primitives
 
@@ -1282,6 +1336,48 @@ the root each input's path leads to, the outputs' `pk`, derived `rho` and `r`) a
 `vectors.json`. For the shield vector both inputs are dummies with all-zero paths, so their path
 root is not the anchor.
 
+### 8.4 Wallet vectors (W-8; closes O-15)
+
+**Normative** for §3.2 (body), §2.8 (binding of a body), §3.4 (encrypted notes), §5.2 (key
+derivation), §5.3 (shielded address) and §4.8 (state-root section). Files, in
+`core/shield-v2/vectors/wallet/`:
+
+| File | Content | SHA-256 |
+|---|---|---|
+| `keys.json` | two wallets from fixed BIP-39 recovery phrases (no passphrase): the 64-byte seed, both HKDF outputs, `sk` (bytes and the 8 reduced elements), `nk`, `pk`, the ML-KEM-768 seeds `d`, `z`, the encapsulation and decapsulation keys, the address bytes' SHA-256, the address fingerprint and the `rshield1…` string | `abbe9ad64605a0232e80ec507f3cfa4897c5f014fbacbc6523388d2d2364e8ba` |
+| `note_encryption.json` | one encrypted note to wallet-1 with the ML-KEM encapsulation randomness `m` fixed: `kem_ct`, the shared secret, the AES key, the plaintext, `note_ct`. The commitment is the one of §8.2 | `bac08d6170fa294780e25ad5fa59b724df6c123d756dee643eed1755278077bc` |
+| `transactions.json` | one `shield_v2`, one `shielded_transfer_v2`, one `unshield_v2` on chain id `rougechain-devnet-1`, chained (the transfer spends the shield's note, the unshield spends the transfer's change): every body field, the full witness, the 2,546 body bytes, the binding, the 216 public-input bytes, and which wallet can read which output | `39ea4d3949e84b8ab3971a2ea1546ec092aa81d0670defff9a61f04b828c7246` |
+| `state_root.json` | the pool state and the §4.8 section `root_after` at activation and after each of the three transactions, applied one per block from activation height 3 | `62a6a4ffd6599eea1832608e29dfd6c6c499c5b1bc756c8fb06564597dce997e` |
+
+Rules for an implementation checked against them:
+
+* **Keys.** From `bip39_seed` it MUST reproduce `sk_okm`, `sk`, `nk`, `pk`, `view_okm`, the two
+  ML-KEM keys and the address string.
+* **Note encryption.** With the stated `m` as the randomness of `ML-KEM-768.Encaps` it MUST
+  reproduce `kem_ct`, `shared_secret`, `aes_256_gcm_key` and `note_ct`; decapsulating with
+  wallet-1's key MUST return the plaintext, and wallet-2's key MUST fail the tag.
+* **Transactions.** From the listed fields and the ciphertexts inside the body it MUST reproduce
+  `body`; from `body`, `binding` and `public_inputs`; from the witness, both nullifiers and both
+  output commitments (with `rho` derived from the nullifiers). A node's body parser MUST accept
+  each body for its `tx_type`, its `height` and this chain id, and MUST refuse it for another
+  chain id, another type, or a height above `expiry_height`. Each output named under
+  `readable_by` MUST decrypt for that wallet and pass the recipient check of §2.4.1; no other
+  output may decrypt for either wallet.
+* **State root.** Applying the three transactions through the rules of §4, one per block from
+  height 3, MUST give each listed state and, with the listed `root_before`, each `root_after`.
+* **No proof is part of these vectors.** A proof's blinding is drawn inside the prover (§5.6) and
+  is not reproducible; the proofs of §8.3 remain the proof vectors. The values a wallet draws at
+  random — dummy secrets, `r`, the keys of zero-value outputs, encapsulation randomness, the slot
+  order — are fixed here by a test-only deterministic source that no wallet build contains, and
+  are given through the witness and the ciphertexts.
+* The `from_pub_key` of the shield vector is 1,952 arbitrary bytes, not a valid ML-DSA-65 key;
+  only its SHA-256 enters the body. Account signatures are not part of these vectors.
+
+Checkers: `core/shield-v2-wallet/tests/vectors.rs` (regenerates every value and compares; the
+HKDF outputs are recomputed there independently of the wallet code) and the node's
+`node::shield_v2_wallet_interop_tests::committed_wallet_vectors_agree_with_the_node_parser_and_the_state_root_section`
+(the node's body parser, binding, listing and persistent pool store on the same files).
+
 ---
 
 ## 9. Open issues
@@ -1360,7 +1456,9 @@ wanted, add one sender ciphertext per transaction as body version 2 before testn
 **O-11 — Shielded address encoding.** No prefix or textual form is defined, and a 1,216-byte
 payload is far beyond the length bech32m's checksum was designed for. *Recommendation:* bech32m
 with prefix `rshield` for now, QR codes and copy-paste as the only transport, and a wallet-side
-integrity check on import; decide before wallets ship. Not consensus.
+integrity check on import; decide before wallets ship. Not consensus. *Status 2026-10-06 (W-4):*
+implemented as recommended and fixed provisionally in §5.3, with the address fingerprint as the
+wallet-side check; still to be confirmed by the owner.
 
 **O-12 — Form of the nullifier-set commitment.** The design says "as a digest" and no more. §4.8
 uses a running hash in insertion order, which costs two hashes per transaction; the alternative in
@@ -1379,12 +1477,17 @@ regenerate every vector.
 `prove_spend(trace, public, seed)` and the WebAssembly exports do not comply, and two exports can
 panic. *Recommendation:* before any wallet integration, wrap or change the prover so that the seed
 is drawn inside it, add the hedging of §5.6 item 4, remove the panics, and have the change
-reviewed — it touches the only entropy of the proof's privacy.
+reviewed — it touches the only entropy of the proof's privacy. *Status 2026-10-06 (W-1, W-7):*
+implemented — `prove_spend(witness, public)` behind the `prover` feature, seed drawn inside,
+hedged, no panic on caller data, length cap and self-verification; the seeded function survives
+only in the test configuration. **The review this item asks for has not happened yet**, and the
+research WebAssembly exports are not used by the new package (`core/shield-v2-wasm`).
 
 **O-15 — Missing test vectors and tests.** See §8.1. *Recommendation:* generate vectors for the
 body, binding, note encryption, key derivation and the state-root section from the first node and
 wallet implementations, cross-check them between the two, and add them here; make the regression
-pair of §4.2 the first node test.
+pair of §4.2 the first node test. *Status 2026-10-06 (W-8):* done — §8.4; the regression pair
+is the node's first V2 test.
 
 ### 9.2 Values fixed by this document without an input fixing them **[P]**
 
@@ -1403,3 +1506,4 @@ To be confirmed or changed by the owner before the first testnet activation.
 | `SHIELD_V2_ANCHOR_WINDOW` | §4.3 | 128, the design's estimate (O-8) |
 | `SHIELD_V2_POOL_CAP_QUANTA` on testnet | §4.4 | the same 10^15 as mainnet; the owner's decision names mainnet only |
 | State-root tag and layout | §4.8 | `rougechain.stateroot.shield_v2.v1`, running nullifier hash (O-12) |
+| Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, 1,960 characters; fingerprint = first 8 bytes of SHA-256 of the address bytes (O-11, W-4) |
