@@ -707,3 +707,9 @@ pub mod deterministic {
 #[cfg(test)]
 #[path = "review_wallet_1_tests.rs"]
 mod review_wallet_1_tests;
+
+// REVIEW_WALLET_2: tests of the hedged generator across a process restart; they need this module's
+// private assembly functions and the crate-private entropy trait. Test builds only.
+#[cfg(test)]
+#[path = "review_wallet_2_tests.rs"]
+mod review_wallet_2_tests;
