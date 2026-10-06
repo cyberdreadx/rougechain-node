@@ -521,3 +521,16 @@ fn activation_boundary() {
     // Downtime is not counted from a V2 certificate: it never listed every signer (rule R21).
     assert!(l100.validators.values().all(|v| v.window.is_empty()));
 }
+
+/// Finding F13: nothing stops the last validator from leaving. With an empty
+/// active set there is no scheduled proposer, so no block is ever valid again.
+#[test]
+fn an_empty_active_set_halts_the_chain_for_good() {
+    let mut c = Chain::new(&[1_000_000], |_| {});
+    let all = c.tx(acct(0), TxKind::Unbond { amount: 1_000_000 * XRGE });
+    c.next(HOUR, vec![all], vec![], None).unwrap();
+    assert!(c.ledger.active_set.is_empty());
+    assert_eq!(c.ledger.next_proposers().get(0), None);
+    let b = c.ledger.build_block(key(0), 0, c.ledger.tip_time + HOUR, c.cert(None), vec![], vec![]);
+    assert_eq!(c.ledger.apply_block(&b).map(|_| ()), Err(BlockError::WrongProposer));
+}

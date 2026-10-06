@@ -167,3 +167,34 @@ fn bounded_exhaustive_exploration() {
     println!("explorer under the quorum mutation: {} states, violation: {}", broken.states, broken.violation.as_deref().map_or("none", |v| v.lines().next().unwrap_or("")));
     assert!(broken.violation.as_deref().is_some_and(|v| v.starts_with("P1")), "the explorer must see the planted fork");
 }
+
+/// The checkers for P2 and P10 can fire: tamper with a finished, clean run.
+#[test]
+fn tampered_records_are_caught_by_p2_and_p10() {
+    let mut cfg = base_config(21, &[1_000_000; 4], 60);
+    for k in 0..3u64 {
+        cfg.txs.push((cfg.start + 1_000 + k * 5_000, transfer(k + 1, cfg.params.base_fee)));
+    }
+    cfg.record_schedule = true;
+    let rec = sim::run(&cfg);
+    assert!(check(&rec, &CheckOpts::default()).ok());
+    // P2: a committed block that validation rejects (same header, its transactions removed).
+    let mut bad = rec.clone();
+    let original = bad.nodes[0].chain[1].block.clone();
+    bad.nodes[0].chain[1].block = std::sync::Arc::new(crate::chain::Block::new(original.header.clone(), original.parent_cert.clone(), Vec::new(), Vec::new()));
+    let rep = check(&bad, &CheckOpts::default());
+    assert!(rep.violations.iter().any(|v| v.property == Property::P2), "{:?}", rep.violations);
+    // P2: a block by a validator that was not the scheduled proposer.
+    let mut bad = rec.clone();
+    let mut header = original.header.clone();
+    header.builder = KeyId((header.builder.0 + 1) % 4);
+    bad.nodes[0].chain[1].block = std::sync::Arc::new(crate::chain::Block::new(header, original.parent_cert.clone(), original.txs.clone(), Vec::new()));
+    let rep = check(&bad, &CheckOpts::default());
+    assert!(rep.violations.iter().any(|v| v.property == Property::P2), "{:?}", rep.violations);
+    // P10: a schedule that is not the one that produced the recorded hashes.
+    let mut bad = rec.clone();
+    let cut = bad.schedule.len() / 2;
+    bad.schedule.remove(cut);
+    let rep = check(&bad, &CheckOpts::default());
+    assert!(rep.violations.iter().any(|v| v.property == Property::P10), "{:?}", rep.violations);
+}
