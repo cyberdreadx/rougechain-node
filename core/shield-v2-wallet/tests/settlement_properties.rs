@@ -15,13 +15,20 @@
 //! contradict correct values, vouch for whatever the wallet has been made to believe, replay
 //! stale reports (under their own or a newer height), inflate tips, equivocate, stay silent;
 //! serve listings with forged payments, hidden transactions, replaced or regrouped nullifiers,
-//! shifted heights, blanked or swapped ciphertexts, truncated pages; withhold submitted
-//! transactions and release them at any later time, also after very long delays; send dust,
+//! shifted heights, shifted leaf positions, blanked or swapped ciphertexts, truncated pages;
+//! withhold submitted transactions and release them at any later time — after very long delays,
+//! or in the very last block that can hold them; send dust,
 //! cap-filling notes and notes whose ciphertext does not open their commitment. Besides: a second
 //! device on the same recovery phrase, crashes between any two calls (the client loses the state
 //! a call returned), restores from the phrase, migrations from state formats 1, 2 and 3.
 //!
-//! **The client** follows the documented rules and nothing else: persist the returned state,
+//! Honest nodes may be unreachable — any number of them, outside the settlement windows: safety
+//! does not depend on anybody answering.
+//!
+//! **The client** follows the documented rules and nothing else — and where the rules leave it a
+//! choice it sometimes makes the careless one: it hands `confirm_state` only the reports that
+//! agree with it ("drop the nodes that conflict"), and one payment in five it explicitly allows
+//! unverified inputs. Otherwise: persist the returned state,
 //! then submit; retry a payment only after `resolve` said it expired or was superseded; on
 //! `listing_refuted` (or a `listing:` error) rescan against the next node; if the state check
 //! does not reach the height a quorum reports, list from the next node; after a restore make no
@@ -148,6 +155,7 @@ struct Snap {
 
 struct TrueNote {
     owner: Who,
+    cm: [u8; 32],
     value: u64,
     stranger: bool,
     created: u64,
@@ -229,6 +237,12 @@ impl RefChain {
         self.mined.contains(&tx.id())
     }
 
+    /// The commitment of the note this nullifier spends, from the books (`None`: a dummy input,
+    /// or a note that is on no chain).
+    fn note_spent_by(&self, nf: &[u8; 32]) -> Option<[u8; 32]> {
+        self.note_by_nf.get(nf).map(|&i| self.notes[i].cm)
+    }
+
     /// One block with at most one V2 transaction. `false`: the transaction was refused and the
     /// block is empty.
     fn block(&mut self, tx: Option<&Tx>) -> bool {
@@ -268,7 +282,7 @@ impl RefChain {
                 if let Some((owner, value, stranger)) = t.outs[j].filter(|o| o.1 > 0) {
                     let own_nf = digest_to_bytes(&nullifier(&self.nk[owner as usize], &derive_rho(&nfd, j)));
                     self.note_by_nf.insert(own_nf, self.notes.len());
-                    self.notes.push(TrueNote { owner, value, stranger, created: h, spent: None });
+                    self.notes.push(TrueNote { owner, cm, value, stranger, created: h, spent: None });
                 }
             }
             self.snap.root = digest_to_bytes(&self.tree.root());
@@ -428,7 +442,13 @@ struct Stats {
     withheld: usize,
     unsubmitted: usize,
     released_late: usize,
+    released_last_block: usize,
     release_refused: usize,
+    unverified_payments: usize,
+    reports_dropped: usize,
+    honest_silent: usize,
+    own_outputs_blanked: usize,
+    leaves_shifted: usize,
     second_device: usize,
     second_device_same_inputs: usize,
     hostile_notes: usize,
@@ -642,7 +662,9 @@ impl World {
             page["tip_height"] = serde_json::json!(fake_height);
             page["next_height"] = serde_json::json!(fake_height + 1);
         };
-        match self.rng.below(11) {
+        // (a wallet that rescans with transactions pending is where shifted leaves matter)
+        let shift = self.stored.tree().note_count() == 0 && listed > 0 && !self.stored.pending().is_empty() && self.rng.below(2) == 0;
+        match if shift { 12 } else { self.rng.below(13) } {
             // a transaction of this wallet that the node is holding back, listed as mined
             0 => {
                 let held: Vec<usize> = (0..self.attempts.len()).filter(|&i| !self.chain.is_mined(&self.attempts[i].tx)).collect();
@@ -673,13 +695,47 @@ impl World {
                 let (u, _) = self.shield_to_alice(50 * Q, 6);
                 append(&mut page, &u.body);
             }
-            // ciphertexts blanked
+            // ciphertexts blanked: of one output somewhere …
             5 => {
                 let n = self.rng.below(listed.max(1) as u64) as usize;
                 let j = self.rng.below(2) as usize;
                 let tx = page["txs"].as_array_mut().unwrap().get_mut(n)?;
                 tx["outputs"][j]["kem_ct"] = serde_json::json!("00".repeat(KEM));
                 tx["outputs"][j]["note_ct"] = serde_json::json!("00".repeat(NOTE));
+            }
+            // … or of every output of the wallet's own transactions (its change)
+            11 => {
+                let own: BTreeSet<String> = self.attempts.iter().map(|a| hex::encode(a.tx.nf(0))).collect();
+                let mut hit = 0;
+                for tx in page["txs"].as_array_mut().unwrap().iter_mut().filter(|t| own.contains(t["nf1"].as_str().unwrap())) {
+                    for j in 0..2 {
+                        tx["outputs"][j]["kem_ct"] = serde_json::json!("00".repeat(KEM));
+                        tx["outputs"][j]["note_ct"] = serde_json::json!("00".repeat(NOTE));
+                    }
+                    hit += 1;
+                }
+                if hit == 0 {
+                    return None;
+                }
+                self.stats.own_outputs_blanked += hit;
+            }
+            // a forged transaction at the FRONT of a listing read from the start: every real
+            // note then sits two leaves further than on the chain
+            12 => {
+                if self.stored.tree().note_count() != 0 || listed == 0 {
+                    return None;
+                }
+                let (u, _) = self.shield_to_alice(50 * Q, 6);
+                let txs = page["txs"].as_array_mut().unwrap();
+                let first_height = txs[0]["height"].as_u64().unwrap();
+                for t in txs.iter_mut() {
+                    for j in 0..2 {
+                        t["outputs"][j]["leaf"] = serde_json::json!(t["outputs"][j]["leaf"].as_u64().unwrap() + 2);
+                    }
+                }
+                txs[0]["index"] = serde_json::json!(1);
+                txs.insert(0, RefChain::entry(&u.body, first_height, 0, 0));
+                self.stats.leaves_shifted += 1;
             }
             // ciphertexts swapped between the two outputs
             6 => {
@@ -740,6 +796,13 @@ impl World {
         let mut s = self.stored.clone();
         match s.scan(&page, &self.alice.scan_key()) {
             Ok(r) => {
+                // the wallet's own change does not depend on what the listing served as its
+                // ciphertext: when the listing shows the transaction, the change note is there
+                for p in s.pending().iter().filter(|p| p.status == PendingStatus::SeenMined && p.seen_height.is_some_and(|h| h >= page.from_height)) {
+                    if let Some(c) = p.change.as_ref().filter(|c| c.r.is_some() && c.value > 0) {
+                        assert!(s.notes().iter().any(|n| n.cm == c.cm && n.value == c.value), "seed {}: the listing showed the wallet's own transaction and its change is not stored", self.seed);
+                    }
+                }
                 self.stats.lying_pages_accepted += self.liar[self.listing] as usize;
                 self.persist(s);
                 Ok(r.at_tip)
@@ -783,9 +846,15 @@ impl World {
         let tip = self.chain.height;
         let scanned = self.stored.scanned_height();
         let mut out = Vec::new();
+        let all_honest_silent = !settled && self.rng.below(10) == 0;
         for i in 0..self.nodes.len() {
             let id = self.nodes[i].clone();
             if !self.liar[i] {
+                // outside a settlement window an honest node may not answer at all
+                if !settled && (all_honest_silent || self.rng.below(5) == 0) {
+                    self.stats.honest_silent += 1;
+                    continue;
+                }
                 let lag = if !settled && self.rng.below(5) == 0 { self.rng.below(HONEST_LAG + 1) } else { 0 };
                 out.push(self.chain.report(&id, tip.saturating_sub(lag).max(A - 1)));
                 continue;
@@ -848,8 +917,15 @@ impl World {
     /// The client's state check and the documented rules that follow it. `true`: the check left
     /// nothing to do (the listing is neither refuted nor ahead of the quorum).
     fn confirm(&mut self, settled: bool) -> bool {
-        let reports = self.reports(settled);
+        let mut reports = self.reports(settled);
         let mut s = self.stored.clone();
+        // the careless client of REVIEW_WALLET_3: "drop the nodes that conflict" — it hands in
+        // only the reports that say what it already believes
+        let all_reported = reports.len();
+        if !settled && self.rng.below(4) == 0 {
+            reports.retain(|r| s.state_at(r.height).is_some_and(|v| (v.tree_root, v.nullifier_acc, v.ciphertext_acc, v.note_count, v.nullifier_count) == (r.tree_root, r.nullifier_acc, r.ciphertext_acc, r.note_count, r.nullifier_count)));
+            self.stats.reports_dropped += all_reported - reports.len();
+        }
         let c = s.confirm_state(&reports).unwrap();
         let seed = self.seed;
         self.stats.confirm_calls += 1;
@@ -868,8 +944,9 @@ impl World {
             self.stats.matched_with_dissent += !c.dissenting.is_empty() as usize;
         }
         // the quorum's tip is a height the chain has reached, and at least the lowest honest claim
+        // (a lower bound holds only when the honest nodes answer: in a settlement window)
         if let Some(t) = c.quorum_tip {
-            assert!(t <= self.chain.height && (settled && t == self.chain.height || t + HONEST_LAG >= self.chain.height), "seed {seed}: the quorum's tip {t} is not where the honest nodes are ({})", self.chain.height);
+            assert!(t <= self.chain.height && (!settled || t == self.chain.height), "seed {seed}: the quorum's tip {t} is not where the honest nodes are ({})", self.chain.height);
         }
         // a listing that shows transactions in blocks the quorum does not have: a block or two of
         // lead is an honest race; more, or any once the nodes have settled, is an invention
@@ -937,10 +1014,12 @@ impl World {
             None => [Q, 2 * Q, 3 * Q, 3 * Q + Q / 2, 7 * Q, 11 * Q][self.rng.below(6) as usize],
         };
         let st = self.stored.clone();
-        let Ok(sel) = select_inputs(&st, amount, Q) else { return };
+        // one payment in five the user explicitly allows inputs (and a root) nobody confirmed
+        let unverified = self.rng.below(5) == 0;
+        let Ok(sel) = select_inputs_with(&st, amount, Q, unverified) else { return };
         let (label, to, seed) = (self.label("pay"), self.bob.address(), self.seed);
         let expiry = if self.rng.below(4) == 0 { st.confirmed_height().map(|c| c + 1 + self.rng.below(EXPIRY_BOUND)) } else { None };
-        let spend = SpendOptions { chain_id: CHAIN, inputs: &sel.positions, expiry_height: expiry, allow_unverified: false, max_fee: None };
+        let spend = SpendOptions { chain_id: CHAIN, inputs: &sel.positions, expiry_height: expiry, allow_unverified: unverified, max_fee: None };
         let built = deterministic::transfer_locked(&st, st.revision(), &self.alice, &TransferParams { spend, recipient: &to, amount, fee: Q }, &label);
         let (tx, locked) = match built {
             Ok(x) => x,
@@ -951,13 +1030,19 @@ impl World {
         let t = Tx::of(&tx, Who::Bob, Some(Who::Alice));
         // G3, first half: the expiry is bounded by the TRUE height, whatever any node claimed
         assert!(t.expiry() <= self.chain.height + EXPIRY_BOUND, "seed {seed}: expiry {} is more than 128 blocks above the true height {}", t.expiry(), self.chain.height);
-        assert_eq!(t.anchor(), self.chain.state_at(st.confirmed_height().unwrap()).root, "seed {seed}: the anchor is the chain's root at the confirmed height");
-        // G1: nothing this device built earlier from one of these notes is mined or can still be
+        if !unverified {
+            assert_eq!(t.anchor(), self.chain.state_at(st.confirmed_height().unwrap()).root, "seed {seed}: the anchor is the chain's root at the confirmed height");
+        }
+        // G1: nothing this device built earlier from one of these notes can still be mined — the
+        // lock holds on every listing, also for a caller that allows unverified inputs — and
+        // without that flag it is not mined either (with it, a listing that hides the spend can
+        // make the wallet build a transaction that is dead on arrival: the caller's risk)
         let nfs = [t.nf(0), t.nf(1)];
         for a in self.attempts.iter().filter(|a| a.known && (nfs.contains(&a.tx.nf(0)) || nfs.contains(&a.tx.nf(1)))) {
-            assert!(!self.chain.is_mined(&a.tx), "seed {seed}: a note spent by a MINED transaction of this wallet is spent again");
+            assert!(unverified || !self.chain.is_mined(&a.tx), "seed {seed}: a note spent by a MINED transaction of this wallet is spent again");
             assert!(!self.chain.can_still_be_mined(&a.tx), "seed {seed}: a note is handed out again while an earlier transaction from it can still be mined");
         }
+        self.stats.unverified_payments += unverified as usize;
         // the returned state holds the lock; the caller's is untouched
         assert!(sel.positions.iter().all(|&p| locked.is_locked(p) && !st.is_locked(p)) && locked.pending().len() == st.pending().len() + 1);
         let record = locked.pending().last().unwrap().clone();
@@ -1017,6 +1102,24 @@ impl World {
             self.stats.released_late += 1;
         } else {
             self.stats.release_refused += 1;
+        }
+    }
+
+    /// The adversary's best timing against "expired": it lets the chain reach the block BEFORE the
+    /// transaction's last valid block, lets the wallet look, and then mines the transaction in
+    /// that last block (`expiry_height` itself).
+    fn release_in_the_last_block(&mut self) {
+        let alive: Vec<usize> = self.withheld.iter().copied().filter(|&i| self.chain.can_still_be_mined(&self.attempts[i].tx)).collect();
+        let Some(i) = self.rng.pick(&alive) else { return };
+        let tx = self.attempts[i].tx.clone();
+        self.chain.advance_to(tx.expiry() - 1);
+        for _ in 0..3 {
+            self.sync(4);
+            self.confirm(true);
+            self.resolve();
+        }
+        if self.chain.height == tx.expiry() - 1 && self.chain.block(Some(&tx)) {
+            self.stats.released_last_block += 1;
         }
     }
 
@@ -1140,9 +1243,12 @@ impl World {
         // only if every pending entry is untouched and has its notes. (The scanned height a
         // format-1 state recorded is the true one here: format 1 never met this adversary.)
         let v1_possible = a.pending().iter().all(|p| p.status == PendingStatus::Pending && !p.input_cms.is_empty() && p.input_cms.iter().all(|c| a.unspent().any(|n| n.cm == *c)));
+        // (a format-2 state in the middle of a rescan held an entry without its notes and locked
+        // by POSITION; that documented limit of format 2 is not what this test is about)
+        let has_its_notes = a.pending().iter().all(|p| !p.input_cms.is_empty() && p.input_cms.iter().all(|c| a.notes().iter().any(|n| n.cm == *c)));
         let format = match self.rng.below(3) {
             0 if v1_possible => 1,
-            1 if !any_legacy && a.pending().iter().all(|p| p.change.is_some()) => 2,
+            1 if !any_legacy && has_its_notes && a.pending().iter().all(|p| p.change.is_some()) => 2,
             _ => 3,
         };
         let json = match format {
@@ -1208,6 +1314,20 @@ impl World {
             }
             // G3 (first half), for every entry whatever its origin
             assert!(p.expiry_height <= self.chain.height + EXPIRY_BOUND, "seed {seed} after {step}: a lock reaches more than 128 blocks beyond the true height");
+        }
+        // … and by the books, not by what the entry says of itself: while the state holds the entry
+        // of a transaction, every note that transaction spends is locked wherever the listing
+        // put it (a lock belongs to the commitment, not to a leaf position)
+        for a in self.attempts.iter().filter(|a| a.known) {
+            let held = pending.iter().any(|p| if p.legacy { p.nullifiers.iter().any(|n| a.nullifiers.contains(n)) } else { p.nullifiers == a.nullifiers });
+            if !held {
+                continue;
+            }
+            for cm in (0..2).filter_map(|i| self.chain.note_spent_by(&a.tx.nf(i))) {
+                for n in st.unspent().filter(|n| n.cm.0 == cm) {
+                    assert!(st.is_locked(n.position), "seed {seed} after {step}: a note a pending transaction spends is not locked (at leaf {})", n.position);
+                }
+            }
         }
         // G1 (payments): nothing the user asked for is mined twice
         let mut mined_per_intent = vec![0usize; self.intents.len()];
@@ -1359,9 +1479,13 @@ impl World {
                 self.pay();
                 "build and submit"
             }
-            80..=86 => {
+            80..=84 => {
                 self.release();
                 "the adversary releases a withheld transaction"
+            }
+            85..=86 => {
+                self.release_in_the_last_block();
+                "the adversary mines a withheld transaction in its last valid block"
             }
             87..=96 => {
                 self.resolve();
@@ -1423,7 +1547,8 @@ fn settlement_guarantees_hold_against_an_independent_model() {
             ($($f:ident),*) => { $( total.$f += s.$f; )* };
         }
         add!(lying_pages, lying_pages_accepted, confirm_calls, matched, matched_with_dissent, refuted, ahead, rotations, rescans, states_lost, restores, embargo_ended, payments, retries,
-            two_input_payments, withheld, unsubmitted, released_late, release_refused, second_device, second_device_same_inputs, hostile_notes, settled_mined, settled_expired,
+            two_input_payments, withheld, unsubmitted, released_late, released_last_block, release_refused, unverified_payments, reports_dropped, honest_silent,
+            own_outputs_blanked, leaves_shifted, second_device, second_device_same_inputs, hostile_notes, settled_mined, settled_expired,
             settled_superseded, drives, cap_checked, cap_recovered, liars, nodes);
         for i in 0..3 {
             total.migrations[i] += s.migrations[i];
@@ -1433,7 +1558,8 @@ fn settlement_guarantees_hold_against_an_independent_model() {
     println!("settlement guarantees over {RUNS} runs of {STEPS} steps; (nodes, liars) seen: {nodes_seen:?}\n{total:#?}");
     // the runs did exercise what the guarantees are about
     assert!(total.lying_pages_accepted > 400 && total.refuted > 100 && total.ahead > 30 && total.matched > 800 && total.matched_with_dissent > 300, "{total:?}");
-    assert!(total.payments > 300 && total.retries > 40 && total.two_input_payments > 30 && total.withheld > 60 && total.released_late > 15 && total.release_refused > 50, "{total:?}");
+    assert!(total.payments > 300 && total.retries > 40 && total.two_input_payments > 30 && total.withheld > 60 && total.released_late > 10 && total.release_refused > 50, "{total:?}");
+    assert!(total.released_last_block > 5 && total.unverified_payments > 30 && total.reports_dropped > 300 && total.honest_silent > 300 && total.own_outputs_blanked > 5 && total.leaves_shifted > 30, "{total:?}");
     assert!(total.settled_mined > 150 && total.settled_expired > 50 && total.settled_superseded > 15, "{total:?}");
     assert!(total.second_device > 200 && total.second_device_same_inputs > 15 && total.hostile_notes > 300 && total.states_lost > 300, "{total:?}");
     assert!(total.migrations.iter().all(|&m| m > 40) && total.restores > 30 && total.embargo_ended > 10 && total.rescans > 300, "{total:?}");
