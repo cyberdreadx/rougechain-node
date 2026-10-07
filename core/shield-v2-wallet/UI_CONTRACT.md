@@ -4,11 +4,14 @@ Normative for every client that calls `quantum-vault-shield-v2-wallet` or
 `quantum-vault-shield-v2-wasm` (the site, the extension, Qwalla). MUST, MUST NOT, SHOULD as in
 RFC 2119. It holds the conditions of `REVIEW_WALLET_5.md` that no change of the core can meet:
 four obligations of the client (1–4) and three limits that are inherent and must be TOLD to
-the user (5–7). Each has the check a reviewer of a client performs.
+the user (5–7). Each has the check a reviewer of a client performs. Obligation 8 (what a
+client shows when the pool is not active) and the rule for native bindings in obligation 4
+were added after `REVIEW_WALLET_6.md`.
 
 The syncing algorithm is not here: it is `NOTES.md` §6 ("The client loop"), mirrored in spec
 §5.5, and it is normative too. The reference implementation of it is
-`tests/common/client_loop.rs`.
+`tests/common/client_loop.rs` (`Session`; `LoopClient` runs it with P = 4 pages a round, the
+property test's client with 6 — P is the client's choice).
 
 ## For product owners, in four sentences
 
@@ -110,17 +113,84 @@ the client for `setTimeout`/timers that gate a payment, a retry or the end of an
   note secrets: encrypted at rest like a key). A text the core refuses (`state:`) is answered
   with `recover_locks`, NEVER with `new_state`.
 * **`listed_from` is stored with the state** (the node every unconfirmed page of it came from;
-  `NOTES.md` §6).
+  `NOTES.md` §6). It is what a refuted listing is blamed on: a client that stores a wrong one
+  gets an honest node banned. When the loop stops on a fault the client MUST store
+  "`listed_from` unknown, start at the next node" — never the node the fault happened on —
+  and the next session treats what the state holds above its confirmed height as nobody's
+  (`Session::new_unattributed` of the reference).
+* **A native binding exports the gated builders and nothing below them.** The embargo, the
+  view-only mark and the confirmed-height rule are enforced by `spend_gate`, which
+  `build_transfer`, `build_unshield` (and `mark_pending`) pass. Those two are the ONLY public
+  functions of a wallet build that produce a spend. A binding (Qwalla, option A of
+  `NOTES.md` §6) MUST NOT be built with the crate's `test-vectors` feature — it compiles the
+  raw assembly (`tx::deterministic`), which takes notes and paths as arguments and looks at no
+  state — and MUST NOT re-implement the assembly from `spend_input` / `notes()` /
+  `tree().path()`, which return a note's secrets and path as DATA (for display, export and
+  tests) and are not a permission to spend. The list of public paths and the test that each
+  one refuses an embargoed and a view-only state: `rw6r_noted_every_public_path_to_a_spend_…`.
 * **The node set**: an odd number of at least 3 nodes run by DIFFERENT operators; every one on
   a build whose `/api/shield-v2/stats` report carries `ciphertext_acc` (a node named in
   `confirm_state.outdated_nodes` has no vote: show "node X must be updated"). The core refuses
   two nodes on one host; it cannot know that two host names are one operator (limit 7).
+* **Which IPv6 literals count as an IPv4 host — and two that deliberately do not**
+  (REVIEW_WALLET_6, condition 6). The core counts an IPv6 literal as the IPv4 host it spells
+  for the five forms whose layout is fixed by an RFC: IPv4-mapped, IPv4-compatible,
+  IPv4-translated, the NAT64 well-known prefix `64:ff9b::/96`, and 6to4. Not recognised, and
+  why:
+  * **`64:ff9b:1::/48`, the local-use NAT64 prefix (RFC 8215).** It is a /48 out of which
+    each network carves its own translation prefixes, of any of the six lengths of RFC 6052
+    §2.2 — and the length decides WHERE in the address the four IPv4 bytes are (for a /96 the
+    last 32 bits; for a /56 or a /64 they straddle the reserved octet). The same literal
+    spells different IPv4 hosts in different networks, and none outside the network that
+    configured it: the core cannot know which, and guessing "/96" would declare two different
+    machines one host in some networks and miss the same machine in others. Such an address
+    is not routable from the public Internet either: it cannot be one of the independent
+    public nodes a production set consists of. It stays a host of its own, like every
+    network-chosen NAT64 prefix; a client SHOULD refuse it in its own node settings.
+  * **An IPv4 loopback address in translated or compatible form** (`::ffff:0:127.0.0.1`,
+    `::127.0.0.1`, `64:ff9b::127.0.0.1`). It counts as the IPv4 host `127.0.0.1` for "one
+    node per host" (the embedding IS recognised), and it is NOT a loopback host: `http` is
+    not accepted for it and it cannot be configured together with loopback nodes. That is
+    deliberate. "Loopback" is what switches the production rules off (`http`, several nodes
+    on one machine), so it is granted only to addresses the operating system itself
+    guarantees never leave the machine — `127.0.0.0/8`, `::1`, `localhost`, and the
+    IPv4-mapped form, which the socket layer delivers to the IPv4 loopback. A translated or
+    NAT64 address is delivered to a TRANSLATOR, which may be another machine; treating it as
+    loopback would let a development set be answered from the network. Erring this way costs
+    nothing: a developer writes `127.0.0.1`.
 
 **Check.** A fault-injection test kills the client between the storage write and the submit,
 and between the build and the write: after a restart the first case re-submits the stored
 envelope, the second has neither a lock nor a transaction in flight. A two-tab test builds in
 both tabs from one stored state: one write wins, the other tab gets `stale_state:` and submits
 nothing. Inspection of the shipped configuration: the operators of the configured nodes.
+
+### 8. "The pool is not active" is shown as that
+
+A node whose chain has no activation height for the shielded pool answers the listing request
+with `active: false`; `scan` then reads nothing and reports `pool_active: false`. The loop
+(`NOTES.md` §6) idles when a strict majority of the configured nodes answer so, and reports
+`STOP(the pool is not active)`.
+
+* The client MUST show this as its own state — *"The shielded pool is not active on this
+  network (yet)."* — and MUST NOT show it as a balance of zero, as "no notes found", as a
+  node failure or as "no honest listing node reachable". Nothing is wrong with the wallet or
+  with the nodes.
+* It MUST NOT ban, remove or mark a node for answering so, and MUST NOT rescan or replace the
+  state for it. A node that answers so while the majority of the set is active is shown as
+  "node X does not serve the shielded pool (outdated?)" — it is left, it keeps its vote in
+  the state check if it ever reports, and it is asked again in a later session.
+* It asks again at the start of the next session, or after a long interval in a running one
+  (the pool is activated by a release of the node software: an hour is a reasonable interval;
+  a round is not). It MUST NOT poll every node every round while idle.
+* `pool_active: false` is not `scanned_height = null` and not an empty pool: an ACTIVE pool
+  without any transaction is scanned, confirmed and shown as a balance of zero.
+
+**Check.** A client test against three nodes that answer `{"active": false, …}`: the screen
+shows the sentence above, no node is marked, the stored state is byte for byte what it was,
+and no listing request is made in the following rounds. A second test with one such node and
+two active ones: the balance is confirmed from the active ones and the first is shown as not
+serving the pool, not as lying.
 
 ## Limits that are inherent — to be stated to the user, not fixed
 

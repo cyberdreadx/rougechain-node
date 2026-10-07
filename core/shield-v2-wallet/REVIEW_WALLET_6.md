@@ -254,3 +254,256 @@ censuses, the wasm32 build, the daemon's interop tests, the noble cross-check �
 reports them; nothing here contradicts them. No source file was edited. `core/target/` was
 deleted. Nothing was pushed; nothing outside this worktree was read or written; no service,
 proxy or node was touched.
+
+---
+
+## Resolution
+
+**RW6-1, RW6-2 and RW6-3 are fixed; `rw6_f1_…`, `rw6_f2_…` and `rw6_f3_…` pass byte for byte as the review wrote them, as do the other seven `rw6_*` tests and every earlier review test. One earlier test was edited (`wallet_flow::restore_recovers_…`, as the review's note asked). One of the noted items is done only in part (the low-level Rust API: below, "Not done").**
+
+Branch `fix/shield-v2-wallet-settlement-5`, from `review/shield-v2-wallet-6` @ `aafcf37`. Date:
+2026-10-07. State format 5 is unchanged. Nothing of spec §2, no consensus rule and nothing of
+the state root is touched; no function of the public API changed its shape. Two reports gained
+fields (`ScanReport::pool_active`; `ConfirmReport::refuted`, `listing_refuted_above_confirmed`,
+`confirmed_refuted`), and a page without `txs` is now a `listing:` error. Documents: `NOTES.md`
+§6 (the loop, the error table) and §15, spec §5.4 / §5.5 (W-21, dated line in §1),
+`UI_CONTRACT.md` (obligation 8; two rules in obligation 4). New tests:
+`tests/review_wallet_6_resolution.rs` (10).
+
+### The three defects
+
+| # | What was wrong | The fix | Where | Tests |
+|---|---|---|---|---|
+| RW6-1 | `listing_refuted` was taken as evidence against the node listed from, for dissent at any height | **(a) the core says where.** `confirm_state` lists every refuted height in `refuted` with the range of the listing in doubt and on which side of the height that was confirmed BEFORE the call it lies: above it (`listing_refuted_above_confirmed`; the range is confirmed height + 1 … that height), or at or below it (`confirmed_refuted`; nobody's pages are named). The threshold is what it was — more dissenters than `n − quorum`, i.e. at least half of the configured nodes: a strict minority never refutes, at any height, with any number of reports. A lagging node's report that matches the state at its height is consistent. **(b) the loop keeps who.** `Session::served` records, per page applied since the state was last empty, which node served which heights (kept across a change of node without a rescan, started again by a rescan). `listing_refuted` bans `L` only for a range above the confirmed height that is `L`'s throughout; anything else — a contradicted confirmation, heights `L` did not serve — is `rescan_state`, `L` stays, nobody is blamed | `store.rs` (`Refutation`, `confirm_state_inner`); `client_loop.rs` (`served`, `listed_by_listing_node`, `after_confirm`); `NOTES.md` §6; spec §5.5 | `rw6_f1_…` (n = 3 and n = 5) passes unedited; `rw6r_f1_confirm_state_says_where_…`, `rw6r_f1_a_strict_minority_never_refutes_a_listing` (n = 2 … 7), `rw6r_f1_the_node_that_shifted_is_banned_once_the_refuted_heights_are_its_own`, `rw6r_f1_which_node_served_which_heights` |
+| RW6-2 | a page with a digest that is not canonical was `non_canonical:`; "anything else → STOP" and the stored `listed_from` pinned the node | every way the content of a page can be invalid is `listing:` (the three `field::digest(..)?` of page strings; a missing `txs`); the audit of every error of `scan` is the table below; the errors that are not the page's keep their class, and the two self-checks and the validation of the state in hand answer `state_invariant:`. In the loop "anything else → STOP(fault)" stays, and the fault moves the start of the next session to the next node (`listed_from` unknown: `Session::new_unattributed`) | `store.rs` (`scan_inner`, `ListingPage`); `client_loop.rs` (`after_scan_error`) | `rw6_f2_…` passes unedited; `rw6r_f2_every_field_of_a_page_corrupted_in_every_way_…` (1,906 corrupted pages over the 17 fields of the JSON shape: 1,784 `listing:` with the state unchanged, 122 well-formed lies applied, any other error 0); `rw6r_f2_what_is_not_the_pages_keeps_its_own_class_and_a_fault_does_not_pin_the_node` |
+| RW6-3 | an honest node that answers `active: false` was banned ("a short page") | `scan` reads nothing from such a page and says so (`pool_active: false` — not an empty pool, which is scanned and has a scanned height). The loop: step 1 notes the answer and asks that node for nothing more; step 2 decides — a strict majority of the configured nodes inactive (by their listing answers, one node a round, or by the `active` field of their stats answers, all in one round): `STOP(the pool is not active)`, the loop idles, no ban, no rescan, asked again in the next session or after a long interval (`recheck_pool`); a minority: left at once, not banned; a node that says so while its own report shows a pool that holds notes or nullifiers: banned | `store.rs` (`ScanReport::pool_active`); `client_loop.rs` (`after_inactive_page`, `after_stats`, `note_reports`, `Stop::PoolInactive`, `recheck_pool`); `UI_CONTRACT.md` obligation 8 | `rw6_f3_…` passes unedited (no ban; idle after two rounds); `rw6r_f3_an_inactive_pool_is_not_an_empty_pool`, `rw6r_f3_a_majority_inactive_idles_a_minority_is_left_and_a_self_contradiction_is_banned` (n = 3 and 5, every start node) |
+
+**The node's three answers** (`core/daemon/src/node.rs`, `shield_v2_notes_since`,
+`shield_v2_stats`), as the loop reads them: *no activation height* — `active: false`, no
+report: the rules above. *Activation height set, not reached* — `active: true` with an empty
+page at the node's tip (`from_height = next_height` = the activation height), an empty-pool
+report, stats `active: false`: an ordinary empty page; nothing can be confirmed; the stats
+answers idle the loop. *Active* — everything else.
+
+**A consequence to know (RW6-1).** When the node that shifted a transaction is STILL the
+listing node as the contradiction of a confirmed height arrives, it is not banned in that
+round: the state is rescanned and nobody is blamed. It lists the same way into the empty
+state; the reports are still among the last three rounds; the refuted heights are then its own
+and it is banned one round later. If the rescan takes longer than the reports are kept, it is
+not banned for that lie — and has gained one rescan. The bound of §6 has one more term for
+it: `(n − quorum + 1)·(D + K + 2) + W + (D + 1)`.
+
+### The error classification of `scan`
+
+Every error `scan` can return (and `ListingPage::from_json`, which on the WebAssembly surface
+is the same call), by cause:
+
+| Caused by | What | Error | The loop |
+|---|---|---|---|
+| **the page** | not JSON, or not the JSON of a page: a missing field (`active`, `tip_height`, `from_height`, `next_height`, `txs`; `height`, `index`, `nf1`, `nf2`, `outputs`; `cm_out`, `kem_ct`, `note_ct`), a value of the wrong type, a number that is negative, fractional or above 2⁶⁴ − 1; a body above 32 MiB; more than 4,096 transactions | `listing:` | LEAVE(ban) |
+| **the page** | `from_height` not the state's next height (an empty state: below it); `next_height` below `from_height` or above the node's tip + 1; a transaction outside the page's heights or out of chain order; `tx_hash` not 64 lowercase hexadecimal characters; `tx_type` not a V2 type; not two outputs; `nf1`, `nf2`, `cm_out` not 32 bytes of lowercase hexadecimal **or not a canonical digest**; `nf1 = nf2`; `kem_ct` / `note_ct` not 1,088 / 56 bytes of lowercase hexadecimal; `leaf` missing, not consecutive, or above the wallet's tree; more outputs than the tree has room for | `listing:` | LEAVE(ban) |
+| **the page** (not a chain's listing) | a note of the wallet with the `rho` of a note the state holds or the page already listed; for a state read with the viewing key, a remembered nullifier below the height of the note it spends | `listing:` | LEAVE(ban) |
+| the caller's key | another wallet's scan key | `request:` | STOP(fault) |
+| the caller's key | `pk` / `nk` not a canonical digest; the viewing key not an ML-KEM-768 key | `non_canonical:`, `key:` | STOP(fault) |
+| the caller's state | read with the viewing key, more nullifiers met than could be remembered | `rescan_required:` | rescan, same node, nobody blamed |
+| the caller's state | a stored note's `rho` not a canonical digest (an edited text; no page stores one) — was `non_canonical:` | `state:` | STOP(fault); a stored text: `recover_locks` |
+| the caller's state | not the stored revision (the WebAssembly surface) | `stale_state:` | reload |
+| an implementation fault | the state in hand does not validate (was `state:`); the result would not read back; a self-check of the scan (two sites, were `internal:`) | `state_invariant:` | STOP(fault) |
+
+Not an error, by design: a well-formed lie — a replaced nullifier or commitment, a blanked
+ciphertext, a hidden transaction, a transaction listed at another height, a claimed tip, a
+label (`tx_hash`, `tx_type`). `scan` cannot tell these from the truth; the state check refutes
+them (and, for a height, says where). A page numbered below the wallet's own tree is applied
+and reported (`leaf_mismatch`: the loop bans). `active: false` is not read.
+
+### Every public path to a submittable spend, and its gate
+
+In a wallet build (the crate without the `test-vectors` feature):
+
+| Public item | What it does | The gate |
+|---|---|---|
+| `build_transfer` | builds, locks and proves a transfer | `spend_inputs` → `WalletState::spend_base` → `spend_gate`; then `locked` → `mark_pending` → `spend_gate` |
+| `build_unshield` | the same for an unshield | the same two |
+| `WalletState::mark_pending` | records a spend and locks its inputs (it builds nothing) | `spend_gate`, after the confirmed-height check |
+| `WalletState::spend_base` | the anchor and the height a spend is built on | `spend_gate` |
+| the wasm exports `build_transfer`, `build_unshield` | call the two builders | theirs (REVIEW_WALLET_5 checked the 26 exports; none was added) |
+
+With `test-vectors` (test builds): `tx::deterministic::transfer_locked` and `unshield_locked`
+are the two builders without the proof — the same two gates.
+`rw6r_noted_every_public_path_to_a_spend_passes_the_gate` runs each of the six against a state
+under the embargo and a view-only state: every one answers `restored_recently:` /
+`view_only:`. The same test reads the source: no public function of `tx.rs` outside
+`mod deterministic` takes a `SpendInput`, a `TransferRequest`, an `UnshieldRequest` or a
+witness; the public functions of `tx.rs` that take a state are exactly `build_own_shield` (a
+shield spends no note and is not under the embargo: `UI_CONTRACT.md`), `build_transfer` and
+`build_unshield`.
+
+What can NOT lead to a spend in a wallet build although it is public: `spend_input` /
+`spend_input_with` (a note's secrets and its Merkle path, as `notes()` and `tree().path()`
+also return them — data; nothing public consumes a `SpendInput`), the structs
+`TransferRequest` / `UnshieldRequest` (no public consumer), `UnprovenTx::prove` (no public
+function of a wallet build returns an `UnprovenTx` of a spend).
+
+### Tests edited
+
+**One, as expected:** `wallet_flow::restore_recovers_notes_and_balance_but_no_outgoing_history`.
+It built two spends through `spend_input` and the raw assembly. Now: the original device makes
+the user's statement (a new wallet) and pays through the gated builder (`common::pay`); the
+restored state is asserted to build nothing — `state_unconfirmed:` before its first state
+check, `restored_recently: until = height + 128` after it, with and without
+`allow_unverified`, and still one block before the end — and after the embargo it unshields
+through the gated builder; the pool accepts the transaction, so the path the restore
+recovered is right. Every other assertion of the test is unchanged.
+
+No other earlier test was edited: `review_wallet_1` … `review_wallet_6`, `_4_resolution`,
+`_5_resolution`, `vectors`, the unit tests and the wasm tests are byte for byte what they
+were (`git diff aafcf37 --stat -- core/shield-v2-wallet/tests core/shield-v2-wasm/tests`
+shows `common/client_loop.rs`, `settlement_properties.rs`, `wallet_flow.rs` and the new file).
+
+Changed because they ARE the subject: `tests/common/client_loop.rs` (the loop; every method
+the review's own driver calls keeps its name and its signature) and
+`tests/settlement_properties.rs` (the property test: below). In the property test one
+existing assertion was narrowed and the model was corrected in two places, all three for
+states the new trajectories reach (the adversary mix changed what every seed does): "the
+view-only mark follows the key of the last scan" holds for a page that is read (an
+`active: false` page is not). And a lock that format 1 made in a state read with the viewing
+key names its note by commitment alone, without a nullifier: `attempts_for` now finds its
+attempts through the model's books (seed 1 reached it and the model had no rule: "a settled
+entry is one transaction this wallet built"), and the model's client now stores the state
+`resolve` returned whenever an entry was settled, not only when a verdict was given to the
+user (seed 9008: such a lock expired after its only attempt had long been mined, the client
+dropped the resolved state, and the entry was "pending" for ever — in the test's client, not
+in the core, which had released it). Nothing in the core changed for either.
+
+### The property test
+
+Three adversaries it did not have, and one world:
+
+* `Strategy::LateThenContradicts` — lists every pool transaction of a block at which an honest
+  node stands still one block LATE, votes honestly in the state check, stops answering once
+  everything is confirmed (it is left without a rescan), then contradicts the heights where
+  honest nodes stand. `World::directed_late_listing` sets the scene on purpose: a block with a
+  transaction, an honest node that stops there, one more block, every liar of the run of this
+  kind, the liar chosen as the listing node.
+* `Strategy::BadFields` — one of thirty field values the listing API never serves (digests
+  that are not canonical, wrong lengths, upper case, wrong types, numbers out of range, missing
+  fields), the same one in every round; and the same as one lie of the memoryless adversary.
+  The page's TEXT goes to `ListingPage::from_json` and `scan` as it came.
+* `Strategy::SaysInactive` — a lying minority answering "not active" on a network where the
+  pool is active (in the listing, and in the stats answers).
+* `inactive_network` — a world in which the pool is NOT active: 2 to 7 nodes, the honest
+  majority answering "not active" truthfully, the liars answering it too, contradicting their
+  own reports, serving forged listings with or without reports that vouch for them, or
+  silent; in half the runs the pool is activated later. Two such worlds per seed.
+
+Two invariants derived from the model's knowledge of who lied, not from the code:
+
+* **Only a node that served a provably false page is ever banned.** The model judges every
+  page before the wallet sees it (`page_is_true`: is this what an honest node, standing at
+  some height the chain has reached, answers to this request — the true transactions of the
+  heights from `since`, to its tip or over at least 64 heights, on a network where the pool
+  is active) and remembers whose false pages the stored state holds. A ban is checked against
+  that record alone. A lying node that said only the truth is not banned either. (In the
+  inactive world: a page is false if it says "active", or says "not active" while the same
+  node's report showed notes.)
+* **No page causes any error class other than `listing:` / `rescan_required:`** — and, from
+  the model's side, `listing:` is never the answer to a true page on a state that holds no
+  false page of that node; a refused page leaves the state equal.
+
+With them: a refutation names only heights at which the wallet's state is NOT the chain's;
+its side of the confirmed height and its range are what the model computes; a refuted listing
+is never kept; on a network without the pool nothing is ever confirmed and the loop idles in
+the round in which the honest nodes answer; after the activation the tip is confirmed within
+the bound and nobody is banned for having said "not active".
+
+**Results** (release build, one throttled core; each run the whole test function):
+
+| Range | Result | Time | In it |
+|---|---|---|---|
+| seeds 1–200 × 280 (the default; CI) | passes | 247 s | 3,177 payments, 464 restores; 1,631 false pages by the model's judgement, 79 with a field the API never serves, 73 "not active" from liars, 211 transactions listed late (133 scenes set on purpose); 212 refuted listings, 65 of them a CONFIRMED height → 66 rescans that blamed nobody; 320 bans, every one of a node with a false page in the state; at most 10 rounds to settle; 400 worlds without the pool (all idle; 212 activated later) |
+| `PROP_SEED_BASE=7000 PROP_RUNS=100 PROP_STEPS=1000` | passes | 950 s | 5,599 payments, 807 restores; 1,317 false pages; 364 refuted listings, 176 of a confirmed height → 159 rescans that blamed nobody; 345 bans; at most 8 rounds; 200 worlds without the pool |
+| `PROP_SEED_BASE=9000 PROP_RUNS=150` | passes | 193 s | 2,166 payments, 357 restores; 1,171 false pages; 170 refuted listings, 72 of a confirmed height → 71 rescans that blamed nobody; 222 bans; at most 10 rounds; 300 worlds without the pool |
+
+The default range asserts that the new behaviours occurred (`false_pages`, `bad_field_pages`,
+`inactive_pages`, `late_listings`, `directed_late`, `refuted_confirmed`, `nobody_blamed`,
+`inactive_idles`, `inactive_activations`).
+
+**Does the test see the three defects?** Each fix was taken out again, one at a time, and the
+property test run on seeds 1–60 (then restored; `git diff` empty for the mutated file):
+
+| Mutation | The property test | Also |
+|---|---|---|
+| M1: `listing_refuted` bans the listing node, as before RW6-1 | fails at seed 3: "an HONEST node was banned (listing_refuted)" | `rw6_f1_…` fails as the review recorded it; `rw6r_f1_the_node_that_shifted_…` and `rw6r_f2_what_is_not_the_pages_…` fail |
+| M3: a `nf1` that is not canonical is `non_canonical:` again | fails at seed 1: "scan failed with nf1 is not a canonical digest — an error no page may cause" | |
+| M4: `active: false` is a short page (ban) | fails at seed 1 of the world without the pool: "an HONEST node is banned (a short page)" | |
+| M6 (the stronger invariant): a node that does not answer for K rounds is BANNED instead of left | fails at seed 2: "node 2 is banned (no answer) and the model knows of no false page it served into this state" — the node is a liar; "only liars are banned" would have let it pass | |
+
+**What the property test still does not see.** Everything listed in `NOTES.md` §14 — and: the
+self-contradiction ban ("not active" against its own report) is reached by it at most a
+handful of times (the world without the pool ends with 1 to 3 banned nodes per range, of any
+kind); the rule is tested directly in `rw6r_f3_…`. A liar that shifts a transaction and is still the listing node when the
+contradiction arrives is banned one round late (above); a rescan that takes more than three
+rounds lets it escape that ban, and the test's chains are read in one round.
+
+### Noted items
+
+* **The low-level Rust API** — see "Every public path" above and "Not done" below.
+  `UI_CONTRACT.md`, obligation 4: a native binding exports the gated builders and nothing
+  below them, and is never built with `test-vectors`.
+* **P.** The text said the reference uses 6; `LoopClient` uses 4 (`LOOP_CLIENT_PAGES`), the
+  property test's client 6. `NOTES.md` §6, spec §5.5 and `UI_CONTRACT.md` now say exactly
+  that. `LoopClient::round_with` takes a listing answer that may be missing and the `active`
+  field of the stats answers (`rw6r_noted_the_reference_client_can_leave_a_request_unanswered`);
+  `round` is unchanged for its callers.
+* **The two IPv4-embedding forms** are deliberately NOT added, and `UI_CONTRACT.md`
+  (obligation 4) says why — `rw6_c6_…` of this review asserts that they are not recognised,
+  and it passes unedited. `64:ff9b:1::/48` (RFC 8215) is a /48 out of which each network
+  carves translation prefixes of any of the six lengths of RFC 6052 §2.2, and the length
+  decides where the IPv4 bytes are: the same literal spells different hosts in different
+  networks and none outside the one that configured it. An IPv4 loopback address in
+  translated form IS counted as the host `127.0.0.1`; it is not treated as loopback, because
+  "loopback" switches the production rules off and is granted only to addresses the operating
+  system itself keeps on the machine (a translated address goes to a translator).
+
+### Not done
+
+* **"The low-level functions … become `pub(crate)` or are gated identically" — not as
+  worded.** In a wallet build there is nothing left to gate: the only public functions that
+  produce a spend are the two gated builders. What remains public is (a) `spend_input` /
+  `spend_input_with`, which return data, and (b) behind the `test-vectors` feature, the raw
+  assembly `tx::deterministic::{transfer, unshield, transfer_with_os_entropy,
+  transfer_with_failing_entropy}`, which takes notes and paths and looks at no state. Hiding
+  or gating (a) breaks the daemon's interop tests — which are built WITHOUT `test-vectors`
+  and assert that a restored note's `spend_input` is `Ok` on a state under the embargo — and
+  about thirty call sites of the earlier review tests; (b) has about twenty call sites in
+  them. The bar for edits to earlier tests was one. What was done instead: the census test,
+  the rule for bindings in `UI_CONTRACT.md`, and the one test the review named. If the owner
+  prefers the API change, it is mechanical: gate `spend_input_with` with `spend_gate` and move
+  the raw assembly behind a second feature, with the test edits that follow.
+* **The self-contradiction rule uses the node's reports of this session only**, and only a
+  report whose pool holds something (`note_count` or `nullifier_count` above 0): a node whose
+  activation height is set and not reached reports an empty pool honestly.
+* **A client that reads only listing answers** (the review's own driver) learns that the pool
+  is not active one node per round, and not at all while it lists from a liar that serves
+  pages of its own; the `active` field of the stats answers (`Session::after_stats`) closes
+  that, and the review's driver does not call it (it is frozen with the review's tests).
+* Not re-run: the 5000 range of the property test, the noble cross-check, the censuses of
+  REVIEW_WALLET_5. Nothing was pushed; `main` is untouched.
+
+### Commands run
+
+Each as `systemd-run --user --scope -q -p MemoryMax=2500M -p MemorySwapMax=0 -p CPUWeight=10
+nice -n 19 cargo … --release --locked --offline -j 1`, one at a time, after checking that no
+`cargo` or `rustc` process was running.
+
+| Command | Result |
+|---|---|
+| `cargo test -p quantum-vault-shield-v2-wallet --features test-vectors -p quantum-vault-shield-v2-wasm … --no-fail-fast -- --test-threads=1 --nocapture` | **153 tests: 153 passed, 0 failed, 0 ignored.** Wallet 146: unit 22, `review_wallet_1` 14, `_2` 14, `_3` 17, `_4` 19, `_4_resolution` 11, `_5` 12, `_5_resolution` 7, `_6` 10 (the three that failed on purpose included), `_6_resolution` 10, `settlement_properties` 1 (seeds 1–200, 247 s), `vectors` 3, `wallet_flow` 6; wasm 7. 339 s |
+| `PROP_SEED_BASE=7000 PROP_RUNS=100 PROP_STEPS=1000 cargo test … --test settlement_properties -- --nocapture` | 1 passed, 950 s |
+| `PROP_SEED_BASE=9000 PROP_RUNS=150 cargo test … --test settlement_properties -- --nocapture` | 1 passed, 193 s |
+| `cargo build -p quantum-vault-shield-v2-wasm --target wasm32-unknown-unknown …` | built, 113 s (2,949,943 bytes) |
+| `cargo test -p quantum-vault-daemon … -- node::shield_v2_wallet_interop_tests --test-threads=1` | 4 passed, 0 failed (294 filtered out); 815 s with the build of the daemon |
+| the four mutations, `PROP_RUNS=60` each | each caught (table above) |
+
+`core/target/` was deleted afterwards; no process was left; nothing outside this worktree was
+read or written; no service, proxy or node was touched.

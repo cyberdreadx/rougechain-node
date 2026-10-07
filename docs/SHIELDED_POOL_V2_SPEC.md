@@ -109,6 +109,19 @@ all of it is confirmed, there is a rule for every error and a stop. What a clien
 user is `core/shield-v2-wallet/UI_CONTRACT.md`. Wallet rules only, as before: nothing of §2,
 §3 or §4 changed.
 
+*Amended 2026-10-07 after the confirmation review of the wallet core
+(`core/shield-v2-wallet/REVIEW_WALLET_6.md`, findings RW6-1 … RW6-3: the conditions of the
+fifth review were not met in the client loop):* (W-21) §5.4 — **every way the content of a
+listing page can be invalid is a listing error**, a digest that is not canonical included
+(RW6-2), and **"the pool is not active" is an answer of its own**, neither an empty pool nor
+a malformed page (RW6-3); §5.5 — **a refuted listing is attributed**: the state check reports
+the height and on which side of the confirmed height it lies, the loop bans the listing node
+only for heights that node served, and a contradiction of what was confirmed earlier is
+answered with a rescan that blames nobody (RW6-1); a fault does not pin the node it happened
+on; a majority of nodes answering "not active" idles the loop, a minority is left and not
+banned. Wallet rules only: nothing of §2, §3 or §4 changed, and no call of the reference
+library changed its shape (two reports gained fields).
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -1198,7 +1211,10 @@ wallet is configured with, and the quorum is a property of that set:
   (`::a.b.c.d`), IPv4-translated (`::ffff:0:a.b.c.d`), the NAT64 well-known prefix
   (`64:ff9b::a.b.c.d`) and 6to4 (`2002:AABB:CCDD::/48`). A library MUST refuse a set that
   holds such a literal together with the IPv4 address it spells. Teredo and ISATAP addresses
-  and network-chosen NAT64 prefixes are hosts of their own.
+  and network-chosen NAT64 prefixes — the local-use prefix `64:ff9b:1::/48` of RFC 8215
+  among them — are hosts of their own (W-21: where such a prefix carries the IPv4 address
+  is that network's configuration, RFC 6052 §2.2; the reasons are in
+  `core/shield-v2-wallet/UI_CONTRACT.md`, obligation 4).
 * *(W-20, RW5-1.)* **A page that is not the listing of a chain is refused, not applied.** No
   two transactions of a chain share a nullifier (§2.4), and `rho = H_rho(nf1, nf2, j)`: a
   wallet never holds two notes with one `rho`. A library MUST refuse, as a listing error and
@@ -1208,6 +1224,19 @@ wallet is configured with, and the quorum is a property of that set:
   nullifier that was listed at a height below the block that created the note it belongs to
   (a note is spent in a later block than the one that created it). An error that says "the
   library's own state is inconsistent" MUST NOT be something a node's answer can cause.
+* *(W-21, RW6-2.)* **Every way the content of a page can be invalid is ONE error, the
+  listing error** — the body is not the JSON of a page; a field is missing, of the wrong type
+  or out of the range of its type; a string is not lowercase hexadecimal of its fixed length;
+  **32 bytes that must be a digest of §2.8 are not canonical**; a height, an index or a leaf
+  number contradicts the page or the wallet's state. A library MUST NOT answer a page with an
+  error of another class (the caller's key, the caller's state, an internal fault): a client
+  bans a node for a listing error and goes on, and can only stop for the others — one lying
+  node would stop every session with its first page.
+* *(W-21, RW6-3.)* **"The pool is not active" is an answer, not a page to be judged.** A node
+  whose chain has no activation height answers the listing request with `active: false`
+  (the node's read-only listing; the reference node sends no transactions with it). A library MUST
+  read nothing from such a page, MUST leave its state unchanged, and MUST let the caller tell
+  it from an active pool that holds no transaction yet. What a client makes of it: §5.5.
 * *(W-20, RW5-9.)* **A stored state says where it stands with the restore embargo (§5.5), or
   it is not read.** A library MUST NOT complete a state of its current format with a default
   for the embargo, for the user's statement or for the mark of a state scanned without the
@@ -1510,13 +1539,17 @@ its lock ended, in exactly three cases, each decided on the wallet's own data up
   not know, MUST report nothing as spendable, and MUST NOT build — until a scan with the full
   key has derived every missing nullifier and applied the spends that were remembered.
 
-*(W-19, RW4-8, RW4-9; restated by W-20, RW5-2, RW5-3.)* **The client loop.** The rules of §5.4
+*(W-19, RW4-8, RW4-9; restated by W-20, RW5-2, RW5-3; corrected by W-21, RW6-1 … RW6-3.)* **The client loop.** The rules of §5.4
 and of this section say what each signal means; this is how a client SHOULD combine them —
 how often "ask again" is, in which order nodes are tried, when a node is left and when it is
 banned, what is persisted when, and when the loop stops. *(As written for W-19 the loop left a
 listing node on three signals that a node which never reaches its tip triggers none of, and
 on a refuted listing it banned the node being listed from at that moment — after a change of
-node without a rescan, an honest one. Both are corrected here.)* `S` is the stored state, the
+node without a rescan, an honest one. Both are corrected here. As written for W-20 it still
+banned the node being listed from for a refuted height that another node had listed — a state
+whose scanned height is confirmed is the chain's at THAT height, not below it; it had no rule
+but "stop" for a page with a digest that is not canonical; and it banned a node for answering
+that the pool is not active. W-21 corrects the three.)* `S` is the stored state, the
 calls are those of a wallet library with the operations of this specification (the names are
 the reference implementation's; the loop itself is `core/shield-v2-wallet/tests/common/
 client_loop.rs`, and `core/shield-v2-wallet/NOTES.md` §6 has the same text with its reasons):
@@ -1524,13 +1557,15 @@ client_loop.rs`, and `core/shield-v2-wallet/NOTES.md` §6 has the same text with
 ```
 CONSTANTS (the client's; none is consensus)
   B = 64   blocks asked for per page: GET L/api/shield-v2/notes?since=…&blocks=64
-  P ≥ 1    pages per round (the client's choice; the reference uses 6)
+  P ≥ 1    pages per round (the client's choice; the reference `LoopClient` uses 4, the
+           property test's client 6)
   K = 3    consecutive rounds a listing node may fail to deliver before it is left
   W = 5    rounds the first state check of a state without an embargo base waits for every node
   R        keeps the reports of the last 3 rounds, at most 1,024
 
 STORED    S            the state, under its revision_id
           listed_from  the node every page that S holds above its confirmed height came from
+                       (or "unknown", with the node to start at: after STOP(fault))
 SESSION   (memory only; lost in a crash and when the application ends)
           L        the node listed from
           bad      nodes whose listing was shown not to be a chain's
@@ -1539,11 +1574,20 @@ SESSION   (memory only; lost in a crash and when the application ends)
           waited   rounds the first state check has waited
           answered whether L answered every listing request of the current round
           R        the reports
+          served   which node served which heights of S: (node, from, to) for every page
+                   applied in this session since S was last empty
+          origin   the listed_from this session started with (none: unknown)
+          inactive the nodes whose LATEST answer says that the pool is not active
+          seen     the nodes whose report showed a pool that holds notes or nullifiers
 
 START OF A SESSION
   bad := {}; strikes := 0; prev := none; waited := 0; R := {}
-  L := listed_from. If listed_from is not known: L := any node of N, and if
-       S.scanned_height ≠ S.confirmed_height then S := rescan_state(S) → persist.
+  served := {}; inactive := {}; seen := {}
+  L := listed_from; origin := listed_from.
+  listed_from unknown and a start node stored (the last session stopped on a fault):
+       L := that node; origin := none; S is kept as it is.
+  Neither is known: L := any node of N, and if S.scanned_height ≠ S.confirmed_height then
+       S := rescan_state(S) → persist.
   A `state:` error on the STORED state: recover_locks(text) → persist → set_nodes if
        nodes_kept is false. NEVER new_state: that state has no locks.
 
@@ -1555,17 +1599,24 @@ ROUND
                                            LEAVE(no ban), end the round; otherwise go to
                                            step 2
        r := scan(S, page, FULL scan key)
-       `listing:`                        → LEAVE(ban); end the round
+       `listing:`                        → LEAVE(ban); end the round. EVERY way the content
+                                           of a page can be invalid is this error, also a
+                                           body that is not the JSON of a page
        `rescan_required:`                → S := rescan_state(S) → persist; prev := none;
                                            L stays, NOBODY is blamed (the client's own
                                            worker caused it); end the round
        `stale_state:`                    → another writer changed S: reload S; end the round
        `state_invariant:`, anything else → STOP(fault): report a bug. S stays as it is stored:
-                                           no rescan, no new_state, no retry
+                                           no rescan, no new_state, no retry. The fault does
+                                           not pin L: store { listed_from := unknown, start :=
+                                           the first node after L that is not in bad }
        ok                                → persist
+           r.pool_active = false         → "the pool is not active on this node": nothing was
+                                           read. Not a short page, not evidence.
+                                           said_inactive := true; go to step 2
+           served += (L, page.from_height … page.next_height − 1); into an empty S: from 0
            r.leaf_mismatch               → LEAVE(ban); end the round
-           not r.at_tip and (the page is not active, or
-             page.next_height − page.from_height < B)
+           not r.at_tip and page.next_height − page.from_height < B
                                          → LEAVE(ban); end the round            ("a short page")
            r.at_tip                      → at_tip := true; go to step 2
   2. ask EVERY node of N for /api/shield-v2/stats at the same time; take `report`; drop one
@@ -1573,13 +1624,31 @@ ROUND
      the node says about itself. A report without `ciphertext_acc` is handed in as it is: the
      core names that node in `outdated_nodes` (no vote; "node X must be updated").
      Add them to R; drop from R what is older than three rounds.
+     seen += every node whose report has note_count > 0 or nullifier_count > 0
+     inactive: a node whose answer says `active: false` joins it; one that says `true` leaves
+     |inactive| ≥ quorum                 → STOP(the pool is not active): the loop IDLES
+     said_inactive (L answered "not active" in step 1):
+         L ∈ seen                        → LEAVE(ban); end the round   (it contradicts its own
+                                           report: a pool that holds notes is an active pool)
+         inactive += L; |inactive| ≥ quorum
+                                         → STOP(the pool is not active)
+         otherwise                       → LEAVE(no ban); end the round   (behind, or lying:
+                                           left at once, never banned for it)
      2a. if S has no embargo base (summary.spend.embargo_until = null) and the user's statement
          is not recorded (summary.sole_copy_asserted = false):
            unless THIS round's answers hold a report from every node of N for one common height,
            and while waited < W:   waited += 1; show "waiting for every node (waited of W)";
                                    end the round
   3. c := confirm_state(S, R) → persist.     (a base now exists ⇒ waited := 0)
-       c.listing_refuted                 → LEAVE(ban); end the round
+       c.listing_refuted:
+         some r of c.refuted has r.confirmed = false, and every height r.from_height … r.height
+         is L's — in `served` under L, or in no entry of `served` while origin = L and S has
+         not been emptied in this session
+                                         → LEAVE(ban); end the round
+         otherwise (a height at or below the confirmed height is contradicted, or heights L
+         did not serve)                  → S := rescan_state(S) → persist; prev := none;
+                                           served := {}; L stays, NOBODY is blamed; end the
+                                           round
        c.quorum_tip = T exists (a quorum answers):
          not at_tip and S.scanned_height < T
                                          → catching up: prev := S.scanned_height; no verdict
@@ -1613,6 +1682,8 @@ LEAVE(ban)
                                  STOP("no honest listing node reachable"). bad is NOT cleared.
   no such node, L not in bad   → strikes := 0; prev := none; return   (L is the only node left)
   if ban, or S.scanned_height ≠ S.confirmed_height:  S := rescan_state(S)
+  if S was rescanned, or holds no page at all:  served := {}   (entries are kept otherwise:
+                                                they say whose the confirmed heights were)
   L := next; listed_from := next → persist S and listed_from together
   strikes := 0; prev := none
   (The user choosing another node in the settings is LEAVE(no ban).)
@@ -1621,6 +1692,11 @@ STOP  The loop does nothing more in this session. "no honest listing node reacha
       to the user with the banned nodes; a fault is reported as a bug. A new session — the
       application started again, or the user's explicit "try again" — starts with bad empty;
       nothing else ever removes a node from bad.
+      "The pool is not active" is not a failure: the client shows "the shielded pool is not
+      active on this network" and IDLES — nothing is banned for it, nothing rescanned, S is
+      not written. It asks again in the next session, or after a long interval in this one
+      (inactive := {}; the loop goes on; bad is kept). The pool is activated by a release of
+      the node software, not by a block: "long" is hours, not rounds.
 
 THE BACKGROUND WORKER (export_scan_key(seed, false): the viewing key)
   lists from L and from no other node, persists under the same compare-and-swap, and applies
@@ -1638,17 +1714,48 @@ AFTER new_state (a new wallet, a restore, a second device)
 *A node is banned only on evidence, and left without it.* Evidence is what no honest node
 produces: a listing error, leaf numbers below the wallet's own tree, a page that neither
 reaches the node's tip nor covers the 64 heights asked for (64 blocks hold at most
-`64 · SHIELD_V2_MAX_TX_PER_BLOCK` = 512 transactions, the listing's cap), a refuted listing. A
-node that does not get the wallet to where the quorum is may be honest — ahead, behind, or
-listed from while the others lag: it is left after K rounds and comes round again. *The state
-is rescanned on every change of the listing node unless everything it holds is confirmed*:
-every unconfirmed page of a state is then its current listing node's, so the node that is
-banned is the node that lied; a state whose scanned height is confirmed is the chain's,
-whoever listed it. *Termination.* A tenure of one node lasts at most `D + 1 + K` rounds,
-`D = ⌈(T − A + 1) / (B·P)⌉` being the rounds it takes to read the chain to the quorum's tip
-`T` at the speed step 1 enforces; with a strict majority of honest nodes reachable at the tip
-the loop ends with the tip confirmed within `(n − quorum + 1)·(D + K + 2) + W` rounds, or has
-stopped because every node is banned.
+`64 · SHIELD_V2_MAX_TX_PER_BLOCK` = 512 transactions, the listing's cap), a refuted listing
+*in heights that node served*, "not active" from a node whose own report shows a pool that
+holds notes. A node that does not get the wallet to where the quorum is may be honest —
+ahead, behind, or listed from while the others lag: it is left after K rounds and comes round
+again. *The state is rescanned on every change of the listing node unless everything it holds
+is confirmed*: every unconfirmed page of a state is then its current listing node's; a state
+whose scanned height is confirmed is the chain's at that height, whoever listed it.
+
+*(W-21, RW6-1.)* **A refutation is attributed, or it blames nobody.** A state check that
+finds more configured nodes contradicting the state at a height than a lying minority can be
+(more than `n − quorum`: never a strict minority, whatever it reports and for however many
+heights) MUST report that height and whether it lies above the height the state had
+confirmed before the check. Above it, the fault is in the listing of the heights from the
+confirmed height + 1 to that height: a client bans the listing node if and only if that node
+served every one of them (it keeps, per page applied since the state was last empty, which
+node served which heights). At or below it, a state an earlier quorum vouched for is
+contradicted — the confirmation says nothing about the heights in between, and the pages
+below it may be any node's: the client MUST rescan and MUST NOT ban a node for it. A report
+for a height below the confirmed height that matches the state there is consistent and
+nothing else.
+
+*(W-21, RW6-3.)* **The pool is not active.** A client MUST NOT treat `active: false` as a
+short page or as evidence. If a strict majority of the configured nodes answer so — in their
+listing answers, one node per round, or in the `active` field of their stats answers, all in
+one round — the pool is not active on that network: the client says so and idles; it bans
+nobody and rescans nothing, and asks again in its next session or after a long interval. If a
+minority answer so while a majority does not, those nodes are behind or lying: each is left
+at once and not banned. A node that answers so while its own report shows a pool that holds
+notes or nullifiers contradicts itself and is banned.
+
+*(W-21, RW6-2.)* **A fault does not pin a node.** When the loop stops for an error that no
+rule goes on from, the node listed from MUST NOT be where the next session starts: the client
+stores "listed-from unknown, start at the next node". What the stored state then holds above
+its confirmed height is nobody's — refuted, it is rescanned without a ban.
+
+*Termination.* A tenure of one node lasts at most `D + 1 + K` rounds (one round for a node
+that answers "not active"), `D = ⌈(T − A + 1) / (B·P)⌉` being the rounds it takes to read the
+chain to the quorum's tip `T` at the speed step 1 enforces; with a strict majority of honest
+nodes reachable at the tip the loop ends with the tip confirmed within
+`(n − quorum + 1)·(D + K + 2) + W + (D + 1)` rounds — the last term for one rescan that
+blames nobody, which only reports from before the honest nodes were at one height can cause —
+or has stopped because every node is banned.
 
 **Every bound in these rules is a number of blocks**, and this chain produces a block when a
 transaction is pending, not on a clock: on a quiet chain 64 blocks have no upper bound in time,
@@ -2194,5 +2301,5 @@ To be confirmed or changed by the owner before the first testnet activation.
 | `SHIELD_V2_POOL_CAP_QUANTA` on testnet | §4.4 | the same 10^15 as mainnet; the owner's decision names mainnet only |
 | State-root tag and layout | §4.8 | `rougechain.stateroot.shield_v2.v1`, running nullifier hash (O-12) |
 | Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, of `0x02 ‖ pk ‖ ek ‖ check`: 1,974 characters; `check` = first 8 bytes of SHA-256(`"rouge-shield/v2/address-check/v1"` ‖ `0x02` ‖ `pk` ‖ `ek`); fingerprint = first 8 bytes of SHA-256 of `pk ‖ ek` (O-11, W-4, W-9) |
-| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); the client loop's B = 64 blocks per page, K = 3 rounds, W = 5 rounds (W-20); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-20) |
+| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); the client loop's B = 64 blocks per page, K = 3 rounds, W = 5 rounds (W-20); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-21) |
 | Node-local ciphertext hash (not consensus) | §5.4 | tag `rougechain.shield_v2.ciphertext_acc.node_local.v1`; SHA-256 over `acc ‖ cm_out ‖ kem_ct ‖ note_ct` per output in tree order, from 32 zero bytes; reported as `report.ciphertext_acc`; outside §4.8 (W-16) |
