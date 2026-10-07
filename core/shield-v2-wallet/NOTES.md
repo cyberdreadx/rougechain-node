@@ -530,7 +530,8 @@ CONSTANTS (the client's; none is consensus)
   R        keeps the reports of the last 3 rounds, at most 1,024
   R_c = 2  rescans that blame nobody IN A ROW on one listing node (no round between them that
            ended with the tip confirmed) at which that node is left
-  R_s = 6  rescans that blame nobody on one listing node IN A SESSION at which it is left
+  R_t = 3  rescans that blame nobody in one TENURE of a listing node at which it is left
+           (= K; the counts start again when the listing node changes, and with a session)
 
 A LISTING PAGE is an answer with status 200 whose body is JSON, is an OBJECT at its top level,
   and has at least one of the five members  active, tip_height, from_height, next_height, txs.
@@ -627,6 +628,12 @@ ROUND
            and while waited < W:   waited += 1; show "waiting for every node (waited of W)";
                                    end the round
   3. c := confirm_state(S, R) → persist.     (a base now exists ⇒ waited := 0)
+       an error                          → `stale_state:`: reload S; end the round.
+                                           Anything else (`request:`, `state_invariant:`):
+                                           STOP(fault) — the client's own, or a bug: NO report
+                                           of a node causes it (a report that cannot be read
+                                           is "no report from that node", and the call
+                                           succeeds). L is not moved on: it had no part in it
        c.listing_refuted:
          some r of c.refuted has r.confirmed = false, and every height r.from_height … r.height
          is L's — in `served` under L, or in no entry of `served` while origin = L and S has
@@ -664,7 +671,7 @@ ROUND
 
 BLAMELESS   (the state is not the chain's, and nobody is blamed for it)
   row += 1; on_L += 1
-  row ≥ R_c or on_L ≥ R_s  → LEAVE(no ban), and S := rescan_state(S) in it whatever S holds
+  row ≥ R_c or on_L ≥ R_t  → LEAVE(no ban), and S := rescan_state(S) in it whatever S holds
   otherwise                → S := rescan_state(S) → persist; prev := none; served := {};
                              L stays
 
@@ -731,16 +738,29 @@ client's:
 | Export | The node's data | Wrong with it | The client's own | Wrong with it |
 |---|---|---|---|---|
 | `scan(state, page, key, revision)` | `page`: the body of ONE answer | not a listing page: `listing: note listing: not a listing page: …` (NO ANSWER: a strike). A listing page that is invalid in any way: `listing:` (the table above) | the state, the key, the revision | `state:`, `stale_state:`, `request:`, `key:`, `non_canonical:` |
-| `scan_pages(state, pages, key, revision)` | every ELEMENT of `pages`: the body of one answer, of ONE node, in order | exactly as `scan`, with the element's index: `listing: page i: …` (`null`, a number, a missing member, a refused value — whatever it is). **All or nothing**: no page of the call is applied, the caller keeps its state | the ARRAY (the client builds it: text that is not a JSON array, or more than 64 MiB of it), the state, the key, the revision | `request:` for the array; the others as `scan` |
-| `confirm_state(state, reports, revision)` | every ELEMENT of `reports`: the `report` object of one node's stats answer, under the id the CLIENT gave it | anything — `null`, not an object, a missing member, a member of the wrong type, a height out of range, a hash that is not 32 bytes of lowercase hexadecimal: **no report from that node**. Counted in `malformed`; never an error, never a vote, never dissent. A report that lacks only `ciphertext_acc`: `outdated_nodes` | the ARRAY (not a JSON array; more than 1 MiB; more than 1,024 reports), the state, the revision | `request:`; `state:`; `stale_state:` |
+| `scan_pages(state, pages, key, revision)` | every ELEMENT of `pages`: the body of one answer, of ONE node, in order — **as a JSON string holding the raw body (recommended)**, or as the object written back | exactly as `scan` says for that body, with the element's index: `listing: page i: …` — whatever the element is or holds (`null`, a number, a missing member, a refused value, a lone surrogate escape, a member nested 10,000 deep, text that is not JSON). **All or nothing**: no page of the call is applied, the caller keeps its state | the ARRAY: text that is not an array at its top level, or more than 64 MiB of it; the state, the key, the revision | `request:` for the array; the others as `scan` |
+| `confirm_state(state, reports, revision)` | every ELEMENT of `reports`: one node's stats answer under the id the CLIENT gave it — **as `{ "node_id", "stats": "<the raw body>" }` (recommended)**, as the labelled report object, or as a JSON string holding the text of either | anything — an element no JSON reader reads, `null`, not an object, a missing member, a member of the wrong type, a height out of range, a hash that is not 32 bytes of lowercase hexadecimal: **no report from that node**. Counted in `malformed`; the call succeeds; not a vote, not dissent. (A raw body whose `report` is `null` or absent: the node has none — not counted.) A report that lacks only `ciphertext_acc`: `outdated_nodes` | the ARRAY: not an array at its top level; more than 1 MiB; more than 1,024 reports that ARE reports; the state, the revision | `request:`; `state:`; `stale_state:` |
 
-What a client must do so that a node cannot reach the right-hand columns: build the arrays
-itself (never pass a node's body as the whole argument); drop a `report` that is not a JSON
-object or is larger than 4 KiB before it enters `R` (the core would count it as malformed; the
-1 MiB of the whole argument is the client's to keep); hand a body to `scan` or into a batch
-only if it is a listing page (above), and no body above 32 MiB. `rw6b_f1_…`,
-`rw6br_f1_scan_pages_classifies_…` and `rw6br_f1_a_malformed_report_is_no_report_…` (wasm
-crate) hold the three exports to the table.
+**The array is split, not parsed** (REVIEW_WALLET_6C RW6C-1). As first written both exports
+read the whole argument with one JSON parser, and the sentences above were not true: a lone
+surrogate escape (`"\ud800"`) or a member nested deeper than 128 inside ONE element — both
+survive `JSON.parse` / `JSON.stringify` in a client that did everything right — made the
+parser refuse the whole text, `request:`, the caller's class. One configured node could fail
+every state check of every session. Now `batch::json_array_elements` only finds where the
+elements are: it knows strings (a backslash skips a character) and counts brackets, and does
+nothing else — it decodes no string, reads no number and does not recurse, so no element can
+make it fail. Each element is then read on its own, by the reader its single-item path uses
+(`ListingPage::from_json` for a page: the two paths cannot disagree, a duplicate member is
+refused by both). `rw6c_f1_…`, `rw6cr_f1_no_report_of_one_node_…` (174 hostile elements × every
+position of a 3- and a 5-element array) and `rw6cr_f1_no_page_can_turn_a_batch_…` (66 bodies,
+1,728 batches) hold the exports to it.
+
+**The recommended forms keep the client out of it altogether**: a page as a JSON string of
+the body (`JSON.stringify(await response.text())`), a report as
+`{ node_id: origin, stats: await response.text() }`. The client then never parses what a node
+sent. (In an array a string always MEANS a raw body: a client that writes parsed values back
+writes objects only.) What remains the client's: build the array itself, keep it under its
+size, and decide by the STATUS whether there is an answer at all.
 
 Nothing a node serves leaves the first three rows: `rw6r_f2_every_field_of_a_page_…` corrupts
 every field of the listing's JSON shape in every way (1,906 pages) and gets `listing:` with
@@ -839,11 +859,11 @@ of a listing and is wrong in any other part is a `listing:` error and a ban.
   a pool transaction and one honest node a block behind). Each occasion costs the client a
   rescan. Two caps, both a LEAVE without a ban (the loop still has no evidence): `R_c = 2`
   in a row — no round between them that ended with the tip confirmed: the case in which the
-  wallet would not settle at all — and `R_s = 6` on one listing node in a session, however
+  wallet would not settle at all — and `R_t = 3` in one tenure of a listing node, however
   many confirmed tips lie between them: the case of the adaptive liar
-  (`rw6br_cap_the_liar_that_lists_the_truth_…`: left at the sixth). The node comes round
-  again only when every node after it has been left. `R_s` is a cost limit, not a proof: an
-  honest node that is listed from while reports contradict earlier confirmations six times
+  (`rw6br_cap_the_liar_that_lists_the_truth_…`, `rw6b_demo_…`: left at the third). The node comes round
+  again only when every node after it has been left. `R_t` is a cost limit, not a proof: an
+  honest node that is listed from while reports contradict earlier confirmations three times
   is left too, which costs nothing.
 
 **Termination and the bound.** Every round ends (P pages, one state check). Against any
@@ -875,8 +895,8 @@ before the tip is confirmed (the second in a row ends the tenure), so within
 `D + K + 2 + R_c·(D + 1)` rounds of a tenure the tip is confirmed or the node is left, and
 **within `(n − quorum + 1)·(D + K + 2 + R_c·(D + 1)) + W` rounds overall** while a strict
 majority of honest nodes is reachable at the tip. After the tip is confirmed a node can
-cause further rescans one occasion at a time; over a session it causes at most `R_s = 6` —
-at most `R_s·(D + 1)` rounds of repeated work per tenure, between which the tip IS confirmed,
+cause further rescans one occasion at a time; in one tenure it causes at most `R_t = 3` —
+at most `R_t·(D + 1)` rounds of repeated work per tenure, between which the tip IS confirmed,
 payments are offered and pending entries settle — and is then left. The property test asserts this
 bound, that no honest node is ever banned and that the loop never stops, with lying nodes that
 lie the same way in every round (§14); the most it measured is in the Resolution of
@@ -1647,7 +1667,7 @@ gained obligation 9.
   `Session::unconfirmed_tail_is_listing_nodes`: a `listing:` error and `leaf_mismatch` ban
   only when the unconfirmed part of the state is the listing node's own; otherwise the state
   is rescanned and nobody is blamed — once: the rescanned state is the node's own.
-* **The cap.** `BLAMELESS_IN_A_ROW = 2`, `BLAMELESS_IN_A_SESSION = 6`: at either, LEAVE
+* **The cap.** `BLAMELESS_IN_A_ROW = 2`, `BLAMELESS_IN_A_SESSION = 6` (3 since §17): at either, LEAVE
   without a ban, with the rescan. The count in a row is reset by a round that ends with the
   tip confirmed and no rescan — so it alone would never end the review's demonstration, in
   which the tip is confirmed between every two rescans; the count per session does (and is 6
@@ -1675,3 +1695,36 @@ called "not a page". Results and mutations: the Resolution of `REVIEW_WALLET_6B.
 | `leaf_mismatch` / `listing:` → always a ban | a ban when the state's unconfirmed part is the listing node's; otherwise a rescan, nobody blamed |
 | rescans that blame nobody: unlimited | 2 in a row or 6 per node and session → the node is left (no ban) |
 | the bound's `+ (D + 1)`: once | per rescan that blames nobody; with the caps: `(n − quorum + 1)·(D + K + 2 + R_c·(D + 1)) + W` to the confirmed tip |
+
+## 17. After REVIEW_WALLET_6C: an array is split, not parsed; the cap per tenure is 3
+
+`REVIEW_WALLET_6C.md` (of `1b61659`): RW6B-1 to RW6B-3 confirmed, the caps sound; one Medium
+(RW6C-1) and a preference on the cap. Branch `fix/shield-v2-wallet-settlement-7`. Nothing of
+spec §2, of consensus or of the state root is touched. Added: `batch` (`json_array_elements`,
+`json_string_text`, `page_bodies`, `read_state_reports`).
+
+* **RW6C-1.** `confirm_state` and `scan_pages` (wasm) no longer read their array as one
+  document: §6, "The array is split, not parsed". Both also take the raw bodies as strings
+  (`confirm_state`: `{ node_id, stats: "<body>" }`), which is the recommended form. The text
+  of a body that is no listing page is one fixed sentence now, the same alone and in a batch.
+  The loop's step 3 has a rule for an error of `confirm_state`
+  (`Session::after_confirm_error`: STOP(fault) — the client's own; no node can cause it), and
+  the reference client no longer unwraps.
+* **The Low: a duplicate member.** A batch element was re-written before it was read (last
+  value wins); it is read as it stands now, by the reader of `scan`: refused by both.
+* **The cap per tenure is 3** (`BLAMELESS_PER_TENURE`, = K; it was 6 only because the review's
+  demonstration asserted five rescans without a LEAVE). That test is restated, with the
+  review's authorisation, to assert "left, not banned, at the cap": the one edit to a review's
+  test.
+* **The property test**: in half the runs the client hands its reports to the library as a
+  JavaScript client's array — raw bodies, objects written back, strings — with elements
+  between them that no reader reads (sixteen kinds), and, in the batching runs, its pages
+  likewise; held to "the array is read; what was a report comes out as it went in, in order;
+  what was none is counted; `confirm_state` never fails".
+
+| Before | Now |
+|---|---|
+| a lone surrogate or a 129-deep member in ONE report: `request: state reports: malformed JSON` for the whole call | that report is `malformed`; the others confirm |
+| the same in one page of a batch: `request: pages: malformed JSON` | `listing: page i: … not a listing page …` (no answer: a strike) |
+| a duplicate member in a batch element: read as its last value | `listing: page i:`, as `scan` |
+| 6 rescans that blame nobody per tenure | 3 |

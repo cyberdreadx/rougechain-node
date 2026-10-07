@@ -7,7 +7,8 @@ four obligations of the client (1–4) and three limits that are inherent and mu
 the user (5–7). Each has the check a reviewer of a client performs. Obligation 8 (what a
 client shows when the pool is not active) and the rule for native bindings in obligation 4
 were added after `REVIEW_WALLET_6.md`; obligation 9 (what the client does with a node's
-answer before the core sees it) after `REVIEW_WALLET_6B.md`.
+answer before the core sees it) after `REVIEW_WALLET_6B.md`; the raw-body form of obligation 9
+and the list of accepted limits (10) after `REVIEW_WALLET_6C.md`.
 
 The syncing algorithm is not here: it is `NOTES.md` §6 ("The client loop"), mirrored in spec
 §5.5, and it is normative too. The reference implementation of it is
@@ -208,14 +209,24 @@ the two apart:
   does, the answer is `listing: note listing: not a listing page: …`, and the rule is the
   same). It MUST NOT use any other test — not "all five members", not the `success` member:
   a body with ONE member of a page is a page and is judged as one.
+* **Hand the core the raw body, as a string** (REVIEW_WALLET_6C RW6C-1). The recommended
+  form of every array: `scan_pages(state, JSON.stringify(bodies), …)` with `bodies` the
+  `await response.text()` of each answer, and for `confirm_state` an array of
+  `{ node_id: <the configured origin>, stats: <await response.text()> }`. The client then
+  never parses what a node sent, and the core reads each body on its own. A client that
+  does parse and writes the values back (objects) is safe too — the core only SPLITS the
+  array and no element can fail the call for the others — but in an array a string always
+  means "a raw body": write back objects only.
 * **`scan_pages`**: the client builds the array, from the bodies of ONE node, in the order
   it asked for them, and only from listing pages. On `listing: page i: …` nothing of the call
   was applied; the loop's rule for a `listing:` error is applied once (the node is the same
   for every page). The client MUST NOT pass a node's body as the whole `pages` argument.
-* **State reports**: the client takes the `report` member of each stats answer, labels it
-  with the CONFIGURED origin, and drops what is not a JSON object or is larger than 4 KiB.
-  Whatever else is wrong with a report is the core's to count (`malformed`): no report from
-  that node.
+* **State reports**: the client labels each stats answer with the CONFIGURED origin (never
+  with anything the node says about itself) and drops an answer larger than 4 KiB (the whole
+  argument must stay under 1 MiB and 1,024 reports: that is the client's). Whatever is wrong
+  INSIDE an answer is the core's to count (`malformed`): no report from that node, never an
+  error. An error of `confirm_state` is therefore the client's own (`request:`,
+  `stale_state:` → reload) or a bug: the loop stops on it, and no node can cause it.
 * **A rescan that blames nobody** is shown as work ("checking the wallet again"), never as an
   accusation; when the loop leaves a node for them (`rescans that blamed nobody`) the node is
   not marked as lying.
@@ -226,6 +237,31 @@ next node, no node is marked, the stored state is unchanged. A second in which a
 second page of a batch lacks `txs`: the node is banned, nothing of the batch is in the stored
 state. A third in which one node's stats answer carries `"report": "x"`: the state check
 runs on the others.
+
+### 10. Known limits of the loop (accepted in REVIEW_WALLET_6C; none loses funds)
+
+Stated so that a client does not present them as faults, and a reviewer does not find them
+again:
+
+* **(a) A liar that adapts costs repeated work, bounded per tenure.** A node can make the
+  client rescan without ever serving anything that stays refutable; it is left (not banned)
+  at the third such rescan in its tenure (two in a row), i.e. after at most `3·(D + 1)`
+  rounds of repeated work — and the cost of each rescan grows with the chain's length.
+  Show it as "checking the wallet again", never as an accusation.
+* **(b) After a session that ended in a fault**, a node that is in fact lying gets one free
+  round: the first signal against it is answered with a rescan that blames nobody.
+* **(c) Silence is never banned.** A node that answers nothing of a listing (no response, an
+  error object, a body no JSON reader reads), or delivers only every K-th round, is left
+  after K rounds without an answer and never banned; with one good round in K it keeps the
+  wallet at most K − 1 rounds stale.
+* **(d) A client that reads only listing answers** (not the `active` field of the stats
+  answers) learns "the pool is not active" one node per round, and can confirm the EMPTY
+  pool at the height before activation while the chain is not there yet: harmless (nothing
+  to spend; an embargo base below every later build). Obligation 8.
+* **(e) In an array, a string is a raw body.** A node whose whole answer is a JSON string
+  that spells a page has it read as a page when the client writes parsed values back into a
+  batch, and as "no page" through `scan`: it is the node's own listing either way, and every
+  check applies to it.
 
 ## Limits that are inherent — to be stated to the user, not fixed
 

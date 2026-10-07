@@ -134,6 +134,15 @@ state is evidence only against the node that listed the state's unconfirmed part
 the node is left, not banned), and the round bound is restated with the cap — the term
 `D + 1` is per such rescan. Wallet rules only: nothing of §2, §3 or §4 changed.
 
+*Amended 2026-10-07 after the final confirmation pass on the wallet core
+(`core/shield-v2-wallet/REVIEW_WALLET_6C.md`, finding RW6C-1):* (W-23) §5.4 — **a call that
+takes several node-supplied items in one text MUST NOT read that text as one document**: it
+finds the items and reads each on its own, so that nothing one node sent — a lone surrogate
+escape, any depth of nesting — can make the call fail for the others or be answered as the
+caller's error; §5.5 — the client loop has a rule for an error of the state check (the
+client's own: stop), and the cap on rescans that blame nobody is **3 per tenure** of a
+listing node (it was 6). Wallet rules only: nothing of §2, §3 or §4 changed.
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -1260,6 +1269,14 @@ wallet is configured with, and the quorum is a property of that set:
   caller's error), MUST apply all of the pages or none, and MUST say which page it refused.
   Likewise for state reports: a report that is malformed in any way is **no report from that
   node** — not an error of the call, not a vote, not dissent.
+* *(W-23, RW6C-1.)* **Such a call does not read its items as one document.** A JSON reader
+  refuses a whole text for what one value in it holds (an escape it does not accept, nesting
+  beyond its limit); if the items of several nodes are one text, one node decides the fate of
+  the call. A library MUST therefore only LOCATE the items in the text the client wrote —
+  without decoding strings, reading numbers or recursing — and read each with the reader of
+  its single-item call; and it SHOULD accept each item as a string holding the node's raw
+  answer, so that a client need not parse a node's answer at all. Only a text that is not a
+  list of items, or exceeds the size limit, is the caller's error.
 * *(W-21, RW6-3.)* **"The pool is not active" is an answer, not a page to be judged.** A node
   whose chain has no activation height answers the listing request with `active: false`
   (the node's read-only listing; the reference node sends no transactions with it). A library MUST
@@ -1592,7 +1609,8 @@ CONSTANTS (the client's; none is consensus)
   R        keeps the reports of the last 3 rounds, at most 1,024
   R_c = 2  rescans that blame nobody IN A ROW on one listing node (no round between them that
            ended with the tip confirmed) at which that node is left
-  R_s = 6  rescans that blame nobody on one listing node IN A SESSION at which it is left
+  R_t = 3  rescans that blame nobody in one TENURE of a listing node at which it is left
+           (= K; the counts start again when the listing node changes, and with a session)
 
 A LISTING PAGE is an answer with status 200 whose body is JSON, is an OBJECT at its top level,
   and has at least one of the five members  active, tip_height, from_height, next_height, txs.
@@ -1689,6 +1707,12 @@ ROUND
            and while waited < W:   waited += 1; show "waiting for every node (waited of W)";
                                    end the round
   3. c := confirm_state(S, R) → persist.     (a base now exists ⇒ waited := 0)
+       an error                          → `stale_state:`: reload S; end the round.
+                                           Anything else (`request:`, `state_invariant:`):
+                                           STOP(fault) — the client's own, or a bug: NO report
+                                           of a node causes it (a report that cannot be read
+                                           is "no report from that node", and the call
+                                           succeeds). L is not moved on: it had no part in it
        c.listing_refuted:
          some r of c.refuted has r.confirmed = false, and every height r.from_height … r.height
          is L's — in `served` under L, or in no entry of `served` while origin = L and S has
@@ -1726,7 +1750,7 @@ ROUND
 
 BLAMELESS   (the state is not the chain's, and nobody is blamed for it)
   row += 1; on_L += 1
-  row ≥ R_c or on_L ≥ R_s  → LEAVE(no ban), and S := rescan_state(S) in it whatever S holds
+  row ≥ R_c or on_L ≥ R_t  → LEAVE(no ban), and S := rescan_state(S) in it whatever S holds
   otherwise                → S := rescan_state(S) → persist; prev := none; served := {};
                              L stays
 
@@ -1818,7 +1842,8 @@ without ever serving anything that remains refutable (it lists a transaction one
 contradicts the confirmed height together with an honest node that stood there, and lists
 the truth into the rescanned state). A client MUST leave the listing node — without a ban,
 and with the rescan — at the second such rescan in a row (no round between them that ended
-with the tip confirmed: `R_c = 2`) and at the sixth on that node in a session (`R_s = 6`).
+with the tip confirmed: `R_c = 2`) and at the third in one tenure of that node (`R_t = 3`,
+equal to K; *W-23: W-22 had 6*).
 
 *Termination.* A tenure of one node lasts at most `D + 1 + K` rounds (one round for a node
 that answers "not active"), `D = ⌈(T − A + 1) / (B·P)⌉` being the rounds it takes to read the
@@ -1830,8 +1855,8 @@ were can cause — or has stopped because every node is banned. *(W-22: the term
 such rescan.)* In general a tenure holds at most one of them before the tip is confirmed (the
 second in a row ends it): the tip is confirmed within
 `(n − quorum + 1)·(D + K + 2 + R_c·(D + 1)) + W` rounds. Once the tip is confirmed a node
-can cause further ones an occasion at a time, at most `R_s` per session — repeated work,
-`R_s·(D + 1)` rounds per tenure at most, between which the tip is confirmed — and is then
+can cause further ones an occasion at a time, at most `R_t` per tenure — repeated work,
+`R_t·(D + 1)` rounds per tenure at most, between which the tip is confirmed — and is then
 left.
 
 **Every bound in these rules is a number of blocks**, and this chain produces a block when a
@@ -2378,5 +2403,5 @@ To be confirmed or changed by the owner before the first testnet activation.
 | `SHIELD_V2_POOL_CAP_QUANTA` on testnet | §4.4 | the same 10^15 as mainnet; the owner's decision names mainnet only |
 | State-root tag and layout | §4.8 | `rougechain.stateroot.shield_v2.v1`, running nullifier hash (O-12) |
 | Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, of `0x02 ‖ pk ‖ ek ‖ check`: 1,974 characters; `check` = first 8 bytes of SHA-256(`"rouge-shield/v2/address-check/v1"` ‖ `0x02` ‖ `pk` ‖ `ek`); fingerprint = first 8 bytes of SHA-256 of `pk ‖ ek` (O-11, W-4, W-9) |
-| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); the client loop's B = 64 blocks per page, K = 3 rounds, W = 5 rounds (W-20); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-22; the loop's caps on blameless rescans: 2 in a row, 6 per node and session) |
+| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); the client loop's B = 64 blocks per page, K = 3 rounds, W = 5 rounds (W-20); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-22; the loop's caps on blameless rescans: 2 in a row, 3 per tenure (W-23)) |
 | Node-local ciphertext hash (not consensus) | §5.4 | tag `rougechain.shield_v2.ciphertext_acc.node_local.v1`; SHA-256 over `acc ‖ cm_out ‖ kem_ct ‖ note_ct` per output in tree order, from 32 zero bytes; reported as `report.ciphertext_acc`; outside §4.8 (W-16) |
