@@ -93,6 +93,17 @@ pub enum WalletError {
     Internal(&'static str),
 }
 
+impl WalletError {
+    /// `true` for the [`WalletError::Listing`] of a body that was **not a listing page at all**
+    /// (`ListingPage::is_page`: not JSON, not an object, or an object with none of a page's
+    /// members — a transport or proxy error, the node's own error answer). For the client loop
+    /// that is "no answer": a strike, never a ban (REVIEW_WALLET_6B RW6B-2). Every other
+    /// `Listing` error is about a body that IS a page.
+    pub fn is_not_a_page(&self) -> bool {
+        matches!(self, WalletError::Listing(text) if text.starts_with(crate::store::NOT_A_LISTING_PAGE))
+    }
+}
+
 impl fmt::Display for WalletError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

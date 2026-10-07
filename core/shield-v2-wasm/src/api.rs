@@ -371,20 +371,31 @@ pub fn scan(state_json: &str, page_json: &str, scan_key_json: &str, expected_rev
     scan_result(&st, json!(report))
 }
 
-/// [`scan`] for several pages at once (`pages_json`: a JSON array of pages, in order): the state
-/// is parsed and written once instead of once per page. All pages are applied or none; `report`
-/// is an array with one entry per page.
+/// [`scan`] for several pages of ONE node at once (`pages_json`: a JSON array of pages, in
+/// order): the state is parsed and written once instead of once per page; `report` is an array
+/// with one entry per page.
+///
+/// **The classes are those of [`scan`]** (REVIEW_WALLET_6B RW6B-1):
+///
+/// * the OUTER argument is the caller's: text that is not a JSON array, or more than 64 MiB of
+///   it, is `request:` (the client builds the array; it never comes from a node as a whole);
+/// * every ELEMENT is a node's answer and is judged as `scan` judges it: an element that is
+///   `null`, not an object, lacks a member, has a member of the wrong type or out of range, or
+///   that `scan` refuses is `listing: page <i>: …` — `<i>` the element's index, from 0. An
+///   element that is not a listing page at all reads `listing: page <i>: note listing: not a
+///   listing page: …` ("no answer": a strike, not a ban — `NOTES.md` §6);
+/// * **all or nothing**: on any error no page of the call is applied — the caller keeps the
+///   state it handed in — and the error names the page (`rescan_required: page <i>: …` too).
 pub fn scan_pages(state_json: &str, pages_json: &str, scan_key_json: &str, expected_revision: f64) -> ApiResult {
     let mut st = state_for_update(state_json, expected_revision)?;
     if pages_json.len() > 64 << 20 {
         return Err(bad("pages must be at most 64 MiB"));
     }
-    let pages: Vec<ListingPage> = serde_json::from_str(pages_json).map_err(|e| bad_json("pages", &e))?;
+    let pages: Vec<Value> = serde_json::from_str(pages_json).map_err(|e| bad_json("pages", &e))?;
     let key = scan_key(scan_key_json)?;
-    let mut reports = Vec::with_capacity(pages.len());
-    for page in &pages {
-        reports.push(st.scan(page, &key).map_err(err)?);
-    }
+    // each element goes to the core as the text of one answer, like the argument of `scan`
+    let texts: Vec<String> = pages.iter().map(Value::to_string).collect();
+    let reports = st.scan_pages(&texts, &key).map_err(|e| format!("{}: page {}: {}", code(&e.error), e.index, e.error))?;
     scan_result(&st, json!(reports))
 }
 

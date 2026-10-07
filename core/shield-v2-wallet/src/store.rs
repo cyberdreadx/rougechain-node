@@ -248,12 +248,51 @@ impl ListingPage {
         if json.len() > MAX_LISTING_JSON_BYTES {
             return Err(WalletError::Listing("the page is larger than 32 MiB".into()));
         }
-        let page: Self = serde_json::from_str(json).map_err(|e| WalletError::Listing(json_error("notes listing", &e)))?;
+        let page: Self = serde_json::from_str(json).map_err(|e| {
+            let what = json_error("notes listing", &e);
+            // REVIEW_WALLET_6B RW6B-2: is the body a listing page at all?
+            WalletError::Listing(if Self::is_page(json) { what } else { format!("{NOT_A_LISTING_PAGE}: {what}") })
+        })?;
         if page.txs.len() > MAX_PAGE_TXS {
             return Err(WalletError::Listing("the page lists more than 4,096 transactions".into()));
         }
         Ok(page)
     }
+
+    /// **Is this body a listing page at all?** (REVIEW_WALLET_6B RW6B-2.) The discriminator, and
+    /// the only one: the body is JSON, its top level is an OBJECT, and that object has at least
+    /// one of the five members that make a page — [`PAGE_MEMBERS`]: `active`, `tip_height`,
+    /// `from_height`, `next_height`, `txs`.
+    ///
+    /// A body that is not — nothing, text that is not JSON (a proxy's error page), a JSON value
+    /// that is not an object, an object without any of the five (the node's own error answer,
+    /// `{ "success": false, "error": … }`) — says nothing about a chain: it is **no answer**,
+    /// for the client loop a strike and never a ban (`NOTES.md` §6). A body that IS a page and
+    /// is then refused by [`ListingPage::from_json`] or [`WalletState::scan`] is evidence: the
+    /// node served a listing that is not a chain's.
+    ///
+    /// Why "at least one" and not "all": a node cannot stay out of the rule by leaving a member
+    /// out. To be "no answer" a body must carry NONE of the listing's content — no heights, no
+    /// tip, no transactions, no word about the pool being active — and a node that serves
+    /// nothing is left after K rounds like one that is silent. Anything that carries a part of
+    /// a listing is judged as a listing, and a missing or malformed part is a `listing:` error.
+    pub fn is_page(json: &str) -> bool {
+        json.len() <= MAX_LISTING_JSON_BYTES
+            && serde_json::from_str::<serde_json::Value>(json).ok().and_then(|v| v.as_object().map(|o| PAGE_MEMBERS.iter().any(|m| o.contains_key(*m)))).unwrap_or(false)
+    }
+}
+
+/// The members of a listing page's JSON object ([`ListingPage::is_page`]).
+pub const PAGE_MEMBERS: [&str; 5] = ["active", "tip_height", "from_height", "next_height", "txs"];
+/// How the text of a [`WalletError::Listing`] starts when the body was not a listing page at
+/// all ([`ListingPage::is_page`]; [`WalletError::is_not_a_page`]).
+pub const NOT_A_LISTING_PAGE: &str = "not a listing page";
+
+/// [`WalletState::scan_pages`] refused the page at `index` (0-based, in the order handed in).
+#[derive(Debug)]
+pub struct PageError {
+    pub index: usize,
+    pub error: WalletError,
 }
 
 const TX_TYPES: [&str; 3] = ["shield_v2", "shielded_transfer_v2", "unshield_v2"];
@@ -3128,6 +3167,31 @@ impl WalletState {
     /// hold their notes by commitment and nullifier.
     pub fn scan(&mut self, page: &ListingPage, key: &ScanKey) -> Result<ScanReport, WalletError> {
         self.guarded(|s| s.scan_inner(page, key))
+    }
+
+    /// [`WalletState::scan`] for several pages of ONE node, in order, each as the text the node
+    /// answered with (REVIEW_WALLET_6B RW6B-1) — what the WebAssembly export `scan_pages` runs.
+    ///
+    /// * **Every page is classified exactly as `ListingPage::from_json` + `scan` classify it**:
+    ///   whatever is wrong with a page — a body that is not a page, a missing or ill-typed
+    ///   member, a value `scan` refuses — is that page's [`WalletError::Listing`];
+    /// * **all or nothing**: on any error the state is unchanged — the pages before the refused
+    ///   one are NOT applied — and the error says which page it was ([`PageError::index`]), so
+    ///   that a client that mixed nothing knows which answer it was;
+    /// * on success: one report per page.
+    ///
+    /// All-or-nothing because a batch is one node's word for one round: a client that keeps the
+    /// first pages of a node it is about to ban has to rescan them away anyway, and one that is
+    /// about to count a strike keeps the state it has stored.
+    pub fn scan_pages<S: AsRef<str>>(&mut self, pages: &[S], key: &ScanKey) -> Result<Vec<ScanReport>, PageError> {
+        let mut next = self.clone();
+        let mut reports = Vec::with_capacity(pages.len());
+        for (index, text) in pages.iter().enumerate() {
+            let report = ListingPage::from_json(text.as_ref()).and_then(|page| next.scan(&page, key)).map_err(|error| PageError { index, error })?;
+            reports.push(report);
+        }
+        *self = next;
+        Ok(reports)
     }
 
     fn scan_inner(&mut self, page: &ListingPage, key: &ScanKey) -> Result<ScanReport, WalletError> {

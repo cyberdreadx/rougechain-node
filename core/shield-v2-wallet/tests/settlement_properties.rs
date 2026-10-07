@@ -197,6 +197,31 @@ enum Strategy {
     BadFields(u64),
     /// RW6-3. "The pool is not active" — on a network where it is.
     SaysInactive,
+    /// REVIEW_WALLET_6B RW6B-2. Never a page: the node's own error answer, a proxy's error page,
+    /// nothing, JSON that is not an object — the same one in every round (`not_a_page`).
+    ErrorBodies(u64),
+    /// REVIEW_WALLET_6B, the adaptive liar. As `LateThenContradicts` — a block's transactions
+    /// one block late where an honest node stands, an honest vote — but it keeps answering,
+    /// contradicts a height only once the wallet has CONFIRMED past it (so that the
+    /// contradiction blames nobody), and **lists the truth whenever the wallet reads from the
+    /// start** (after the blameless rescan): nothing is ever left to refute.
+    LateAdaptive,
+}
+
+/// RW6B-2: an answer that is not a listing page at all — what an honest node sends when its
+/// store cannot be read (`core/daemon/src/main.rs`, `shield_v2_notes`), what a proxy sends, and
+/// what a liar may send as well.
+fn not_a_page(k: u64) -> String {
+    match k % 8 {
+        0 => r#"{"success":false,"error":"storage: the block could not be read"}"#.into(),
+        1 => "<html><body><h1>502 Bad Gateway</h1></body></html>".into(),
+        2 => String::new(),
+        3 => r#"{"error":"rate limited"}"#.into(),
+        4 => "null".into(),
+        5 => "[1, 2, 3]".into(),
+        6 => r#"{"success":true,"result":{"txs":[]}}"#.into(),
+        _ => "upstream connect error or disconnect/reset before headers".into(),
+    }
 }
 
 /// RW6-2: one field of a page set to a value no node of this chain serves. `k` picks the field
@@ -667,6 +692,16 @@ struct Stats {
     /// more nodes than can be lying — and the loop rescanned without blaming anybody
     refuted_confirmed: usize,
     nobody_blamed: usize,
+    /// REVIEW_WALLET_6B: answers that are not a page (from honest nodes too), rounds whose pages
+    /// were applied in one `scan_pages` call and those of them that were refused (at an element
+    /// after the first), nodes left for blameless rescans, the adaptive liar's scenes
+    no_page_answers: usize,
+    honest_error_answers: usize,
+    batches: usize,
+    batch_refused: usize,
+    batch_refused_inside: usize,
+    blameless_leaves: usize,
+    directed_adaptive: usize,
     /// the world in which the pool is not active
     inactive_idles: usize,
     inactive_bans: usize,
@@ -760,6 +795,9 @@ struct World {
     false_now: Option<usize>,
     /// what the `active` field of each node's stats answer said in this round
     stats_answers: Vec<(usize, bool)>,
+    /// this run's client applies the pages of a round in ONE call (`WalletState::scan_pages`,
+    /// what the WebAssembly export `scan_pages` runs): all of them or none
+    batching: bool,
     /// **The client's session — `common::client_loop::Session`, the loop of `NOTES.md` §6 as
     /// code**: `L` (also stored with the state: `listed_from`), `bad`, the strikes, the reports
     /// of the last rounds. Lost in a crash, but for `L`.
@@ -832,6 +870,7 @@ impl World {
             false_in_state: vec![false; n],
             false_now: None,
             stats_answers: Vec::new(),
+            batching: seed % 3 == 1,
             session: Session::new(n, 0),
             mute_leaders: false,
             statement: false,
@@ -853,7 +892,7 @@ impl World {
         // half the lying nodes lie the same way in every round
         for i in 0..n {
             if w.liar[i] {
-                w.strategy[i] = match w.rng.below(24) {
+                w.strategy[i] = match w.rng.below(28) {
                     0 => Strategy::NoProgress,
                     1 => Strategy::NeverAtTip,
                     2 => Strategy::TrueButShort(1 + w.rng.below(40)),
@@ -862,7 +901,9 @@ impl World {
                     5 => Strategy::RefutesThenBehaves,
                     6 | 7 => Strategy::LateThenContradicts,
                     8 | 9 => Strategy::BadFields(w.rng.below(30)),
-                    10 | 11 => Strategy::SaysInactive,
+                    10 | 11 | 14 => Strategy::SaysInactive,
+                    12 => Strategy::ErrorBodies(w.rng.below(8)),
+                    13 => Strategy::LateAdaptive,
                     _ => Strategy::Memoryless,
                 };
                 w.stats.persistent_liars += (w.strategy[i] != Strategy::Memoryless) as usize;
@@ -1181,6 +1222,30 @@ impl World {
                 self.stats.late_listings += moved;
                 Some(page)
             }
+            Strategy::ErrorBodies(_) => None, // (never a page: `serve` answers for it)
+            Strategy::LateAdaptive => {
+                let mut page = self.chain.page(since, tip);
+                // the truth whenever the wallet reads from the start; late otherwise
+                if since > A {
+                    let standing: BTreeSet<u64> = (0..self.nodes.len()).filter(|&j| !self.liar[j] && self.stalled[j]).map(|j| self.node_height[j]).filter(|x| *x >= start && *x < tip).collect();
+                    let txs = page["txs"].as_array_mut().unwrap();
+                    for x in standing {
+                        let late = txs.iter().filter(|t| t["height"].as_u64() == Some(x)).count() as u64;
+                        if late == 0 {
+                            continue;
+                        }
+                        for t in txs.iter_mut() {
+                            if t["height"].as_u64() == Some(x + 1) {
+                                t["index"] = serde_json::json!(t["index"].as_u64().unwrap() + late);
+                            } else if t["height"].as_u64() == Some(x) {
+                                t["height"] = serde_json::json!(x + 1);
+                            }
+                        }
+                        self.stats.late_listings += 1;
+                    }
+                }
+                Some(page)
+            }
             Strategy::BadFields(k) => {
                 let mut page = self.chain.page(since, tip);
                 self.stats.bad_field_pages += bad_field(&mut page, k) as usize;
@@ -1380,6 +1445,143 @@ impl World {
         page["txs"] == truth
     }
 
+    /// What `L` answers to the listing request for `since = stored.next_height`: the body as
+    /// text, and the model's knowledge of whether it is a listing page at all. `None`: no
+    /// answer. A lying node answers by its strategy; an honest node answers the truth at its
+    /// height — or, outside a settlement window and now and then, an error answer that is not
+    /// a page (its store could not be read; the proxy in front of it answered).
+    fn serve(&mut self, settled: bool) -> Option<(String, bool)> {
+        let l = self.session.listing;
+        if self.liar[l] {
+            self.stats.lying_pages += 1;
+            if self.stale.is_none() {
+                if let Strategy::ErrorBodies(k) = self.strategy[l] {
+                    return Some((not_a_page(k), false));
+                }
+                if self.strategy[l] == Strategy::Memoryless && self.rng.below(20) == 0 {
+                    return Some((not_a_page(self.rng.next()), false));
+                }
+            }
+            return self.lying_page().map(|p| (p.to_string(), true));
+        }
+        if !settled && self.rng.below(24) == 0 {
+            self.stats.honest_error_answers += 1;
+            return Some((not_a_page(self.rng.next()), false));
+        }
+        let mut page = self.chain.page(self.stored.next_height(), self.node_height[l]);
+        if !settled && self.rng.below(3) == 0 {
+            // an honest node's page has a budget too — the heights that were asked for
+            // (`blocks=64`), or more: never fewer, unless it reaches the node's tip
+            let (from, next) = (page["from_height"].as_u64().unwrap(), page["next_height"].as_u64().unwrap());
+            if next > from + PAGE_BLOCKS {
+                Self::cut_page(&mut page, from + PAGE_BLOCKS - 1 + self.rng.below(next - from - PAGE_BLOCKS));
+                self.stats.pages_cut += 1;
+            }
+        }
+        Some((page.to_string(), true))
+    }
+
+    /// NOTES §6 step 1 for a client that applies the pages of a round in ONE call
+    /// (`WalletState::scan_pages`, which the WebAssembly export `scan_pages` runs): it asks
+    /// for one page after the other — reading `next_height` out of each answer to ask for the
+    /// next — and hands them in together. All of them are applied or none; a refusal names
+    /// the page. Returns as [`World::sync_once`].
+    fn sync_batch(&mut self, settled: bool) -> Result<bool, bool> {
+        let seed = self.seed;
+        self.follow();
+        let l = self.session.listing;
+        if self.stored.scanned_height().is_none() {
+            self.false_in_state.iter_mut().for_each(|f| *f = false);
+        }
+        self.false_now = None;
+        let key = self.alice.scan_key();
+        let base = self.stored.clone();
+        // (text, the model: a page at all, the model: a true page)
+        let mut bodies: Vec<String> = Vec::new();
+        let mut verdict: Vec<(bool, bool)> = Vec::new();
+        let mut scratch = base.clone();
+        for _ in 0..PAGES_PER_ROUND {
+            let since = scratch.next_height();
+            // (the node answers for where the client says it is)
+            std::mem::swap(&mut self.stored, &mut scratch);
+            let served = self.serve(settled);
+            let is_true = served.as_ref().is_some_and(|(text, is_page)| *is_page && self.page_is_true(since, &serde_json::from_str(text).unwrap()));
+            std::mem::swap(&mut self.stored, &mut scratch);
+            let Some((text, is_page)) = served else { break };
+            assert!(is_true || !is_page || self.liar[l], "seed {seed}: the model calls an honest node's page false");
+            let more = ListingPage::from_json(&text).and_then(|p| scratch.scan(&p, &key).map(|r| p.active && !r.at_tip));
+            bodies.push(text);
+            verdict.push((is_page, is_true));
+            if !matches!(more, Ok(true)) {
+                break;
+            }
+        }
+        if bodies.is_empty() {
+            self.stats.no_answers += 1;
+            let d = self.session.after_no_answer();
+            return Err(self.apply(d));
+        }
+        self.stats.batches += 1;
+        let false_pages = verdict.iter().filter(|v| v.0 && !v.1).count();
+        self.stats.false_pages += false_pages;
+        let mut s = base.clone();
+        match s.scan_pages(&bodies, &key) {
+            Err(PageError { index, error }) => {
+                // the first page that is refused is the last one that was asked for; nothing
+                // of the call is applied; and the class is one the loop goes on from
+                assert_eq!(index, bodies.len() - 1, "seed {seed}: scan_pages names another page than the one that is refused");
+                assert!(s == base, "seed {seed}: a refused batch changed the state");
+                assert!(matches!(error, WalletError::Listing(_) | WalletError::RescanRequired), "seed {seed}: scan_pages failed with {error} — an error no page may cause");
+                assert!(self.viewed || !matches!(error, WalletError::RescanRequired), "seed {seed}: rescan_required for a state that was never scanned without the nullifier key");
+                let (is_page, is_true) = verdict[index];
+                if matches!(error, WalletError::Listing(_)) {
+                    // the model's knowledge against the core's word: no page ⇔ "not a page"
+                    assert_eq!(error.is_not_a_page(), !is_page, "seed {seed}: page {index} of a batch: {error}");
+                    assert!(!is_page || !is_true || false_pages > 0 || self.false_in_state[l], "seed {seed}: a true page on a state without a false page is refused: {error}");
+                }
+                self.stats.batch_refused += 1;
+                self.stats.batch_refused_inside += (index > 0) as usize;
+                self.stats.no_page_answers += !is_page as usize;
+                // (the model: a false page of this call is a false page served, applied or not)
+                if is_page && false_pages > 0 {
+                    self.false_now = Some(l);
+                }
+                let d = self.session.after_scan_error(&error);
+                assert!(is_page || !matches!(d, Decision::Leave { ban: true, .. }), "seed {seed}: a node is banned for an answer that is not a page");
+                Err(self.apply(d))
+            }
+            Ok(reports) => {
+                // one call or page by page: the same state
+                assert!(s == scratch, "seed {seed}: scan_pages and scan, page by page, leave different states");
+                assert!(verdict.iter().all(|v| v.0), "seed {seed}: an answer that is no page was applied");
+                self.stats.lying_pages_accepted += self.liar[l] as usize * bodies.len();
+                let pages: Vec<ListingPage> = bodies.iter().map(|t| ListingPage::from_json(t).unwrap()).collect();
+                if !self.persist(s) {
+                    return Err(false);
+                }
+                if pages.iter().zip(&verdict).any(|(p, v)| p.active && !v.1) {
+                    self.false_in_state[l] = true;
+                }
+                if false_pages > 0 {
+                    self.false_now = Some(l);
+                }
+                let mut at_tip = false;
+                for (page, r) in pages.iter().zip(reports) {
+                    self.stats.leaf_mismatches += r.leaf_mismatch as usize;
+                    at_tip = r.at_tip;
+                    let d = self.session.after_scan(page, &Ok(r));
+                    if !self.apply(d) {
+                        return Err(false);
+                    }
+                    if self.session.said_inactive {
+                        return Err(true);
+                    }
+                }
+                Ok(at_tip)
+            }
+        }
+    }
+
     /// NOTES §6 step 1, one page from `L`, scanned with the full key — or, for the background
     /// worker, with the viewing key alone — and the loop's rule for the answer
     /// (`Session::after_scan`). `Ok(true)`: the page reached the node's tip; `Ok(false)`: go
@@ -1395,30 +1597,24 @@ impl World {
         }
         self.false_now = None;
         let since = self.stored.next_height();
-        let page = if self.liar[l] {
-            self.stats.lying_pages += 1;
-            match self.lying_page() {
-                Some(p) => p,
-                None => {
-                    // the node did not answer: a strike
-                    self.stats.no_answers += 1;
-                    let d = self.session.after_no_answer();
-                    return Err(self.apply(d));
-                }
-            }
-        } else {
-            let mut page = self.chain.page(self.stored.next_height(), self.node_height[l]);
-            if !settled && self.rng.below(3) == 0 {
-                // an honest node's page has a budget too — the heights that were asked for
-                // (`blocks=64`), or more: never fewer, unless it reaches the node's tip
-                let (from, next) = (page["from_height"].as_u64().unwrap(), page["next_height"].as_u64().unwrap());
-                if next > from + PAGE_BLOCKS {
-                    Self::cut_page(&mut page, from + PAGE_BLOCKS - 1 + self.rng.below(next - from - PAGE_BLOCKS));
-                    self.stats.pages_cut += 1;
-                }
-            }
-            page
+        let Some((text, is_page)) = self.serve(settled) else {
+            // the node did not answer: a strike
+            self.stats.no_answers += 1;
+            let d = self.session.after_no_answer();
+            return Err(self.apply(d));
         };
+        if !is_page {
+            // **the model knows that this is no page** (RW6B-2): the core must say so too, and
+            // the loop must count a strike — never a ban: the model holds no false page of
+            // this node for it (`leave`)
+            let e = ListingPage::from_json(&text).err().unwrap_or_else(|| panic!("seed {seed}: an answer that is no page was read as one"));
+            assert!(e.is_not_a_page(), "seed {seed}: an answer that is no page is refused as a page: {e}");
+            self.stats.no_page_answers += 1;
+            let d = self.session.after_scan_error(&e);
+            assert!(!matches!(d, Decision::Leave { ban: true, .. }), "seed {seed}: a node is banned for an answer that is not a page");
+            return Err(self.apply(d));
+        }
+        let page: serde_json::Value = serde_json::from_str(&text).unwrap();
         // the model's own judgement of what was served, before the wallet sees it
         let is_true = self.page_is_true(since, &page);
         assert!(is_true || self.liar[l], "seed {seed}: the model calls an honest node's page false");
@@ -1429,7 +1625,7 @@ impl World {
         // the body the node answered with goes to the core as it came: `from_json`, then `scan`
         let mut s = self.stored.clone();
         let key = if view_only { self.alice.incoming_viewing_key() } else { self.alice.scan_key() };
-        let parsed = ListingPage::from_json(&page.to_string());
+        let parsed = ListingPage::from_json(&text);
         let result = match &parsed {
             Ok(page) => s.scan(page, &key),
             Err(WalletError::Listing(text)) => Err(WalletError::Listing(text.clone())),
@@ -1447,6 +1643,8 @@ impl World {
             // a true state
             assert!(!matches!(e, WalletError::Listing(_)) || !is_true || self.false_in_state[l], "seed {seed}: a true page on a state without a false page is refused: {e}");
             assert!(s == self.stored, "seed {seed}: a refused page changed the state");
+            // what the model generated as a page is judged as a page, however it is damaged
+            assert!(!e.is_not_a_page(), "seed {seed}: a page is called 'not a page': {e}");
         }
         let Ok(page) = parsed else {
             let d = self.session.after_scan_error(result.as_ref().err().unwrap());
@@ -1549,6 +1747,7 @@ impl World {
         self.session.commit_leave(plan);
         self.stats.banned += ban as usize;
         self.stats.left += !ban as usize;
+        self.stats.blameless_leaves += (why == "rescans that blamed nobody") as usize;
     }
 
     /// `rescan_state` without a change of node: `rescan_required:`, or the user's own decision.
@@ -1581,6 +1780,17 @@ impl World {
             if self.liar[i] {
                 let active = self.strategy[i] != Strategy::SaysInactive && self.rng.below(12) != 0;
                 self.stats_answers.push((i, active));
+            }
+            if self.liar[i] && self.strategy[i] == Strategy::LateAdaptive && self.stale.is_none() {
+                // votes honestly — and contradicts a height where an honest node stands only
+                // once the wallet has confirmed past it
+                out.push(self.chain.report(&id, tip));
+                for &x in standing.iter().filter(|x| self.stored.confirmed_height() >= Some(**x)) {
+                    let mut r = self.chain.report(&id, x);
+                    r.nullifier_acc = canonical(x ^ 0x6164_6170);
+                    out.push(r);
+                }
+                continue;
             }
             if self.liar[i] && self.strategy[i] == Strategy::LateThenContradicts && self.stale.is_none() {
                 // votes honestly — and, once the client has left it, contradicts every height
@@ -1813,8 +2023,10 @@ impl World {
         self.false_now = None;
         let d = self.session.after_confirm(&c, at_tip, &self.stored);
         // a refutation that is not of heights `L` served: the state is rescanned, nobody blamed
-        self.stats.nobody_blamed += (c.listing_refuted && d == Decision::Rescan) as usize;
-        assert!(!c.listing_refuted || matches!(d, Decision::Rescan | Decision::Leave { ban: true, .. }), "seed {seed}: a refuted listing is kept");
+        // (… or, at the cap on such rescans, the node is LEFT with the rescan — and not banned)
+        let blameless = matches!(d, Decision::Rescan | Decision::Leave { ban: false, why: "rescans that blamed nobody" });
+        self.stats.nobody_blamed += (c.listing_refuted && blameless) as usize;
+        assert!(!c.listing_refuted || blameless || matches!(d, Decision::Leave { ban: true, .. }), "seed {seed}: a refuted listing is kept");
         if !self.apply(d) {
             return None;
         }
@@ -2198,15 +2410,24 @@ impl World {
         assert!(self.session.begin_round(), "seed {}: the loop has stopped", self.seed);
         // 1. pages from L, with the FULL key, until its tip or the page budget
         let mut at_tip = false;
-        for _ in 0..PAGES_PER_ROUND {
-            match self.sync_once(settled, false) {
-                Ok(true) => {
-                    at_tip = true;
-                    break;
-                }
-                Ok(false) => {}
-                Err(true) => break,
+        if self.batching {
+            // … all of them applied in one call, or none
+            match self.sync_batch(settled) {
+                Ok(tip) => at_tip = tip,
+                Err(true) => {}
                 Err(false) => return false,
+            }
+        } else {
+            for _ in 0..PAGES_PER_ROUND {
+                match self.sync_once(settled, false) {
+                    Ok(true) => {
+                        at_tip = true;
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(true) => break,
+                    Err(false) => return false,
+                }
             }
         }
         if upto < 3 {
@@ -2310,6 +2531,66 @@ impl World {
             self.round(4, false);
             self.check("the late listing");
         }
+        true
+    }
+
+    /// **The adaptive liar, on purpose** (REVIEW_WALLET_6B, its demonstration): every lying node
+    /// becomes a `LateAdaptive` liar and one of them the listing node. Then, again and again:
+    /// a block with a pool transaction, an honest node that stops there, one more block, a few
+    /// rounds — the liar lists the transaction late, the listing is confirmed, the liar and the
+    /// honest node standing there contradict the confirmed height, the state is rescanned and
+    /// nobody is blamed, and the liar lists the TRUTH into the empty state. It is never banned
+    /// for it and nothing remains to refute. The loop must not go on like that for ever: after
+    /// `BLAMELESS_IN_A_SESSION` such rescans on one node it LEAVES the node, without a ban.
+    ///
+    /// Nothing here asserts an outcome but that: the invariants of `leave` and `check` judge
+    /// every ban, and the scene counts the leaves.
+    fn directed_adaptive_liar(&mut self) -> bool {
+        let n = self.nodes.len();
+        let liars: Vec<usize> = (0..n).filter(|&i| self.liar[i]).collect();
+        let honest: Vec<usize> = (0..n).filter(|&i| !self.liar[i]).collect();
+        if liars.is_empty() || honest.len() < 2 || self.stale.is_some() || self.mute_leaders {
+            return false;
+        }
+        for &i in &liars {
+            self.strategy[i] = Strategy::LateAdaptive;
+        }
+        let l = self.rng.pick(&liars).unwrap();
+        self.settle_nodes();
+        self.stored = self.stored.fresh_for_rescan();
+        self.viewed = false;
+        self.session = Session::new(n, l);
+        self.stats.directed_adaptive += 1;
+        let crashes = std::mem::replace(&mut self.no_crash, true);
+        for _ in 0..FIRST_CHECK_ROUNDS + 2 {
+            self.round(4, true);
+            self.check("the adaptive liar: the truth, from the start");
+        }
+        let mut rescans_on_l = 0;
+        for _ in 0..2 * common::client_loop::BLAMELESS_IN_A_SESSION {
+            if self.session.listing != l {
+                break;
+            }
+            self.settle_nodes();
+            let t = self.traffic();
+            assert!(self.chain.block(Some(&t)));
+            self.other_paid += t.outs.iter().flatten().map(|o| o.1 as u128).sum::<u128>();
+            self.follow();
+            let j = self.rng.pick(&honest).unwrap();
+            self.stalled[j] = true;
+            self.chain.advance_to(self.chain.height + 1);
+            for _ in 0..4 {
+                let before = self.stats.nobody_blamed;
+                self.round(4, false);
+                self.check("the adaptive liar");
+                if self.session.listing == l {
+                    rescans_on_l += self.stats.nobody_blamed - before;
+                }
+            }
+            // (the model's own count: the loop does not let one node cause more of them)
+            assert!(rescans_on_l <= common::client_loop::BLAMELESS_IN_A_SESSION as usize, "seed {}: {rescans_on_l} rescans that blamed nobody while one node was listed from, in one session", self.seed);
+        }
+        self.no_crash = crashes;
         true
     }
 
@@ -2955,9 +3236,13 @@ impl World {
                     self.recover();
                     "a damaged state, recover_locks"
                 }
-                _ => {
+                _ if self.rng.below(2) == 0 => {
                     self.directed_late_listing();
                     "the late listing, on purpose"
+                }
+                _ => {
+                    self.directed_adaptive_liar();
+                    "the adaptive liar, on purpose"
                 }
             },
             101..=104 => {
@@ -3354,6 +3639,7 @@ fn settlement_guarantees_hold_against_an_independent_model() {
         }
         add!(lying_pages, lying_pages_accepted, pages_cut, leaf_mismatches, confirm_calls, matched, matched_with_dissent, refuted, banned, left, left_without_rescan, no_answers, first_check_waits, persistent_liars, rescans, states_lost, restores,
             false_pages, bad_field_pages, inactive_pages, late_listings, directed_late, refuted_confirmed, nobody_blamed,
+            no_page_answers, honest_error_answers, batches, batch_refused, batch_refused_inside, blameless_leaves, directed_adaptive,
             directed_restores, directed_payments, silent_leader_bases, boundary_looks, recoveries, recoveries_embargoed, embargo_deadlines_checked,
             embargo_bases, stale_bases, embargo_refusals, embargo_ended, payments, retries, two_input_payments, max_expiry_payments, self_payments, unreadable_payments, mixed_refused,
             locked_refused, long_expiry_refused, two_tabs, unconfirmed_root_refused, withheld, unanswered, resubmitted, released_late, released_last_block, release_refused, honest_silent, honest_stalls,
@@ -3379,6 +3665,10 @@ fn settlement_guarantees_hold_against_an_independent_model() {
     // a CONFIRMED height, answered with a rescan that blames nobody; the world without the pool
     assert!(total.false_pages > 1_000 && total.bad_field_pages > 40 && total.inactive_pages > 30 && total.late_listings > 100 && total.directed_late > 60 && total.refuted_confirmed > 30 && total.nobody_blamed > 30, "{total:?}");
     assert!(total.inactive_idles > 300 && total.inactive_activations > 100, "{total:?}");
+    // REVIEW_WALLET_6B: answers that are no page (honest nodes' too), rounds applied in one
+    // call and refused ones among them (also at a page after the first), the adaptive liar's
+    // scenes and the nodes left at the cap on blameless rescans
+    assert!(total.no_page_answers > 500 && total.honest_error_answers > 500 && total.batches > 5_000 && total.batch_refused > 150 && total.batch_refused_inside > 5 && total.blameless_leaves > 20 && total.directed_adaptive > 25, "{total:?}");
     assert!(total.payments > 1_000 && total.retries > 100 && total.two_input_payments > 200 && total.withheld > 100 && total.released_late > 10 && total.release_refused > 100, "{total:?}");
     assert!(total.released_last_block > 10 && total.honest_silent > 5_000 && total.own_outputs_blanked > 20 && total.leaves_shifted > 15 && total.pages_cut > 500 && total.leaf_mismatches > 3, "{total:?}");
     assert!(total.settled_mined > 800 && total.settled_expired > 80 && total.settled_superseded > 50, "{total:?}");

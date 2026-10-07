@@ -14,6 +14,13 @@
 //! driver, which calls [`Session`] method by method) and of `tests/review_wallet_6_resolution.rs`
 //! run it too.
 //!
+//! **After REVIEW_WALLET_6B** (RW6B-2, RW6B-3 and its recommendation): an answer that is not a
+//! listing page (`ListingPage::is_page`) is no answer — a strike, never a ban; a `listing:`
+//! error and `leaf_mismatch` ban only when the unconfirmed part of the state is the listing
+//! node's own ([`Session::unconfirmed_tail_is_listing_nodes`]), and otherwise rescan and blame
+//! nobody; and such rescans are capped ([`BLAMELESS_IN_A_ROW`], [`BLAMELESS_IN_A_SESSION`]):
+//! at the cap the node is left, without a ban.
+//!
 //! It is not a network client: a page and a set of reports are handed in by the caller. What
 //! it decides is everything the documents leave to no one's judgement — when a listing node is
 //! left, when it is banned, when the state is rescanned, when the loop stops.
@@ -35,6 +42,13 @@ pub const STRIKES: u32 = 3;
 /// `W`: rounds the FIRST state check of a state without an embargo base waits for a report from
 /// every configured node for one height (`UI_CONTRACT.md`, obligation 2).
 pub const FIRST_CHECK_ROUNDS: u32 = 5;
+/// `R_c`: blameless rescans IN A ROW on one listing node — no round between them that ended with
+/// the tip confirmed — after which that node is left, without a ban (REVIEW_WALLET_6B).
+pub const BLAMELESS_IN_A_ROW: u32 = 2;
+/// `R_s`: blameless rescans on one listing node IN A SESSION, however many confirmed tips lie
+/// between them, after which that node is left, without a ban: a node that lists the truth
+/// after every blameless rescan and gives the next occasion for one is not listed from for ever.
+pub const BLAMELESS_IN_A_SESSION: u32 = 6;
 /// The reports of this many rounds are handed to `confirm_state`, at most [`MAX_REPORTS`].
 pub const REPORT_ROUNDS: u64 = 3;
 pub const MAX_REPORTS: usize = 1_024;
@@ -142,6 +156,20 @@ pub struct Session {
     pub pool_seen: BTreeSet<usize>,
     /// `L` answered "the pool is not active" in step 1 of THIS round; step 2 decides.
     pub said_inactive: bool,
+    /// The highest confirmed height of the state this session has seen (in a call that is
+    /// handed the state). `None`: nothing confirmed, or not seen yet.
+    pub confirmed_seen: Option<u64>,
+    /// The state may hold heights ABOVE its confirmed height that no page of this session
+    /// listed (what the stored state held at the start). They are `origin`'s. Cleared when the
+    /// session sees the state with everything confirmed, and by a rescan.
+    pub unrecorded_tail: bool,
+    /// Rescans for which nobody was blamed while `L` has been the listing node: in a row (no
+    /// round in between that ended with the tip confirmed), and in this session.
+    pub blameless_in_a_row: u32,
+    pub blameless_on_l: u32,
+    /// The LEAVE that is about to be planned must rescan whatever the state holds (it ends a
+    /// run of blameless rescans: the state in hand is the one that was to be thrown away).
+    pub leave_rescans: bool,
 }
 
 impl Session {
@@ -164,6 +192,11 @@ impl Session {
             inactive: BTreeSet::new(),
             pool_seen: BTreeSet::new(),
             said_inactive: false,
+            confirmed_seen: None,
+            unrecorded_tail: true,
+            blameless_in_a_row: 0,
+            blameless_on_l: 0,
+            leave_rescans: false,
         }
     }
 
@@ -236,6 +269,43 @@ impl Session {
     fn emptied(&mut self) {
         self.served.clear();
         self.from_empty = true;
+        self.unrecorded_tail = false;
+        self.confirmed_seen = None;
+    }
+
+    /// A call that is handed the state: what the session learns from it.
+    fn see(&mut self, state: &WalletState) {
+        self.confirmed_seen = self.confirmed_seen.max(state.confirmed_height());
+        if Self::nothing_unconfirmed(state) {
+            self.unrecorded_tail = false;
+        }
+    }
+
+    /// `true`: every height the state holds ABOVE its confirmed height was listed by `L`
+    /// (REVIEW_WALLET_6B RW6B-3) — the pages of this session above the confirmed height are
+    /// all `L`'s, and what the stored state held at the start, if any of it is still
+    /// unconfirmed, is `L`'s by the stored `listed_from`. A page of `L` that does not continue
+    /// such a state — a `listing:` error, leaf numbers below the wallet's tree — contradicts
+    /// `L`'s own listing, or the chain a quorum confirmed: evidence. When it is `false` the
+    /// page may be true and the tail another node's: no evidence against `L`.
+    pub fn unconfirmed_tail_is_listing_nodes(&self) -> bool {
+        let l = self.listing;
+        (!self.unrecorded_tail || self.origin == Some(l)) && self.served.iter().all(|s| s.node == l || self.confirmed_seen.is_some_and(|c| s.to <= c))
+    }
+
+    /// The state is to be rescanned and nobody is blamed for it. **Capped** (REVIEW_WALLET_6B):
+    /// after [`BLAMELESS_IN_A_ROW`] of them without a round that ended with the tip confirmed,
+    /// or [`BLAMELESS_IN_A_SESSION`] of them on this listing node in this session, the node is
+    /// LEFT instead — without a ban, with the rescan — so that no node can keep a client
+    /// rescanning for as long as it is listed from.
+    fn blameless_rescan(&mut self) -> Decision {
+        self.blameless_in_a_row += 1;
+        self.blameless_on_l += 1;
+        if self.blameless_in_a_row >= BLAMELESS_IN_A_ROW || self.blameless_on_l >= BLAMELESS_IN_A_SESSION {
+            self.leave_rescans = true;
+            return Decision::Leave { ban: false, why: "rescans that blamed nobody" };
+        }
+        Decision::Rescan
     }
 
     /// Step 0: a round begins. `false`: the loop has stopped — nothing is asked, nothing written.
@@ -268,8 +338,13 @@ impl Session {
             }
             Ok(r) => {
                 self.inactive.remove(&self.listing);
+                // (judged before the page joins `served`: is what it was applied ON `L`'s?)
+                let own_tail = self.unconfirmed_tail_is_listing_nodes();
                 self.serve(page);
-                if r.leaf_mismatch {
+                if r.leaf_mismatch && !own_tail {
+                    // numbered below a tail that another node listed (RW6B-3): not evidence
+                    self.blameless_rescan()
+                } else if r.leaf_mismatch {
                     Decision::Leave { ban: true, why: "leaf_mismatch" }
                 } else if !r.at_tip && page.next_height.saturating_sub(page.from_height) < PAGE_BLOCKS {
                     // neither at the node's tip nor the heights that were asked for
@@ -286,8 +361,16 @@ impl Session {
     /// refused.
     pub fn after_scan_error(&mut self, e: &WalletError) -> Decision {
         match e {
+            // the body is not a listing page at all (REVIEW_WALLET_6B RW6B-2: nothing, a proxy's
+            // error page, the node's own `{ "success": false, … }` — `ListingPage::is_page`):
+            // NO ANSWER. A strike; never a ban
+            e if e.is_not_a_page() => self.after_no_answer(),
             // the page is the node's, and it is not a chain's listing — EVERY way the content
-            // of a page can be invalid is this error (REVIEW_WALLET_6 RW6-2)
+            // of a page can be invalid is this error (REVIEW_WALLET_6 RW6-2). Evidence against
+            // `L` — unless the state holds an unconfirmed tail that `L` did not list
+            // (RW6B-3: after a fault): then the page may be the truth and the tail the lie;
+            // the state is rescanned, nobody is blamed, and from there every page is `L`'s
+            WalletError::Listing(_) if !self.unconfirmed_tail_is_listing_nodes() => self.blameless_rescan(),
             WalletError::Listing(_) => Decision::Leave { ban: true, why: "a listing: error" },
             // the client's own worker overflowed its log: nobody lied
             WalletError::RescanRequired => Decision::Rescan,
@@ -396,6 +479,7 @@ impl Session {
     /// [`Session::first_check_may_run`]; a client that takes [`Session::after_stats`] first
     /// calls it before.
     pub fn note_reports(&mut self, state: &WalletState, fresh: &[StateReport]) {
+        self.see(state);
         for r in fresh.iter().filter(|r| r.note_count > 0 || r.nullifier_count > 0) {
             let id = quantum_vault_shield_v2_wallet::canonical_node_id(&r.node_id).ok();
             if let Some(i) = id.and_then(|id| state.nodes().iter().position(|n| *n == id)) {
@@ -440,9 +524,14 @@ impl Session {
         // * anything else — a height at or below the confirmed height (an earlier quorum's
         //   word is contradicted; the pages down there may be any node's), or heights `L` did
         //   not serve: the state is rescanned, `L` stays, NOBODY is blamed.
+        self.see(state);
         if c.listing_refuted {
             let ls = c.refuted.iter().any(|r| !r.confirmed && self.listed_by_listing_node(r.from_height, r.height));
-            return if ls { Decision::Leave { ban: true, why: "listing_refuted" } } else { Decision::Rescan };
+            return if ls { Decision::Leave { ban: true, why: "listing_refuted" } } else { self.blameless_rescan() };
+        }
+        // a round that ends with the tip confirmed and no rescan ends a run of blameless rescans
+        if c.quorum_tip.is_some_and(|tip| state.confirmed_height() >= Some(tip)) && Self::nothing_unconfirmed(state) {
+            self.blameless_in_a_row = 0;
         }
         // without a quorum answering nothing is counted: the node is not what is missing
         let Some(tip) = c.quorum_tip else { return Decision::Go };
@@ -489,7 +578,10 @@ impl Session {
         let next = self.next_node();
         let empty = state.scanned_height().is_none();
         match next {
-            Some(_) => Leave { next, rescan: ban || !Self::nothing_unconfirmed(state), ban, empty },
+            // (the only node left, and it is to be left for its blameless rescans: it stays,
+            // and the rescan is made)
+            None if !ban && self.leave_rescans => Leave { next: Some(self.listing), rescan: true, ban, empty },
+            Some(_) => Leave { next, rescan: ban || self.leave_rescans || !Self::nothing_unconfirmed(state), ban, empty },
             None if ban => Leave { next: None, rescan: true, ban, empty },
             None => Leave { next: Some(self.listing), rescan: false, ban, empty },
         }
@@ -501,8 +593,12 @@ impl Session {
             self.bad.insert(self.listing);
         }
         (self.strikes, self.prev) = (0, None);
+        (self.blameless_in_a_row, self.blameless_on_l, self.leave_rescans) = (0, 0, false);
         if plan.rescan || plan.empty {
             self.emptied();
+        } else {
+            // handed on without a rescan: everything the state holds is confirmed
+            self.unrecorded_tail = false;
         }
         match plan.next {
             Some(next) => self.listing = next,
