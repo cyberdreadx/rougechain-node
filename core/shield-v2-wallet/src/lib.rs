@@ -42,7 +42,7 @@ pub use keys::{account_from_address, address_from_account, bip39_seed, ScanKey, 
 pub use select::{plan_merge, plan_merge_with, select_inputs, select_inputs_with, MergePlan, Selection};
 pub use store::{
     canonical_node_id, ciphertext_acc_step, Balances, ConfirmReport, Dissent, ListingPage, OwnedNote, PendingChange,
-    PendingStatus, PendingTx, PoolView, Resolution, ScanReport, SpendInput, StateReport, Tally, TreeTracker, WalletState,
+    PendingStatus, PendingTx, PoolView, Refutation, Resolution, ScanReport, SpendInput, StateReport, Tally, TreeTracker, WalletState,
     DEFAULT_MAX_UNSPENT_NOTES, DEFAULT_MIN_NOTE_VALUE, MAX_CONFIGURED_NODES, MAX_SPENT_RETAINED, MAX_STORED_NOTES,
     MAX_UNSPENT_NOTES_LIMIT, MIN_CONFIGURED_NODES, PRUNE_RETENTION_BLOCKS, STATE_VERSION,
 };

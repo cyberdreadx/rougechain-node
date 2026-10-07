@@ -6,6 +6,14 @@
 //! and the loop tests of `tests/review_wallet_5.rs` ([`LoopClient`]) both call [`Session`]. A
 //! change of the loop is a change here and in the two documents, nowhere else.
 //!
+//! **After REVIEW_WALLET_6** (RW6-1 … RW6-3) the loop also keeps which node served which
+//! heights ([`Session::served`]) — a refuted listing bans the listing node only for heights it
+//! served, and a contradiction of what was confirmed earlier blames nobody; it does not pin a
+//! node on a fault; and it knows the answer "the pool is not active" ([`Session::inactive`],
+//! [`Stop::PoolInactive`]). The loop tests of `tests/review_wallet_6.rs` (through their own
+//! driver, which calls [`Session`] method by method) and of `tests/review_wallet_6_resolution.rs`
+//! run it too.
+//!
 //! It is not a network client: a page and a set of reports are handed in by the caller. What
 //! it decides is everything the documents leave to no one's judgement — when a listing node is
 //! left, when it is banned, when the state is rescanned, when the loop stops.
@@ -19,6 +27,9 @@ use quantum_vault_shield_v2_wallet::{ConfirmReport, ListingPage, ScanKey, ScanRe
 /// transactions (`SHIELD_V2_MAX_TX_PER_BLOCK` = 8), the node's cap per page, so the cap never
 /// cuts such a page short. A page that does neither is not an answer of the listing API.
 pub const PAGE_BLOCKS: u64 = 64;
+/// `P`: the pages [`LoopClient`] reads per round. `P ≥ 1` is the client's choice (`NOTES.md` §6);
+/// the property test's client uses 6 (`settlement_properties.rs`, `PAGES_PER_ROUND`).
+pub const LOOP_CLIENT_PAGES: usize = 4;
 /// `K`: consecutive rounds a listing node may fail to deliver before it is left.
 pub const STRIKES: u32 = 3;
 /// `W`: rounds the FIRST state check of a state without an embargo base waits for a report from
@@ -37,8 +48,17 @@ pub enum Stop {
     NoHonestListingNode,
     /// `state_invariant:` (or an error the loop has no other rule for) from a call: a bug in
     /// the wallet library or in the client. Reported; the stored state is kept as it is — no
-    /// rescan, no new state.
+    /// rescan, no new state. **The fault does not pin the node it happened on** (REVIEW_WALLET_6
+    /// RW6-2): when the loop stops for it, `Session::listing` is already the NEXT node and
+    /// `Session::origin` is `None` — the client stores "start at `listing`, `listed_from`
+    /// unknown", and the next session is [`Session::new_unattributed`].
     Fault(String),
+    /// A strict majority of the configured nodes answer that the shielded pool is not active
+    /// (REVIEW_WALLET_6 RW6-3). Not a failure and nobody's fault: shown to the user as "the
+    /// shielded pool is not active on this network". Nothing is banned for it, nothing is
+    /// rescanned, the state is untouched. The loop idles: a new session, or
+    /// [`Session::recheck_pool`] after a long interval, asks again.
+    PoolInactive,
 }
 
 /// What the loop does with the answer to one call.
@@ -66,6 +86,17 @@ pub struct Leave {
     /// The state must be replaced by `rescan_state(S)` before `L` changes.
     pub rescan: bool,
     pub ban: bool,
+    /// The state holds no page at all (nothing was ever scanned into it): whatever it holds
+    /// from here on was listed in this session.
+    pub empty: bool,
+}
+
+/// Heights `from ..= to` of the state came from pages `node` served (REVIEW_WALLET_6 RW6-1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Served {
+    pub node: usize,
+    pub from: u64,
+    pub to: u64,
 }
 
 /// The session of `NOTES.md` §6: everything the loop keeps in memory. Lost in a crash and at
@@ -73,7 +104,8 @@ pub struct Leave {
 #[derive(Clone, Debug)]
 pub struct Session {
     /// `L`: the node listed from — every page the state holds above its confirmed height came
-    /// from this node.
+    /// from this node. The index is the node's place in the configured set as the core keeps
+    /// it (`WalletState::nodes()`: canonical ids, sorted).
     pub listing: usize,
     /// `|N|`
     pub nodes: usize,
@@ -90,12 +122,120 @@ pub struct Session {
     pub reports: Vec<(u64, StateReport)>,
     pub round: u64,
     pub stopped: Option<Stop>,
+    /// `served`: which node served which heights of the state, for every page applied in this
+    /// session since the state was last empty (a rescan). Ascending, disjoint. A refutation
+    /// bans `L` only for heights that are `L`'s here (RW6-1).
+    pub served: Vec<Served>,
+    /// The state was empty at some point of this session (a rescan, or a state nothing had
+    /// been scanned into): from then on EVERY height it holds is in `served`.
+    pub from_empty: bool,
+    /// The stored `listed_from` this session started with: the node every page that the STORED
+    /// state held above its confirmed height came from. `None`: not known (a state stored
+    /// after a fault, or by a client that did not store it) — no height that this session did
+    /// not list itself is anybody's then.
+    pub origin: Option<usize>,
+    /// `inactive`: the nodes whose LATEST answer — a listing page, or the `active` field of
+    /// `/api/shield-v2/stats` — says that the shielded pool is not active (RW6-3).
+    pub inactive: BTreeSet<usize>,
+    /// Nodes whose state report showed a pool that holds something (`note_count` or
+    /// `nullifier_count` above 0) in this session.
+    pub pool_seen: BTreeSet<usize>,
+    /// `L` answered "the pool is not active" in step 1 of THIS round; step 2 decides.
+    pub said_inactive: bool,
 }
 
 impl Session {
     /// The start of a session: `bad` empty, the listing node the one the state was stored with.
     pub fn new(nodes: usize, listed_from: usize) -> Self {
-        Self { listing: listed_from, nodes, bad: BTreeSet::new(), strikes: 0, prev: None, waited: 0, unanswered: false, reports: Vec::new(), round: 0, stopped: None }
+        Self {
+            listing: listed_from,
+            nodes,
+            bad: BTreeSet::new(),
+            strikes: 0,
+            prev: None,
+            waited: 0,
+            unanswered: false,
+            reports: Vec::new(),
+            round: 0,
+            stopped: None,
+            served: Vec::new(),
+            from_empty: false,
+            origin: Some(listed_from),
+            inactive: BTreeSet::new(),
+            pool_seen: BTreeSet::new(),
+            said_inactive: false,
+        }
+    }
+
+    /// The start of a session whose stored state has no known `listed_from` — after
+    /// `STOP(fault)`, which stores "start at the next node, `listed_from` unknown" — listing
+    /// from `start`. The state is kept as it is (no rescan at the start: after a fault the
+    /// stored state is not touched); what it holds above its confirmed height is nobody's: if
+    /// it is refuted, the state is rescanned and no node is banned.
+    pub fn new_unattributed(nodes: usize, start: usize) -> Self {
+        Self { origin: None, ..Self::new(nodes, start) }
+    }
+
+    /// The quorum of the configured set: a strict majority, at least 2 (as the core's).
+    pub fn quorum(&self) -> usize {
+        (self.nodes / 2 + 1).max(2)
+    }
+
+    /// The first node after `L`, in the order of the configured set, cyclically, not in `bad`.
+    fn next_node(&self) -> Option<usize> {
+        (1..self.nodes).map(|k| (self.listing + k) % self.nodes).find(|i| !self.bad.contains(i))
+    }
+
+    /// A page of `L` was applied: its heights are `L`'s.
+    fn serve(&mut self, page: &ListingPage) {
+        if page.next_height <= page.from_height {
+            return; // no height in it
+        }
+        // A page that does not continue what is recorded was applied to a state that had been
+        // emptied without this session being told (a recovered state, another writer's
+        // rescan): what is recorded is of a state that is gone.
+        if self.served.last().is_some_and(|last| page.from_height <= last.to) {
+            self.emptied();
+        }
+        // the first page into an empty state decides where the listing starts (the jump to the
+        // activation height): what it skipped is that node's word too
+        let from = if self.served.is_empty() && self.from_empty { 0 } else { page.from_height };
+        let to = page.next_height - 1;
+        match self.served.last_mut() {
+            Some(last) if last.node == self.listing && last.to.checked_add(1) == Some(from) => last.to = to,
+            _ => self.served.push(Served { node: self.listing, from, to }),
+        }
+    }
+
+    /// `true`: every height of `from ..= to` that the state holds was listed by `L` — by a page
+    /// of this session (`served`), or, for a height no page of this session covers, because
+    /// the session started on `L` with the stored `listed_from` and has not left it.
+    pub fn listed_by_listing_node(&self, from: u64, to: u64) -> bool {
+        let l = self.listing;
+        let stored_is_ls = !self.from_empty && self.origin == Some(l);
+        let mut cursor = from; // the first height not attributed yet
+        for s in &self.served {
+            if s.to < cursor {
+                continue;
+            }
+            if s.from > to {
+                break;
+            }
+            if (s.from > cursor && !stored_is_ls) || s.node != l {
+                return false;
+            }
+            if s.to >= to {
+                return true;
+            }
+            cursor = s.to + 1;
+        }
+        stored_is_ls
+    }
+
+    /// The state is empty again (`rescan_state`, or nothing was ever scanned into it).
+    fn emptied(&mut self) {
+        self.served.clear();
+        self.from_empty = true;
     }
 
     /// Step 0: a round begins. `false`: the loop has stopped — nothing is asked, nothing written.
@@ -105,6 +245,7 @@ impl Session {
         }
         self.round += 1;
         self.unanswered = false;
+        self.said_inactive = false;
         true
     }
 
@@ -115,19 +256,113 @@ impl Session {
     }
 
     /// Step 1, the answer to one `scan`.
-    pub fn after_scan(&self, page: &ListingPage, result: &Result<ScanReport, WalletError>) -> Decision {
+    pub fn after_scan(&mut self, page: &ListingPage, result: &Result<ScanReport, WalletError>) -> Decision {
         match result {
-            // the page is the node's, and it is not a chain's listing
-            Err(WalletError::Listing(_)) => Decision::Leave { ban: true, why: "a listing: error" },
+            Err(e) => self.after_scan_error(e),
+            // "the pool is not active on this node" (RW6-3): not a short page, not evidence.
+            // No more pages are asked for in this round; step 2 — where every node is asked —
+            // decides what it means (`after_inactive_page`)
+            Ok(r) if !page.active || !r.pool_active => {
+                self.said_inactive = true;
+                Decision::Go
+            }
+            Ok(r) => {
+                self.inactive.remove(&self.listing);
+                self.serve(page);
+                if r.leaf_mismatch {
+                    Decision::Leave { ban: true, why: "leaf_mismatch" }
+                } else if !r.at_tip && page.next_height.saturating_sub(page.from_height) < PAGE_BLOCKS {
+                    // neither at the node's tip nor the heights that were asked for
+                    Decision::Leave { ban: true, why: "a short page" }
+                } else {
+                    Decision::Go
+                }
+            }
+        }
+    }
+
+    /// Step 1, `scan` (or `ListingPage::from_json`: the body `L` answered with is not a page the
+    /// core reads — on the WebAssembly surface that is the same call and the same `listing:`)
+    /// refused.
+    pub fn after_scan_error(&mut self, e: &WalletError) -> Decision {
+        match e {
+            // the page is the node's, and it is not a chain's listing — EVERY way the content
+            // of a page can be invalid is this error (REVIEW_WALLET_6 RW6-2)
+            WalletError::Listing(_) => Decision::Leave { ban: true, why: "a listing: error" },
             // the client's own worker overflowed its log: nobody lied
-            Err(WalletError::RescanRequired) => Decision::Rescan,
-            Err(WalletError::StaleState) => Decision::Reload,
-            // `state_invariant:` and everything else: stop and report, keep the state
-            Err(e) => Decision::Stop(Stop::Fault(e.to_string())),
-            Ok(r) if r.leaf_mismatch => Decision::Leave { ban: true, why: "leaf_mismatch" },
-            // neither at the node's tip nor the heights that were asked for
-            Ok(r) if !r.at_tip && (!page.active || page.next_height.saturating_sub(page.from_height) < PAGE_BLOCKS) => Decision::Leave { ban: true, why: "a short page" },
-            Ok(_) => Decision::Go,
+            WalletError::RescanRequired => Decision::Rescan,
+            WalletError::StaleState => Decision::Reload,
+            // `state_invariant:` and everything else (the caller's key, the caller's state, a
+            // fault): stop and report, keep the state. No page causes any of them; should one
+            // ever do, the node it came from is not where the next session starts (RW6-2):
+            // `L` moves on, and what the stored state holds is no node's from here
+            e => {
+                if let Some(next) = self.next_node() {
+                    self.listing = next;
+                }
+                self.origin = None;
+                Decision::Stop(Stop::Fault(e.to_string()))
+            }
+        }
+    }
+
+    /// Step 2, when `L` answered `"active": false` in step 1 — its chain has no activation
+    /// height for the pool (`core/daemon/src/node.rs`, `shield_v2_notes_since`); `scan` changed
+    /// nothing. Decided here, after this round's stats answers and reports are in
+    /// (`after_stats`, `note_reports`):
+    ///
+    /// * **A node that contradicts itself is banned**: the same node's state report showed a
+    ///   pool that holds notes or nullifiers in this session (this round included). A node has a pool record
+    ///   with something in it only on a chain where the pool was activated, and such a node
+    ///   lists `"active": true`: the page and the report cannot both be true.
+    /// * Otherwise the node joins `inactive`. **A strict majority of the configured nodes
+    ///   inactive: the pool is not active on this network** — the loop idles
+    ///   ([`Stop::PoolInactive`]); no ban, no rescan.
+    /// * A minority: the node is behind the network (an outdated build, another chain's
+    ///   configuration) or lies. It is LEFT at once, not banned — and it does not come before
+    ///   the others for it: the next node lists.
+    fn after_inactive_page(&mut self) -> Decision {
+        let l = self.listing;
+        if self.pool_seen.contains(&l) {
+            return Decision::Leave { ban: true, why: "not active, against its own state report" };
+        }
+        self.inactive.insert(l);
+        if self.inactive.len() >= self.quorum() {
+            return Decision::Stop(Stop::PoolInactive);
+        }
+        Decision::Leave { ban: false, why: "the pool is not active on this node" }
+    }
+
+    /// Step 2, optional input: what the `active` field of each node's `/api/shield-v2/stats`
+    /// said in this round, as `(node, active)`. (`active: false` there also covers a chain
+    /// whose activation height is set and not reached; the listing of such a node is an
+    /// ordinary empty page at its tip.) A node that says `false` joins `inactive`, one that
+    /// says `true` leaves it; with a strict majority of the configured nodes inactive the loop
+    /// idles. A lying listing node cannot keep a wallet from learning that the pool is not
+    /// active by serving pages of its own: every node is asked here.
+    pub fn after_stats(&mut self, answers: &[(usize, bool)]) -> Decision {
+        for &(node, active) in answers {
+            if node >= self.nodes {
+                continue;
+            }
+            if active {
+                self.inactive.remove(&node);
+            } else {
+                self.inactive.insert(node);
+            }
+        }
+        if self.inactive.len() >= self.quorum() {
+            return Decision::Stop(Stop::PoolInactive);
+        }
+        Decision::Go
+    }
+
+    /// The idle loop asks again (the client's timer: a long interval — the pool is activated
+    /// by a release, not by a block). `bad` is kept; what the nodes said before is forgotten.
+    pub fn recheck_pool(&mut self) {
+        if self.stopped == Some(Stop::PoolInactive) {
+            self.stopped = None;
+            self.inactive.clear();
         }
     }
 
@@ -155,11 +390,30 @@ impl Session {
         self.reports.iter().map(|(_, r)| r.clone()).collect()
     }
 
+    /// Step 2, before anything is decided on this round's answers: a configured node whose
+    /// report shows a pool that holds something (`note_count` or `nullifier_count` above 0)
+    /// cannot answer "not active" later (`after_inactive_page`). Called by
+    /// [`Session::first_check_may_run`]; a client that takes [`Session::after_stats`] first
+    /// calls it before.
+    pub fn note_reports(&mut self, state: &WalletState, fresh: &[StateReport]) {
+        for r in fresh.iter().filter(|r| r.note_count > 0 || r.nullifier_count > 0) {
+            let id = quantum_vault_shield_v2_wallet::canonical_node_id(&r.node_id).ok();
+            if let Some(i) = id.and_then(|id| state.nodes().iter().position(|n| *n == id)) {
+                self.pool_seen.insert(i);
+            }
+        }
+    }
+
     /// Step 2a: the FIRST state check of a state made by `new_state` without the user's
     /// statement fixes its embargo base, and a configured node that is missing from it costs
     /// 256 blocks. It is made only when every configured node has answered THIS round for one
     /// common height — or after `W` rounds of waiting.
     pub fn first_check_may_run(&mut self, state: &WalletState, fresh: &[StateReport]) -> Decision {
+        self.note_reports(state, fresh);
+        // (step 2, first) the listing node said "the pool is not active" in this round
+        if self.said_inactive {
+            return self.after_inactive_page();
+        }
         if state.spend_embargo() != SpendEmbargo::AwaitingBase || state.sole_copy_asserted() {
             return Decision::Go;
         }
@@ -178,10 +432,17 @@ impl Session {
         if c.embargo_base_set || state.spend_embargo() != SpendEmbargo::AwaitingBase {
             self.waited = 0;
         }
-        // more configured nodes contradict the state than a lying minority can be: the listing
-        // is not the chain's, and every unconfirmed page of it came from L
+        // More configured nodes contradict the state than a lying minority can be: the state
+        // is not the chain's. WHOSE pages are in doubt is what the core reports with it
+        // (REVIEW_WALLET_6 RW6-1, `ConfirmReport::refuted`):
+        // * a height ABOVE what was confirmed before, in heights `L` itself served since the
+        //   state was last empty: `L` served a listing that is not a chain's — LEAVE(ban);
+        // * anything else — a height at or below the confirmed height (an earlier quorum's
+        //   word is contradicted; the pages down there may be any node's), or heights `L` did
+        //   not serve: the state is rescanned, `L` stays, NOBODY is blamed.
         if c.listing_refuted {
-            return Decision::Leave { ban: true, why: "listing_refuted" };
+            let ls = c.refuted.iter().any(|r| !r.confirmed && self.listed_by_listing_node(r.from_height, r.height));
+            return if ls { Decision::Leave { ban: true, why: "listing_refuted" } } else { Decision::Rescan };
         }
         // without a quorum answering nothing is counted: the node is not what is missing
         let Some(tip) = c.quorum_tip else { return Decision::Go };
@@ -216,7 +477,8 @@ impl Session {
     /// first. Nothing is changed — a client that cannot store the rescanned state has not left.
     ///
     /// * `ban`: `L` goes into `bad`. Only on evidence that L's listing is not a chain's (a
-    ///   `listing:` error, `leaf_mismatch`, a short page, `listing_refuted`).
+    ///   `listing:` error, `leaf_mismatch`, a short page, `listing_refuted` for heights `L`
+    ///   served, "not active" against its own state report).
     /// * the next node: the first after `L`, in the order of the configured set, cyclically,
     ///   that is not in `bad`. None and `L` banned: the loop stops. None and `L` not banned:
     ///   `L` is the only node left and stays.
@@ -224,11 +486,12 @@ impl Session {
     ///   is confirmed. So every unconfirmed page of a state is its CURRENT listing node's, and
     ///   the node that is banned is the node that lied.
     pub fn plan_leave(&self, ban: bool, state: &WalletState) -> Leave {
-        let next = (1..self.nodes).map(|k| (self.listing + k) % self.nodes).find(|i| !self.bad.contains(i));
+        let next = self.next_node();
+        let empty = state.scanned_height().is_none();
         match next {
-            Some(_) => Leave { next, rescan: ban || !Self::nothing_unconfirmed(state), ban },
-            None if ban => Leave { next: None, rescan: true, ban },
-            None => Leave { next: Some(self.listing), rescan: false, ban },
+            Some(_) => Leave { next, rescan: ban || !Self::nothing_unconfirmed(state), ban, empty },
+            None if ban => Leave { next: None, rescan: true, ban, empty },
+            None => Leave { next: Some(self.listing), rescan: false, ban, empty },
         }
     }
 
@@ -238,6 +501,9 @@ impl Session {
             self.bad.insert(self.listing);
         }
         (self.strikes, self.prev) = (0, None);
+        if plan.rescan || plan.empty {
+            self.emptied();
+        }
         match plan.next {
             Some(next) => self.listing = next,
             None => self.stopped = Some(Stop::NoHonestListingNode),
@@ -247,11 +513,13 @@ impl Session {
     /// `rescan_state` without a change of node (`rescan_required:`, a migration, the user).
     pub fn after_rescan(&mut self) {
         self.prev = None;
+        self.emptied();
     }
 }
 
 /// A client that runs the loop on a state in memory: steps 1 to 4, storage that never fails.
-/// For the loop tests of `tests/review_wallet_5.rs`.
+/// For the loop tests of `tests/review_wallet_5.rs` and `tests/review_wallet_6_resolution.rs`.
+/// `P` = [`LOOP_CLIENT_PAGES`].
 pub struct LoopClient {
     pub s: WalletState,
     pub session: Session,
@@ -264,7 +532,7 @@ pub struct LoopClient {
 impl LoopClient {
     pub fn new(s: WalletState, listed_from: usize) -> Self {
         let nodes = s.nodes().len();
-        Self { s, session: Session::new(nodes, listed_from), pages_per_round: 4, rescans: 0, left: Vec::new() }
+        Self { s, session: Session::new(nodes, listed_from), pages_per_round: LOOP_CLIENT_PAGES, rescans: 0, left: Vec::new() }
     }
 
     fn leave(&mut self, ban: bool, why: &'static str) {
@@ -294,15 +562,29 @@ impl LoopClient {
     }
 
     /// One round. `page(node, since)`: what that node answers to the listing request;
-    /// `reports()`: what the nodes answer to step 2.
+    /// `reports()`: what the nodes answer to step 2. Every listing request is answered and no
+    /// node says anything about the pool being active: see [`LoopClient::round_with`].
     pub fn round(&mut self, key: &ScanKey, page: &mut dyn FnMut(usize, u64) -> ListingPage, reports: &mut dyn FnMut() -> Vec<StateReport>) {
+        self.round_with(key, &mut |node, since| Some(page(node, since)), &mut || Stats { reports: reports(), active: Vec::new() })
+    }
+
+    /// One round, with everything a node can answer: `page(node, since)` is `None` when the
+    /// listing request is not answered (or the answer is not a page); `stats()` is what step 2
+    /// collected — the reports, and what each node's `active` field said.
+    pub fn round_with(&mut self, key: &ScanKey, page: &mut dyn FnMut(usize, u64) -> Option<ListingPage>, stats: &mut dyn FnMut() -> Stats) {
         if !self.session.begin_round() {
             return;
         }
         // 1. pages from L until its tip or the page budget
         let mut at_tip = false;
         for _ in 0..self.pages_per_round {
-            let p = page(self.session.listing, self.s.next_height());
+            let Some(p) = page(self.session.listing, self.s.next_height()) else {
+                let d = self.session.after_no_answer();
+                if !self.apply(d) {
+                    return;
+                }
+                break; // "otherwise go to step 2"
+            };
             let mut next = self.s.clone();
             let r = next.scan(&p, key);
             if r.is_ok() {
@@ -312,13 +594,21 @@ impl LoopClient {
             if !self.apply(d) {
                 return;
             }
+            if self.session.said_inactive {
+                break; // "the pool is not active": nothing more to ask this node for
+            }
             if r.is_ok_and(|r| r.at_tip) {
                 at_tip = true;
                 break;
             }
         }
         // 2. every node is asked; the reports of the last rounds
-        let fresh = reports();
+        let Stats { reports: fresh, active } = stats();
+        self.session.note_reports(&self.s, &fresh);
+        let idle = self.session.after_stats(&active);
+        if !self.apply(idle) {
+            return;
+        }
         let wait = self.session.first_check_may_run(&self.s, &fresh);
         let handed_in = self.session.add_reports(fresh);
         if !self.apply(wait) {
@@ -333,4 +623,12 @@ impl LoopClient {
         // 4. resolve_pending
         self.s.resolve();
     }
+}
+
+/// What step 2 collected in one round.
+pub struct Stats {
+    /// the `report` objects, labelled with the configured origins
+    pub reports: Vec<StateReport>,
+    /// `(node, active)`: the `active` field of each answer of `/api/shield-v2/stats`
+    pub active: Vec<(usize, bool)>,
 }

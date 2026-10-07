@@ -36,6 +36,18 @@
 //! listing, consistently, with every leaf number shifted to match; a forged payment until the
 //! client has left the node once, the truth from then on. A lying node may also not answer.
 //!
+//! **Three adversaries the loop had not met** (added after REVIEW_WALLET_6, which found a defect
+//! behind each): a liar that lists the truth with one block's transactions a block LATE, votes
+//! honestly in the state check, goes silent once everything is confirmed, and — when the client
+//! has left it — contradicts the height it shifted, together with the honest node that stands
+//! there (`Strategy::LateThenContradicts`, `World::directed_late_listing`: RW6-1); a liar whose
+//! pages hold field values that are not what the listing API serves — digests that are not
+//! canonical, wrong lengths, upper case, numbers out of range, wrong types, missing fields
+//! (`Strategy::BadFields`, and one lie of the memoryless adversary: RW6-2); and nodes that answer
+//! "the pool is not active" — a lying minority on a network where it is active
+//! (`Strategy::SaysInactive`), and, in a world of its own, an honest MAJORITY on a network
+//! where it is not (`inactive_network`: RW6-3).
+//!
 //! **The embargo at its edges, on purpose** (`World::directed_restore`): one honest node stops
 //! following, the chain moves on by up to 200 blocks, the device pays once more — mostly with
 //! the longest expiry — a liar keeps the payment, the device is lost; the restored device meets
@@ -94,10 +106,14 @@
 //!   balance EQUAL to the true balance (less only what the documented policies leave out).
 //! * **G4 — a lying or unreachable minority causes delay only**: the same loop, the same
 //!   bound; a true listing is never refuted, a truthful node never named as dissenting; **only
-//!   a lying node is ever banned, and the loop never stops** while an honest node is
-//!   configured; the embargo is over once the TRUE chain is 128 + 256 blocks past the state
+//!   a node that served a provably false page is ever banned** — from the model's own knowledge
+//!   of who lied: it judges every page a node serves against the true chain (`page_is_true`:
+//!   what an honest node at some height answers) and remembers whose false pages the stored
+//!   state holds; a node that said only the truth, a lying node included, is never banned —
+//!   **and the loop never stops** while an honest node is configured; the embargo is over once the TRUE chain is 128 + 256 blocks past the state
 //!   check that fixed its base, whatever the minority reported in it; **no page makes `scan`
-//!   answer anything but `listing:` or `rescan_required:`** (RW5-1) — and no call ever returns
+//!   answer anything but `listing:` or `rescan_required:`** (RW5-1, RW6-2; the body a node
+//!   answered with is handed to `ListingPage::from_json` and `scan` as it came) — and no call ever returns
 //!   a state that does not read back (RW4-5), whatever the pages did to leaf positions.
 //!
 //! **What was removed** (REVIEW_WALLET_5 section 5: three "invariants" restated the code's own
@@ -168,6 +184,74 @@ enum Strategy {
     ForgedTwin,
     /// a payment that is on no chain until the client has left it once; the truth from then on
     RefutesThenBehaves,
+    /// REVIEW_WALLET_6 RW6-1. The truth — but every pool transaction of a block at which an
+    /// honest node is standing still is listed ONE BLOCK LATE. The state at every later height
+    /// is the chain's, and this node says so in the state check (it votes honestly): the listing
+    /// is confirmed. Then it stops answering, is left — nothing unconfirmed, so no rescan —
+    /// and from then on contradicts the heights at which honest nodes stand: where it shifted,
+    /// the honest node standing there truthfully contradicts the wallet too.
+    LateThenContradicts,
+    /// RW6-2. The truth with one field of the first listed transaction (or of the page) set to
+    /// a value the listing API never serves — the same one in every round (the number picks it
+    /// from `bad_field`).
+    BadFields(u64),
+    /// RW6-3. "The pool is not active" — on a network where it is.
+    SaysInactive,
+}
+
+/// RW6-2: one field of a page set to a value no node of this chain serves. `k` picks the field
+/// and the way; `tx`: the first listed transaction, when there is one. Returns `false` when
+/// this corruption has nothing to work on.
+fn bad_field(page: &mut serde_json::Value, k: u64) -> bool {
+    use serde_json::json;
+    let has_tx = page["txs"].as_array().is_some_and(|t| !t.is_empty());
+    let big = "ff".repeat(32);
+    let next = page["next_height"].clone();
+    match k % 30 {
+        // the page's own fields
+        0 => page["tip_height"] = json!("many"),
+        1 => page["from_height"] = json!(-1),
+        2 => page["next_height"] = json!(18_446_744_073_709_551_616.0),
+        3 => page["next_height"] = json!(page["from_height"].as_u64().unwrap().saturating_sub(1)),
+        4 => page["txs"] = json!({ "0": null }),
+        5 => {
+            page.as_object_mut().unwrap().remove("tip_height");
+        }
+        6 => page["active"] = json!("yes"),
+        _ if !has_tx => return false,
+        // … and those of a transaction
+        k => {
+            let tx = &mut page["txs"][0];
+            match k {
+                7 => tx["nf1"] = json!(big),
+                8 => tx["nf2"] = json!(big),
+                9 => tx["outputs"][0]["cm_out"] = json!(big),
+                10 => tx["outputs"][1]["cm_out"] = json!(big),
+                11 => tx["nf1"] = json!(tx["nf1"].as_str().unwrap().to_uppercase().replace('0', "A")),
+                12 => tx["nf2"] = json!(&tx["nf2"].as_str().unwrap()[2..]),
+                13 => tx["nf1"] = json!(format!("{}zz", &tx["nf1"].as_str().unwrap()[2..])),
+                14 => tx["nf2"] = tx["nf1"].clone(),
+                15 => tx["outputs"][0]["cm_out"] = json!(format!("{}00", tx["outputs"][0]["cm_out"].as_str().unwrap())),
+                16 => tx["outputs"][1]["kem_ct"] = json!("00".repeat(KEM - 1)),
+                17 => tx["outputs"][0]["note_ct"] = json!("0G".repeat(NOTE)),
+                18 => tx["outputs"][0]["leaf"] = json!(null),
+                19 => tx["outputs"][1]["leaf"] = json!(tx["outputs"][1]["leaf"].as_u64().unwrap() + 1),
+                20 => tx["outputs"] = json!([tx["outputs"][0].clone()]),
+                21 => tx["outputs"] = json!([tx["outputs"][0].clone(), tx["outputs"][1].clone(), tx["outputs"][1].clone()]),
+                22 => tx["tx_type"] = json!("shield"),
+                23 => tx["tx_hash"] = json!("abc"),
+                24 => tx["height"] = next,
+                25 => tx["height"] = json!("3"),
+                26 => tx["index"] = json!(-2),
+                27 => tx["nf1"] = json!(7),
+                28 => {
+                    tx.as_object_mut().unwrap().remove("nf2");
+                }
+                _ => tx["outputs"][0]["kem_ct"] = json!(null),
+            }
+        }
+    }
+    true
 }
 
 fn b32(b: &[u8]) -> [u8; 32] {
@@ -573,6 +657,20 @@ struct Stats {
     no_answers: usize,
     first_check_waits: usize,
     persistent_liars: usize,
+    /// RW6: pages the model judged false / of which the client banned the node at once
+    false_pages: usize,
+    bad_field_pages: usize,
+    inactive_pages: usize,
+    late_listings: usize,
+    directed_late: usize,
+    /// `confirm_state` said that a height at or below the confirmed height is contradicted by
+    /// more nodes than can be lying — and the loop rescanned without blaming anybody
+    refuted_confirmed: usize,
+    nobody_blamed: usize,
+    /// the world in which the pool is not active
+    inactive_idles: usize,
+    inactive_bans: usize,
+    inactive_activations: usize,
     rescans: usize,
     states_lost: usize,
     migrations: [usize; 4],
@@ -654,6 +752,14 @@ struct World {
     behaved: Vec<bool>,
     /// `ForgedTwin`: the forged transaction (one per run)
     forged_twin: Option<Vec<u8>>,
+    /// **The model's knowledge of who lied** (REVIEW_WALLET_6): node `i` served a page that is
+    /// not what an honest node at any height answers (`page_is_true`), and the stored state
+    /// still holds it (it was applied since the state was last empty).
+    false_in_state: Vec<bool>,
+    /// … and the node whose page of the call in progress the model judged false.
+    false_now: Option<usize>,
+    /// what the `active` field of each node's stats answer said in this round
+    stats_answers: Vec<(usize, bool)>,
     /// **The client's session — `common::client_loop::Session`, the loop of `NOTES.md` §6 as
     /// code**: `L` (also stored with the state: `listed_from`), `bad`, the strikes, the reports
     /// of the last rounds. Lost in a crash, but for `L`.
@@ -723,6 +829,9 @@ impl World {
             strategy: vec![Strategy::Memoryless; n],
             behaved: vec![false; n],
             forged_twin: None,
+            false_in_state: vec![false; n],
+            false_now: None,
+            stats_answers: Vec::new(),
             session: Session::new(n, 0),
             mute_leaders: false,
             statement: false,
@@ -744,13 +853,16 @@ impl World {
         // half the lying nodes lie the same way in every round
         for i in 0..n {
             if w.liar[i] {
-                w.strategy[i] = match w.rng.below(12) {
+                w.strategy[i] = match w.rng.below(24) {
                     0 => Strategy::NoProgress,
                     1 => Strategy::NeverAtTip,
                     2 => Strategy::TrueButShort(1 + w.rng.below(40)),
                     3 => Strategy::TruthThenEmpty,
                     4 => Strategy::ForgedTwin,
                     5 => Strategy::RefutesThenBehaves,
+                    6 | 7 => Strategy::LateThenContradicts,
+                    8 | 9 => Strategy::BadFields(w.rng.below(30)),
+                    10 | 11 => Strategy::SaysInactive,
                     _ => Strategy::Memoryless,
                 };
                 w.stats.persistent_liars += (w.strategy[i] != Strategy::Memoryless) as usize;
@@ -1040,6 +1152,44 @@ impl World {
                 }
                 Some(page)
             }
+            Strategy::LateThenContradicts => {
+                let l = self.session.listing;
+                // everything it listed is confirmed: it stops answering, to be left without a
+                // rescan (once; from then on it lists as before)
+                if !self.behaved[l] && self.stored.scanned_height().is_some() && Session::nothing_unconfirmed(&self.stored) {
+                    return None;
+                }
+                let mut page = self.chain.page(since, tip);
+                let standing: BTreeSet<u64> = (0..self.nodes.len()).filter(|&j| !self.liar[j] && self.stalled[j]).map(|j| self.node_height[j]).filter(|x| *x >= start && *x < tip).collect();
+                let txs = page["txs"].as_array_mut().unwrap();
+                let mut moved = 0;
+                for x in standing {
+                    // the transactions of block x, in front of those of block x + 1
+                    let late = txs.iter().filter(|t| t["height"].as_u64() == Some(x)).count() as u64;
+                    if late == 0 {
+                        continue;
+                    }
+                    for t in txs.iter_mut() {
+                        if t["height"].as_u64() == Some(x + 1) {
+                            t["index"] = serde_json::json!(t["index"].as_u64().unwrap() + late);
+                        } else if t["height"].as_u64() == Some(x) {
+                            t["height"] = serde_json::json!(x + 1);
+                        }
+                    }
+                    moved += 1;
+                }
+                self.stats.late_listings += moved;
+                Some(page)
+            }
+            Strategy::BadFields(k) => {
+                let mut page = self.chain.page(since, tip);
+                self.stats.bad_field_pages += bad_field(&mut page, k) as usize;
+                Some(page)
+            }
+            Strategy::SaysInactive => {
+                self.stats.inactive_pages += 1;
+                Some(serde_json::json!({ "active": false, "tip_height": tip, "from_height": since, "next_height": since, "txs": [] }))
+            }
             Strategy::RefutesThenBehaves => {
                 let mut page = self.chain.page(since, tip);
                 if !self.behaved[self.session.listing] {
@@ -1071,7 +1221,7 @@ impl World {
         };
         // (a wallet that rescans with transactions pending is where shifted leaves matter)
         let shift = self.stored.tree().note_count() == 0 && listed > 0 && !self.stored.pending().is_empty() && self.rng.below(2) == 0;
-        match if shift { 12 } else { self.rng.below(13) } {
+        match if shift { 12 } else { self.rng.below(14) } {
             // a transaction of this wallet that the node is holding back, listed as mined
             0 => {
                 let held: Vec<usize> = (0..self.attempts.len()).filter(|&i| !self.chain.is_mined(&self.attempts[i].tx)).collect();
@@ -1187,13 +1337,18 @@ impl World {
                 page = self.chain.page(since, from);
                 page["tip_height"] = serde_json::json!(self.chain.height.max(from));
             }
+            // a field value the listing API never serves (RW6-2), fresh for every page
+            13 => {
+                let k = self.rng.below(30);
+                self.stats.bad_field_pages += bad_field(&mut page, k) as usize;
+            }
             // the truth (a liar need not lie every time)
             _ => {}
         }
         // … and whatever it is, cut: between two notes of one pending transaction, too. A page
         // that is cut below the 64 heights that were asked for is a SHORT page — the client
         // bans the node for it — so a liar that wants to stay cuts mostly above them
-        if self.rng.below(3) == 0 {
+        if page["txs"].is_array() && page["from_height"].is_u64() && page["next_height"].is_u64() && page["txs"].as_array().unwrap().iter().all(|t| t["height"].is_u64()) && self.rng.below(3) == 0 {
             let short = self.rng.below(4) == 0;
             let heights: Vec<u64> = page["txs"].as_array().unwrap().iter().map(|t| t["height"].as_u64().unwrap()).filter(|h| short || *h + 1 >= from + PAGE_BLOCKS).collect();
             if let Some(cut) = self.rng.pick(&heights) {
@@ -1202,6 +1357,27 @@ impl World {
             }
         }
         Some(page)
+    }
+
+    /// **The model's judgement of a page** (REVIEW_WALLET_6), from the true chain and from
+    /// nothing the wallet computes: is this what an HONEST node answers to `since`, standing at
+    /// some height the chain has reached? An honest node at height `h` answers the true
+    /// transactions of the heights `max(since, A) ..`, up to its tip `h` or — when the answer
+    /// is cut — over at least the 64 heights that were asked for; and on this network the pool
+    /// is active. Everything else is a false page: a transaction that is not on the chain or
+    /// not where the chain has it, one that is missing, a field that is not what the node
+    /// encodes, a tip or a height the chain has not reached, a page cut short, "not active".
+    fn page_is_true(&self, since: u64, page: &serde_json::Value) -> bool {
+        let (Some(tip), Some(from), Some(next)) = (page["tip_height"].as_u64(), page["from_height"].as_u64(), page["next_height"].as_u64()) else { return false };
+        if page["active"] != serde_json::json!(true) || tip > self.chain.height || tip + 1 < A || from != since.max(A) {
+            return false;
+        }
+        let whole = (tip + 1).max(from);
+        if next < from || next > whole || (next != whole && next - from < PAGE_BLOCKS) {
+            return false;
+        }
+        let truth = if next == from { serde_json::json!([]) } else { self.chain.page(from, next - 1)["txs"].clone() };
+        page["txs"] == truth
     }
 
     /// NOTES §6 step 1, one page from `L`, scanned with the full key — or, for the background
@@ -1213,6 +1389,12 @@ impl World {
         let seed = self.seed;
         self.follow();
         let l = self.session.listing;
+        // (the model: an empty state holds nobody's page)
+        if self.stored.scanned_height().is_none() {
+            self.false_in_state.iter_mut().for_each(|f| *f = false);
+        }
+        self.false_now = None;
+        let since = self.stored.next_height();
         let page = if self.liar[l] {
             self.stats.lying_pages += 1;
             match self.lying_page() {
@@ -1237,16 +1419,39 @@ impl World {
             }
             page
         };
-        let page = ListingPage::from_json(&page.to_string()).unwrap();
+        // the model's own judgement of what was served, before the wallet sees it
+        let is_true = self.page_is_true(since, &page);
+        assert!(is_true || self.liar[l], "seed {seed}: the model calls an honest node's page false");
+        if !is_true {
+            self.false_now = Some(l);
+            self.stats.false_pages += 1;
+        }
+        // the body the node answered with goes to the core as it came: `from_json`, then `scan`
         let mut s = self.stored.clone();
         let key = if view_only { self.alice.incoming_viewing_key() } else { self.alice.scan_key() };
-        let result = s.scan(&page, &key);
+        let parsed = ListingPage::from_json(&page.to_string());
+        let result = match &parsed {
+            Ok(page) => s.scan(page, &key),
+            Err(WalletError::Listing(text)) => Err(WalletError::Listing(text.clone())),
+            Err(e) => panic!("seed {seed}: a page text is refused with {e} — an error no page may cause"),
+        };
         // **no page makes `scan` answer `state_invariant`** (REVIEW_WALLET_5 RW5-1), or anything
-        // else the loop has no rule for: what a node serves is refused as `listing:` or applied
+        // else the loop has no rule for (REVIEW_WALLET_6 RW6-2: the pages now carry every kind
+        // of field the listing API never serves): what a node serves is refused as `listing:`
+        // or applied
         if let Err(e) = &result {
             assert!(matches!(e, WalletError::Listing(_) | WalletError::RescanRequired), "seed {seed}: scan failed with {e} — an error no page may cause");
             assert!(view_only || self.viewed || !matches!(e, WalletError::RescanRequired), "seed {seed}: rescan_required for a state that was never scanned without the nullifier key");
+            // … and from the model's side: a `listing:` error is the answer to a FALSE page, or
+            // to a page of the node whose false pages the state holds — never to the truth on
+            // a true state
+            assert!(!matches!(e, WalletError::Listing(_)) || !is_true || self.false_in_state[l], "seed {seed}: a true page on a state without a false page is refused: {e}");
+            assert!(s == self.stored, "seed {seed}: a refused page changed the state");
         }
+        let Ok(page) = parsed else {
+            let d = self.session.after_scan_error(result.as_ref().err().unwrap());
+            return Err(self.apply(d));
+        };
         if let Ok(r) = &result {
             // the wallet's own change does not depend on what the listing served as its
             // ciphertext: when the listing shows the transaction, the change note is there
@@ -1266,22 +1471,33 @@ impl World {
             for (a, b) in s.pending().iter().zip(self.stored.pending()) {
                 assert!((&a.nullifiers, &a.outputs, &a.input_cms, a.expiry_height) == (&b.nullifiers, &b.outputs, &b.input_cms, b.expiry_height), "seed {seed}: a scan changed what a pending entry is held by");
             }
-            assert_eq!(s.view_only_since().is_some(), view_only, "seed {seed}: the view-only mark follows the key of the last scan");
+            // (a page that says "not active" is not read: it leaves the mark where it was)
+            assert!(!page.active || s.view_only_since().is_some() == view_only, "seed {seed}: the view-only mark follows the key of the last scan");
             // (the books, not the code: no chain holds one commitment at two leaves — a state
             // never holds two notes with one commitment, whatever was listed)
             let cms: BTreeSet<[u8; 32]> = s.notes().iter().map(|n| n.cm.0).collect();
             assert_eq!(cms.len(), s.notes().len(), "seed {seed}: the state holds two notes with one commitment");
             self.stats.lying_pages_accepted += self.liar[l] as usize;
-            self.stats.view_only_scans += view_only as usize;
+            self.stats.view_only_scans += (view_only && page.active) as usize;
             self.stats.leaf_mismatches += r.leaf_mismatch as usize;
+            // "not active" is not an empty pool: nothing was read, nothing is stored
+            assert_eq!(r.pool_active, page.active, "seed {seed}");
+            assert!(page.active || s == self.stored, "seed {seed}: a page that says the pool is not active changed the state");
             if !self.persist(s) {
                 return Err(false); // a crash: the application starts again
             }
-            self.viewed |= view_only;
+            self.viewed |= view_only && page.active;
+            // the model: the stored state now holds this node's false page
+            if !is_true && page.active {
+                self.false_in_state[l] = true;
+            }
         }
         let d = self.session.after_scan(&page, &result);
         if !self.apply(d) {
             return Err(false);
+        }
+        if self.session.said_inactive {
+            return Err(true); // "not active": no more pages; step 2 decides
         }
         Ok(result.is_ok_and(|r| r.at_tip))
     }
@@ -1293,7 +1509,7 @@ impl World {
             Decision::Leave { ban, why } => self.leave(ban, why),
             Decision::Rescan => self.rescan_same_node(),
             Decision::Reload | Decision::Wait => {}
-            Decision::Stop(stop) => panic!("seed {}: the loop stopped: {stop:?}", self.seed),
+            Decision::Stop(stop) => panic!("seed {}: the loop stopped: {stop:?} (on a network where the pool is active, with an honest majority configured)", self.seed),
         }
         false
     }
@@ -1308,6 +1524,13 @@ impl World {
         let seed = self.seed;
         let l = self.session.listing;
         assert!(!ban || self.liar[l], "seed {seed}: an HONEST node was banned ({why})");
+        // **only a node that served a provably false page is ever banned** — by the model's own
+        // record of who lied (`page_is_true`), not by anything the wallet concluded: the page
+        // of this call, or a page of this node that the stored state still holds
+        if self.stored.scanned_height().is_none() {
+            self.false_in_state.iter_mut().for_each(|f| *f = false);
+        }
+        assert!(!ban || self.false_now == Some(l) || self.false_in_state[l], "seed {seed}: node {l} is banned ({why}) and the model knows of no false page it served into this state (strategy {:?})", self.strategy[l]);
         let plan = self.session.plan_leave(ban, &self.stored);
         assert!(plan.next.is_some(), "seed {seed}: every node is banned — and only lying nodes are ever banned");
         if plan.rescan {
@@ -1348,8 +1571,30 @@ impl World {
         let scanned = self.stored.scanned_height();
         let mut out = Vec::new();
         let all_honest_silent = !settled && self.rng.below(10) == 0;
+        self.stats_answers.clear();
+        // where honest nodes are standing still (what `LateThenContradicts` aims at)
+        let standing: BTreeSet<u64> = (0..self.nodes.len()).filter(|&j| !self.liar[j] && self.stalled[j]).map(|j| self.node_height[j]).filter(|x| *x < tip).collect();
         for i in 0..self.nodes.len() {
             let id = self.nodes[i].clone();
+            // the `active` field of the node's stats answer: the truth from an honest node that
+            // answers; "not active" from the liar that says so, and now and then from another
+            if self.liar[i] {
+                let active = self.strategy[i] != Strategy::SaysInactive && self.rng.below(12) != 0;
+                self.stats_answers.push((i, active));
+            }
+            if self.liar[i] && self.strategy[i] == Strategy::LateThenContradicts && self.stale.is_none() {
+                // votes honestly — and, once the client has left it, contradicts every height
+                // at which an honest node stands (with a state that is nobody's)
+                out.push(self.chain.report(&id, tip));
+                if self.behaved[i] {
+                    for &x in &standing {
+                        let mut r = self.chain.report(&id, x);
+                        r.nullifier_acc = canonical(x ^ 0x6c61_7465);
+                        out.push(r);
+                    }
+                }
+                continue;
+            }
             if !self.liar[i] {
                 // the directed restore: the honest nodes at the tip are unreachable until the
                 // restored device has its embargo base
@@ -1363,6 +1608,7 @@ impl World {
                     continue;
                 }
                 out.push(self.chain.report(&id, self.node_height[i]));
+                self.stats_answers.push((i, true));
                 continue;
             }
             // the stale-quorum adversary: the TRUE state of the height an honest node stands at
@@ -1433,12 +1679,31 @@ impl World {
     fn confirm(&mut self, settled: bool, at_tip: bool) -> Option<ConfirmReport> {
         let seed = self.seed;
         let fresh = self.reports(settled);
+        // step 2: what the nodes say about the pool being active (a lying minority saying
+        // "not active" is never a majority: the loop goes on)
+        let answers = self.stats_answers.clone();
+        self.session.note_reports(&self.stored, &fresh);
+        let idle = self.session.after_stats(&answers);
+        if !self.apply(idle) {
+            return None;
+        }
         // step 2a: the FIRST state check of a state without the user's statement waits for
         // every node (a bounded number of rounds)
+        // (and, first: a listing node that said "not active" in step 1 is left — or banned,
+        // if its own report shows a pool that holds notes; the model: its page was false, the
+        // pool IS active here)
+        let said_inactive = self.session.said_inactive;
         let gate = self.session.first_check_may_run(&self.stored, &fresh);
         let reports = self.session.add_reports(fresh);
         if gate == Decision::Wait {
             self.stats.first_check_waits += 1;
+            return None;
+        }
+        if said_inactive {
+            assert!(matches!(gate, Decision::Leave { .. }), "seed {seed}: the listing node said 'not active' and stays");
+            self.false_now = Some(self.session.listing);
+        }
+        if !self.apply(gate) {
             return None;
         }
         let before = self.stored.clone();
@@ -1494,6 +1759,21 @@ impl World {
                 assert!(changes_since < 270, "seed {seed}: a report for height {}, {changes_since} pool-changing heights below the confirmed height, was compared with a state the wallet no longer keeps", d.height);
             }
         }
+        // RW6-1, from the model: a refutation names heights, and says which side of the height
+        // that was confirmed BEFORE the call each of them is on; fewer dissenters than a lying
+        // minority can be never make one
+        assert_eq!(c.listing_refuted, !c.refuted.is_empty(), "seed {seed}");
+        assert_eq!((c.listing_refuted_above_confirmed, c.confirmed_refuted), (c.refuted.iter().any(|r| !r.confirmed), c.refuted.iter().any(|r| r.confirmed)), "seed {seed}");
+        for r in &c.refuted {
+            assert!(r.dissenting > self.nodes.len() - self.quorum() && 2 * r.dissenting >= self.nodes.len(), "seed {seed}: {} dissenters of {} nodes refute a listing", r.dissenting, self.nodes.len());
+            assert_eq!(r.confirmed, before.confirmed_height().is_some_and(|c| r.height <= c), "seed {seed}");
+            assert_eq!(r.from_height, if r.confirmed { 0 } else { before.confirmed_height().map_or(0, |c| c + 1) }, "seed {seed}");
+            // more dissenters than liars: an honest node is among them, and honest nodes say
+            // the truth — so the wallet's state at that height is NOT the chain's
+            let wallet_true = before.state_at(r.height).zip(truth_at(r.height)).is_some_and(|(m, t)| (m.tree_root, m.nullifier_acc, m.note_count, m.nullifier_count, m.ciphertext_acc) == (t.root, t.nf_acc, t.notes, t.nfs, t.ct_acc));
+            assert!(!wallet_true, "seed {seed}: the state at height {} is the chain's and is called refuted", r.height);
+        }
+        self.stats.refuted_confirmed += c.confirmed_refuted as usize;
         // a listing the chain's is never "refuted" while only liars can contradict it
         if c.listing_refuted {
             let wallet_true = before.scanned_height().is_some_and(|top| top <= self.chain.height && c.conflicts.iter().all(|h| before.state_at(*h).zip(truth_at(*h)).is_some_and(|(m, t)| (m.tree_root, m.nullifier_acc, m.note_count, m.nullifier_count, m.ciphertext_acc) == (t.root, t.nf_acc, t.notes, t.nfs, t.ct_acc))));
@@ -1530,7 +1810,11 @@ impl World {
         }
         // ---- the loop's rules for the answer (NOTES §6 step 3: `Session::after_confirm`) -----------------
         self.stats.refuted += c.listing_refuted as usize;
+        self.false_now = None;
         let d = self.session.after_confirm(&c, at_tip, &self.stored);
+        // a refutation that is not of heights `L` served: the state is rescanned, nobody blamed
+        self.stats.nobody_blamed += (c.listing_refuted && d == Decision::Rescan) as usize;
+        assert!(!c.listing_refuted || matches!(d, Decision::Rescan | Decision::Leave { ban: true, .. }), "seed {seed}: a refuted listing is kept");
         if !self.apply(d) {
             return None;
         }
@@ -1817,7 +2101,9 @@ impl World {
             .filter(|&i| {
                 let a = &self.attempts[i];
                 if p.legacy {
-                    p.nullifiers.iter().any(|n| a.nullifiers.contains(n))
+                    // (a lock that format 1 made in a state read with the viewing key names
+                    // its note by commitment alone: the books say which attempts spend that note)
+                    p.nullifiers.iter().any(|n| a.nullifiers.contains(n)) || (p.nullifiers.is_empty() && (0..2).any(|i| self.chain.note_spent_by(&a.tx.nf(i)).is_some_and(|cm| p.input_cms.iter().any(|c| c.0 == cm))))
                 } else if p.outputs.is_empty() {
                     a.nullifiers == p.nullifiers && p.change.as_ref().is_some_and(|c| a.outputs.contains(&c.cm))
                 } else {
@@ -1869,7 +2155,10 @@ impl World {
         }
         for p in &r.superseded {
             let found = self.attempts_for(p);
-            assert!(p.nullifiers.iter().any(|n| self.chain.spent.contains(&n.0)), "seed {seed}: settled as superseded and none of its nullifiers is spent");
+            assert!(
+                p.nullifiers.iter().any(|n| self.chain.spent.contains(&n.0)) || (p.legacy && p.nullifiers.is_empty() && p.input_cms.iter().any(|c| self.chain.notes.iter().any(|t| t.cm == c.0 && t.spent.is_some()))),
+                "seed {seed}: settled as superseded and none of its nullifiers is spent"
+            );
             if p.legacy {
                 // a lock migrated from format 1 does not know its transaction: "its input was spent"
                 for i in found {
@@ -1881,7 +2170,10 @@ impl World {
             }
             self.stats.settled_superseded += 1;
         }
-        let changed = !verdicts.is_empty();
+        // (whatever was settled is stored — also a lock that format 1 made by commitment alone,
+        // released at its expiry, whose every attempt was mined long ago: it has no verdict left
+        // to give, and the state without it is still the state to keep)
+        let changed = !(r.mined.is_empty() && r.superseded.is_empty() && r.expired.is_empty());
         if !changed || self.persist(s) {
             // only what the client has stored is what the user was told. (One lock migrated from
             // format 1 can stand for several attempts from one note: "paid" if any of them was.)
@@ -1975,6 +2267,50 @@ impl World {
             self.session.listing = l;
         }
         self.stats.restores += 1;
+    }
+
+    /// **RW6-1, on purpose** (REVIEW_WALLET_6: the random walk meets the shape too rarely). A
+    /// block with a pool transaction; one honest node stops following there; one more block.
+    /// Every lying node becomes a `LateThenContradicts` liar, and the user makes one of them the
+    /// listing node (another node chosen in the settings: the state is rescanned, the session
+    /// starts on it). Then the loop runs: the liar lists that block's transactions one block
+    /// late, votes honestly — the listing is confirmed — goes silent, is left without a
+    /// rescan, and contradicts the height where the honest node stands, which truthfully
+    /// contradicts the wallet's state there too: more dissent than a lying minority can be, at
+    /// a height BELOW the confirmed height, while the wallet lists from whoever came next.
+    ///
+    /// Nothing here asserts an outcome: `leave` holds the loop to "only a node that served a
+    /// false page is banned" — which the honest node listed from at that moment did not.
+    fn directed_late_listing(&mut self) -> bool {
+        let n = self.nodes.len();
+        let liars: Vec<usize> = (0..n).filter(|&i| self.liar[i]).collect();
+        let honest: Vec<usize> = (0..n).filter(|&i| !self.liar[i]).collect();
+        if liars.is_empty() || honest.len() < 2 || self.stale.is_some() || self.mute_leaders {
+            return false;
+        }
+        for &i in &liars {
+            self.strategy[i] = Strategy::LateThenContradicts;
+            self.behaved[i] = false;
+        }
+        self.settle_nodes();
+        let t = self.traffic();
+        assert!(self.chain.block(Some(&t)));
+        self.other_paid += t.outs.iter().flatten().map(|o| o.1 as u128).sum::<u128>();
+        self.follow();
+        let j = self.rng.pick(&honest).unwrap();
+        self.stalled[j] = true;
+        self.chain.advance_to(self.chain.height + 1);
+        self.follow();
+        // the user picks a node in the settings: a rescanned state, a session on that node
+        self.stored = self.stored.fresh_for_rescan();
+        self.viewed = false;
+        self.session = Session::new(n, self.rng.pick(&liars).unwrap());
+        self.stats.directed_late += 1;
+        for _ in 0..2 * STRIKES + 6 {
+            self.round(4, false);
+            self.check("the late listing");
+        }
+        true
     }
 
     /// **RW4-1 at its worst, on purpose** (REVIEW_WALLET_5 RW5-8: the random walk reached the
@@ -2412,11 +2748,14 @@ impl World {
     /// tip and answering: every lying node gets one tenure — `D` rounds of catching up at the
     /// speed the listing API guarantees, one round at the quorum's tip, `K` strikes — then an
     /// honest node, and `W` rounds for a first state check that waits for every node.
-    /// `D = ⌈(tip − A + 1) / (64 · P)⌉`.
+    /// `D = ⌈(tip − A + 1) / (64 · P)⌉`. And once `D + 1` more (REVIEW_WALLET_6 RW6-1): a
+    /// state whose CONFIRMED part is contradicted is rescanned without a change of node — which
+    /// only reports from before the honest nodes were at one height can cause, and those are
+    /// gone after three rounds.
     fn settlement_bound(&self) -> usize {
         let liars = self.liar.iter().filter(|l| **l).count() as u64;
         let d = (self.chain.height + 2 - A).div_ceil(PAGE_BLOCKS * PAGES_PER_ROUND);
-        ((liars + 1) * (d + STRIKES as u64 + 2) + FIRST_CHECK_ROUNDS as u64) as usize
+        ((liars + 1) * (d + STRIKES as u64 + 2) + FIRST_CHECK_ROUNDS as u64 + d + 1) as usize
     }
 
     /// **G3 / G4 as a bound.** The chain moves past every expiry (at most 128 blocks: checked
@@ -2616,7 +2955,10 @@ impl World {
                     self.recover();
                     "a damaged state, recover_locks"
                 }
-                _ => "nothing",
+                _ => {
+                    self.directed_late_listing();
+                    "the late listing, on purpose"
+                }
             },
             101..=104 => {
                 self.second_device_pays();
@@ -2670,6 +3012,300 @@ impl World {
     }
 }
 
+/// **A network on which the pool is not active** (REVIEW_WALLET_6 RW6-3) — a world of its own:
+/// 2 to 7 nodes, a strict minority lying. An honest node answers the listing request with
+/// `{ "active": false, … }` (`core/daemon/src/node.rs`, `shield_v2_notes_since`), its stats say
+/// `active: false` and carry no report, and it may not answer at all. A lying node, each in its
+/// own way for the whole run: says "not active" too; says so and reports a pool that holds
+/// notes (it contradicts itself); serves a forged listing that pays the wallet, with or without
+/// reports that vouch for it; serves empty active pages; is silent.
+///
+/// Then, in half the runs, **the pool is activated** (a release: every honest node now lists
+/// and reports a real chain), the idle client asks again, and the liars go on as before.
+///
+/// The model's invariants, from what the model itself knows the nodes answered:
+///
+/// * **no honest node is ever banned** — every one of them said "not active", truthfully;
+/// * **a node is banned only for a page that is provably false**: an active page on a network
+///   without the pool, or — after the activation — a page that is not the chain's; or a "not
+///   active" page from a node whose own report showed a pool that holds notes;
+/// * while the pool is not active nothing is ever confirmed, nothing rescanned for it, and once
+///   a strict majority of the configured nodes has answered "not active" the loop IDLES
+///   (`Stop::PoolInactive`) — in the first round in which the honest nodes answer the stats
+///   request, whoever is listed from;
+/// * after the activation the tip is confirmed within the bound of `NOTES.md` §6, with the true
+///   balance, and no node is banned for having said "not active" before.
+fn inactive_network(seed: u64, total: &mut Stats) {
+    use common::client_loop::Stop;
+    let mut rng = Rng(seed.wrapping_mul(0xd1b5_4a32_d192_ed03) | 1);
+    let alice = keys(PHRASE_1);
+    let n = 2 + rng.below(6) as usize;
+    let ids: Vec<String> = (0..n).map(|i| format!("https://node-{i}.example")).collect();
+    let quorum = (n / 2 + 1).max(2);
+    let max_liars = n - quorum;
+    let mut liar = vec![false; n];
+    while liar.iter().filter(|l| **l).count() < max_liars {
+        liar[rng.below(n as u64) as usize] = true;
+    }
+    // how each liar lies: 0 "not active"; 1 "not active" and a report of a pool with notes;
+    // 2 a forged listing; 3 a forged listing and reports that vouch for whatever the wallet
+    // holds; 4 empty active pages; 5 silent
+    let way: Vec<u64> = (0..n).map(|_| rng.below(6)).collect();
+    let mut chain = RefChain::new(alice.scan_key().nk.unwrap(), keys(PHRASE_2).scan_key().nk.unwrap());
+    let pk = [digest_from_bytes(&alice.address().pk).unwrap(), digest_from_bytes(&keys(PHRASE_2).address().pk).unwrap()];
+    let shield = |chain: &RefChain, value: u64, label: &str| {
+        let key = fake_account_key(5);
+        let to = alice.address();
+        let ctx = TxContext { chain_id: CHAIN.to_string(), anchor: chain.snap.root, anchor_height: chain.height, expiry_height: chain.height + 100 };
+        let req = ShieldRequest { ctx, from_pub_key: &key, nonce: 1, v_in: value + Q, fee: Q, recipient: &to, max_fee: None };
+        let tx = deterministic::shield(&req, label).unwrap();
+        Tx::checked(&tx, &[(OutputRole::Payment, Who::Alice, value, true)], (value + Q, 0, Q), &pk, "inactive-world")
+    };
+    let forged = shield(&chain, 50 * Q, &format!("inactive-forged-{seed}")).body.clone();
+    let mut s = WalletState::new(alice.address().pk);
+    s.set_nodes(&ids).unwrap();
+    let sole_copy = rng.below(2) == 0;
+    if sole_copy {
+        s.assert_no_other_copy_has_a_pending_payment().unwrap();
+    }
+    let mut session = Session::new(n, rng.below(n as u64) as usize);
+    // the model's record: node i served a false page that the state holds / contradicted itself
+    let mut false_in_state = vec![false; n];
+    let mut reported_notes = vec![false; n];
+    let mut active = false;
+    let mut public_tip = 400 + rng.below(100);
+    let (mut idle_since, mut rescans, mut settled_at, mut activated_round) = (None::<u64>, 0u64, None::<u64>, 0u64);
+    // idle sessions that had to be woken on an ACTIVE network
+    let mut woken_active = 0usize;
+    let activate_at = (rng.below(2) == 0).then(|| 6 + rng.below(10));
+    let rounds = 60u64;
+    for round in 1..=rounds {
+        if activate_at == Some(round) {
+            // the release: the pool is active from here; three payments to the wallet
+            active = true;
+            for (i, v) in [6 * Q, 4 * Q, 9 * Q].into_iter().enumerate() {
+                let t = shield(&chain, v, &format!("inactive-fund-{seed}-{i}"));
+                assert!(chain.block(Some(&t)));
+            }
+            chain.advance_to(chain.height + 2);
+            activated_round = round;
+            total.inactive_activations += 1;
+            // half the time the user picks a node in the settings at that moment (a rescanned
+            // state, a session on that node) — a lying one as likely as any
+            if rng.below(2) == 0 {
+                if s.scanned_height().is_some() {
+                    s = s.fresh_for_rescan();
+                }
+                session = Session::new(n, rng.below(n as u64) as usize);
+            }
+        }
+        if session.stopped == Some(Stop::PoolInactive) && (active || rng.below(4) == 0) {
+            // the idle client asks again (its long interval has passed). On a network where the
+            // pool is active by now that happens ONCE: from then on every honest node says
+            // "active", and a lying minority saying otherwise is never a majority
+            woken_active += active as usize;
+            assert!(woken_active <= 1, "inactive seed {seed}: the loop idles again on a network where the pool is active");
+            session.recheck_pool();
+        } else if rng.below(12) == 0 {
+            // the application restarts
+            session = Session::new(n, session.listing);
+        }
+        public_tip += rng.below(3);
+        let honest_answers = round > 2 || rng.below(2) == 0; // the honest nodes may be unreachable at first
+        if !session.begin_round() {
+            assert!(session.stopped == Some(Stop::PoolInactive) && !active, "inactive seed {seed}: the loop stopped: {:?}", session.stopped);
+            continue;
+        }
+        if s.scanned_height().is_none() {
+            false_in_state.iter_mut().for_each(|f| *f = false);
+        }
+        // ---- step 1: one page from L (one is enough to tell)
+        let l = session.listing;
+        let since = s.next_height();
+        let tip = if active { chain.height } else { public_tip };
+        let inactive_page = serde_json::json!({ "active": false, "tip_height": public_tip, "from_height": since, "next_height": since, "txs": [] });
+        let page: Option<serde_json::Value> = if !liar[l] {
+            honest_answers.then(|| if active { chain.page(since, chain.height) } else { inactive_page.clone() })
+        } else {
+            match way[l] {
+                0 | 1 => Some(inactive_page.clone()),
+                2 | 3 => Some(if since > tip.max(A) {
+                    serde_json::json!({ "active": true, "tip_height": tip.max(A), "from_height": since, "next_height": since, "txs": [] })
+                } else {
+                    let mut p = if active { chain.page(since, tip) } else { serde_json::json!({ "active": true, "tip_height": tip, "from_height": since.max(A), "next_height": tip + 1, "txs": [] }) };
+                    if since <= A {
+                        let txs = p["txs"].as_array_mut().unwrap();
+                        for t in txs.iter_mut() {
+                            for j in 0..2 {
+                                t["outputs"][j]["leaf"] = serde_json::json!(t["outputs"][j]["leaf"].as_u64().unwrap() + 2);
+                            }
+                            if t["height"].as_u64() == Some(A) {
+                                t["index"] = serde_json::json!(t["index"].as_u64().unwrap() + 1);
+                            }
+                        }
+                        txs.insert(0, RefChain::entry(&forged, A, 0, 0));
+                    }
+                    p
+                }),
+                4 => Some(serde_json::json!({ "active": true, "tip_height": tip, "from_height": since.max(A), "next_height": (tip + 1).max(since.max(A)), "txs": [] })),
+                _ => None,
+            }
+        };
+        // the model: what is the truth here? Before the activation: "not active", nothing
+        // else. After it: what an honest node at the tip answers.
+        let mut ended;
+        let mut at_tip = false;
+        let mut page_verdict = None;
+        match page {
+            None => {
+                let d = session.after_no_answer();
+                ended = apply_inactive(&mut session, &mut s, d, &liar, &false_in_state, None, &mut rescans, seed);
+            }
+            Some(p) => {
+                let is_true = if active { p == chain.page(since, chain.height) } else { p["active"] == serde_json::json!(false) };
+                // … and a "not active" page from a node whose own report showed notes is a lie
+                // whatever the network is
+                let contradicts = p["active"] == serde_json::json!(false) && reported_notes[l];
+                assert!(is_true || liar[l], "inactive seed {seed}: the model calls an honest page false");
+                let parsed = ListingPage::from_json(&p.to_string()).unwrap();
+                let mut next = s.clone();
+                let r = next.scan(&parsed, &alice.scan_key());
+                assert!(matches!(r, Ok(_) | Err(WalletError::Listing(_))), "inactive seed {seed}: scan answered {:?}", r.as_ref().err().map(|e| e.to_string()));
+                if let Ok(report) = &r {
+                    assert_eq!(report.pool_active, parsed.active, "inactive seed {seed}");
+                    assert!(parsed.active || next == s, "inactive seed {seed}: a page that says 'not active' changed the state");
+                    s = next;
+                    if !is_true && parsed.active {
+                        false_in_state[l] = true;
+                    }
+                    at_tip = report.at_tip;
+                }
+                let d = session.after_scan(&parsed, &r);
+                page_verdict = Some((l, !is_true || contradicts));
+                ended = apply_inactive(&mut session, &mut s, d, &liar, &false_in_state, page_verdict, &mut rescans, seed);
+            }
+        }
+        let reached_step_2 = !ended;
+        // ---- step 2: every node is asked
+        if !ended {
+            let mut reports = Vec::new();
+            let mut answers = Vec::new();
+            for i in 0..n {
+                if !liar[i] {
+                    if honest_answers {
+                        answers.push((i, active));
+                        if active {
+                            reports.push(chain.report(&ids[i], chain.height));
+                        }
+                    }
+                    continue;
+                }
+                match way[i] {
+                    0 => answers.push((i, false)),
+                    1 => {
+                        answers.push((i, false));
+                        let mut r = chain.report(&ids[i], chain.height);
+                        r.note_count += 8;
+                        reports.push(r);
+                        reported_notes[i] = true;
+                    }
+                    3 => {
+                        answers.push((i, true));
+                        reports.extend(s.scanned_height().and_then(|h| echo_of(&s, &ids[i], h)));
+                    }
+                    2 | 4 => answers.push((i, true)),
+                    _ => {}
+                }
+            }
+            session.note_reports(&s, &reports);
+            let d = session.after_stats(&answers);
+            ended = apply_inactive(&mut session, &mut s, d, &liar, &false_in_state, None, &mut rescans, seed);
+            if !ended {
+                // (a "not active" page whose node reports notes in this very round contradicts
+                // itself too: the model knows both answers)
+                if let Some((l, verdict)) = page_verdict.as_mut() {
+                    *verdict |= session.said_inactive && reported_notes[*l];
+                }
+                let gate = session.first_check_may_run(&s, &reports);
+                let handed_in = session.add_reports(reports);
+                let waits = gate == Decision::Wait;
+                if !apply_inactive(&mut session, &mut s, gate, &liar, &false_in_state, page_verdict, &mut rescans, seed) && !waits {
+                    let c = s.confirm_state(&handed_in).unwrap();
+                    assert!(active || (c.matched_height.is_none() && c.quorum_tip.is_none()), "inactive seed {seed}: something was confirmed on a network without the pool: {c:?}");
+                    let d = session.after_confirm(&c, at_tip, &s);
+                    apply_inactive(&mut session, &mut s, d, &liar, &false_in_state, None, &mut rescans, seed);
+                }
+            }
+        }
+        // ---- the invariants of this world
+        assert!(session.bad.iter().all(|&i| liar[i]), "inactive seed {seed}, round {round}: an honest node is banned for saying that the pool is not active ({:?})", session.bad);
+        assert!(!matches!(session.stopped, Some(Stop::NoHonestListingNode) | Some(Stop::Fault(_))), "inactive seed {seed}: {:?}", session.stopped);
+        if !active {
+            assert!(s.confirmed_height().is_none() && s.balances().confirmed == 0 && !s.spend_status(None).can_spend_now, "inactive seed {seed}: confirmed on a network without the pool");
+            // a strict majority is honest and says "not active": once they have answered the
+            // stats request in a session, that session idles — whoever is listed from
+            // stats request, the loop idles IN THAT ROUND — whoever is listed from, whatever it
+            // serves. (A round that ends in step 1 — the K-th round without an answer from the
+            // listing node — asks nobody.)
+            if session.stopped == Some(Stop::PoolInactive) {
+                idle_since.get_or_insert(round);
+            } else {
+                assert!(!(honest_answers && reached_step_2), "inactive seed {seed}, round {round}: the honest majority answered 'not active' and the loop goes on (listing from node {}, a {} node)", session.listing, if liar[session.listing] { "lying" } else { "honest" });
+            }
+        } else if s.confirmed_height() == Some(chain.height) && s.scanned_height() == Some(chain.height) && settled_at.is_none() {
+            settled_at = Some(round);
+        }
+    }
+    total.inactive_idles += idle_since.is_some() as usize;
+    total.inactive_bans += session.bad.len();
+    if active {
+        // the bound of NOTES §6 after the activation (D = 1 on this short chain; W for a state
+        // without the statement; D + 1 for a rescan nobody is blamed for)
+        let bound = (max_liars as u64 + 1) * (1 + STRIKES as u64 + 2) + FIRST_CHECK_ROUNDS as u64 + 2;
+        let took = settled_at.map(|r| r - activated_round);
+        assert!(took.is_some_and(|t| t <= bound + 2), "inactive seed {seed}: the pool was activated in round {activated_round} and the tip is not confirmed within {bound} rounds ({took:?}; n {n}, liars {:?}, ways {way:?}, bad {:?}, listing {})", liar, session.bad, session.listing);
+        assert_eq!(s.balances().confirmed, 19 * Q as u128, "inactive seed {seed}: the true balance after the activation");
+        assert_eq!(chain.balance(Who::Alice, chain.height), 19 * Q as u128);
+    } else {
+        // nothing a "not active" answer did is in the state: an honest majority, no rescan
+        assert!(idle_since.is_some(), "inactive seed {seed}: never idle");
+    }
+    let _ = rescans;
+}
+
+/// `inactive_network`: what the loop decided, carried out — with the model's check of a ban.
+/// `served`: (the node, the model's verdict "its page of this call is false or contradicts its
+/// own report"). `true`: the round has ended.
+#[allow(clippy::too_many_arguments)]
+fn apply_inactive(session: &mut Session, s: &mut WalletState, d: Decision, liar: &[bool], false_in_state: &[bool], served: Option<(usize, bool)>, rescans: &mut u64, seed: u64) -> bool {
+    match d {
+        Decision::Go => return false,
+        Decision::Leave { ban, why } => {
+            let l = session.listing;
+            assert!(!ban || liar[l], "inactive seed {seed}: an HONEST node is banned ({why})");
+            assert!(!ban || served == Some((l, true)) || false_in_state[l], "inactive seed {seed}: node {l} is banned ({why}) and the model knows of no false page it served");
+            let plan = session.plan_leave(ban, s);
+            assert!(plan.next.is_some(), "inactive seed {seed}: every node is banned");
+            if plan.rescan {
+                *s = s.fresh_for_rescan();
+                *rescans += 1;
+            }
+            session.commit_leave(plan);
+        }
+        Decision::Rescan => {
+            *s = s.fresh_for_rescan();
+            *rescans += 1;
+            session.after_rescan();
+        }
+        Decision::Reload | Decision::Wait => {}
+        Decision::Stop(stop) => {
+            assert_eq!(stop, common::client_loop::Stop::PoolInactive, "inactive seed {seed}: the loop stopped");
+            session.stopped = Some(stop);
+        }
+    }
+    true
+}
+
 /// The seeds and the length of a run. Defaults: seeds 1 to 200, 280 steps each — four minutes
 /// in a release build on one throttled core. `PROP_RUNS`, `PROP_STEPS` and `PROP_SEED_BASE` (the
 /// first seed is base + 1) widen or move the range: CI runs the default range and a second,
@@ -2698,6 +3334,9 @@ fn settlement_guarantees_hold_against_an_independent_model() {
     let mut total = Stats::default();
     let mut nodes_seen = BTreeSet::new();
     for seed in base + 1..=base + runs {
+        // the network on which the pool is not active: a world of its own, two per seed
+        inactive_network(seed, &mut total);
+        inactive_network(seed ^ 0x5eed_0000_0000, &mut total);
         let mut w = World::new(seed, steps);
         w.round(4, true);
         for i in 0..steps {
@@ -2714,6 +3353,7 @@ fn settlement_guarantees_hold_against_an_independent_model() {
             ($($f:ident),*) => { $( total.$f += s.$f; )* };
         }
         add!(lying_pages, lying_pages_accepted, pages_cut, leaf_mismatches, confirm_calls, matched, matched_with_dissent, refuted, banned, left, left_without_rescan, no_answers, first_check_waits, persistent_liars, rescans, states_lost, restores,
+            false_pages, bad_field_pages, inactive_pages, late_listings, directed_late, refuted_confirmed, nobody_blamed,
             directed_restores, directed_payments, silent_leader_bases, boundary_looks, recoveries, recoveries_embargoed, embargo_deadlines_checked,
             embargo_bases, stale_bases, embargo_refusals, embargo_ended, payments, retries, two_input_payments, max_expiry_payments, self_payments, unreadable_payments, mixed_refused,
             locked_refused, long_expiry_refused, two_tabs, unconfirmed_root_refused, withheld, unanswered, resubmitted, released_late, released_last_block, release_refused, honest_silent, honest_stalls,
@@ -2734,6 +3374,11 @@ fn settlement_guarantees_hold_against_an_independent_model() {
     // the loop: nodes banned (on evidence) and left (without), with and without a rescan; nodes
     // that did not answer; first state checks that waited; lying nodes with a strategy
     assert!(total.banned > 150 && total.left > 500 && total.left_without_rescan > 200 && total.no_answers > 100 && total.first_check_waits > 500 && total.persistent_liars > 60, "{total:?}");
+    // REVIEW_WALLET_6: false pages (by the model's judgement), fields the listing API never
+    // serves, "not active" from a lying minority, listings one block late — and refutations of
+    // a CONFIRMED height, answered with a rescan that blames nobody; the world without the pool
+    assert!(total.false_pages > 1_000 && total.bad_field_pages > 40 && total.inactive_pages > 30 && total.late_listings > 100 && total.directed_late > 60 && total.refuted_confirmed > 30 && total.nobody_blamed > 30, "{total:?}");
+    assert!(total.inactive_idles > 300 && total.inactive_activations > 100, "{total:?}");
     assert!(total.payments > 1_000 && total.retries > 100 && total.two_input_payments > 200 && total.withheld > 100 && total.released_late > 10 && total.release_refused > 100, "{total:?}");
     assert!(total.released_last_block > 10 && total.honest_silent > 5_000 && total.own_outputs_blanked > 20 && total.leaves_shifted > 15 && total.pages_cut > 500 && total.leaf_mismatches > 3, "{total:?}");
     assert!(total.settled_mined > 800 && total.settled_expired > 80 && total.settled_superseded > 50, "{total:?}");

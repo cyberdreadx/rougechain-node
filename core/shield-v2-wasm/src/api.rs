@@ -800,7 +800,11 @@ struct StateReportJson {
 /// * a dissenting minority does NOT block: `report.dissenting` lists `{ node_id, height }` for
 ///   every configured node that contradicts the wallet ("node X disagrees");
 /// * `report.listing_refuted`: more nodes contradict the wallet than a lying minority can be —
-///   the wallet's own listing is wrong: [`rescan_state`], then scan from ANOTHER node.
+///   the wallet's own listing is wrong: [`rescan_state`]. `report.refuted` says where
+///   (REVIEW_WALLET_6 RW6-1): an entry with `confirmed: false` puts the fault in the heights
+///   `from_height ..= height`, above what was confirmed before — the node that served THOSE
+///   heights lied (ban the listing node only if it is that node); an entry with
+///   `confirmed: true` contradicts what an earlier quorum confirmed and implicates nobody.
 /// * `report.listing_ahead`: the listing shows pool transactions in blocks above
 ///   `report.quorum_tip`, the height a quorum of the configured nodes has reached. Ask the nodes
 ///   again; if it stays so, the listing node invented those blocks: the same recovery.

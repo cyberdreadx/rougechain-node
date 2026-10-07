@@ -42,7 +42,9 @@ pub enum WalletError {
     /// state is unchanged (REVIEW_WALLET_4 RW4-5). **Nothing a node serves can cause it**
     /// (REVIEW_WALLET_5 RW5-1: a page that cannot be applied consistently is a `Listing` error);
     /// a client stops and reports it, and keeps its stored state. For a STORED state that no
-    /// longer reads, use `WalletState::recover_locks`, never a new state.
+    /// longer reads, use `WalletState::recover_locks`, never a new state. `scan` also answers
+    /// it for the self-checks of its own that cannot fail (REVIEW_WALLET_6 RW6-2: one class for
+    /// "a fault of the library").
     StateInvariant,
     /// The state was made from the phrase and has no lock history: an earlier copy of the wallet
     /// may have a payment in flight. No spend is built before the confirmed height reaches
@@ -70,9 +72,14 @@ pub enum WalletError {
     /// A note's Merkle path does not lead to the anchor the caller chose: the wallet's tree is
     /// not at that root (scan to the tip, or pick the wallet's own root as the anchor).
     AnchorMismatch,
-    /// A 32-byte value that must be a digest of spec §2.8 has a word ≥ p.
+    /// A 32-byte value that must be a digest of spec §2.8 has a word ≥ p: a key, an anchor, an
+    /// address — something the CALLER supplied. Never a value of a listing page (REVIEW_WALLET_6
+    /// RW6-2: that is a `Listing` error, like every other way a page can be malformed).
     NonCanonical(&'static str),
-    /// The note listing is malformed, out of order, does not continue the wallet's state — or
+    /// The note listing is malformed — in ANY way: not the JSON of a page, a missing field, a
+    /// value of the wrong type or length, a digest that is not canonical (REVIEW_WALLET_6 RW6-2:
+    /// every way the content of a page can be invalid is this error and no other) — out of
+    /// order, does not continue the wallet's state — or
     /// is not the listing of any chain (a transaction that pays the wallet shown twice; a spend
     /// listed below the height of the note it spends: REVIEW_WALLET_5 RW5-1). The state is
     /// unchanged. The node that served it lies: ban it for the session, rescan

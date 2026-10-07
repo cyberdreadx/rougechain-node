@@ -214,7 +214,8 @@ pub struct ListingPage {
     pub tip_height: u64,
     pub from_height: u64,
     pub next_height: u64,
-    #[serde(default)]
+    /// Required (REVIEW_WALLET_6 RW6-2): the node always sends it, and a page without it is not
+    /// "a page without transactions".
     pub txs: Vec<ListedTx>,
 }
 
@@ -342,8 +343,18 @@ struct NodeId {
 ///
 /// NOT treated as an IPv4 host: Teredo (`2001::/32` — it embeds the address of a third-party
 /// server and an obfuscated NAT address), ISATAP interface identifiers, a NAT64 prefix chosen
-/// by a network (RFC 6052 §2.2: it cannot be recognised without that network's configuration),
-/// and every other IPv6 address. Two NAMES of one machine are two nodes, as ever.
+/// by a network (RFC 6052 §2.2: it cannot be recognised without that network's configuration)
+/// — **the local-use prefix `64:ff9b:1::/48` of RFC 8215 included**: each network carves its
+/// own translation prefixes out of it, of any of the six lengths of RFC 6052, and the length
+/// decides where in the address the IPv4 bytes are — and every other IPv6 address. Two NAMES
+/// of one machine are two nodes, as ever.
+///
+/// An IPv4 LOOPBACK address in one of these forms (`::ffff:0:127.0.0.1`, `64:ff9b::127.0.0.1`,
+/// `::127.0.0.1`) is the IPv4 host `127.0.0.1` for this rule and is **not a loopback host**
+/// ([`parse_node_id`]: only `127.0.0.0/8`, `::1`, `localhost` and the IPv4-MAPPED form are —
+/// the addresses the operating system itself keeps on the machine; a translated address goes
+/// to a translator). Both decisions, with their reasons: `UI_CONTRACT.md`, obligation 4
+/// (REVIEW_WALLET_6, condition 6).
 fn embedded_ipv4(addr: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
     let v4 = |hi: u16, lo: u16| std::net::Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8);
     match addr.segments() {
@@ -792,6 +803,13 @@ pub struct ScanReport {
     pub next_height: u64,
     /// `true` when the page reached the node's tip
     pub at_tip: bool,
+    /// What the page said about the pool (REVIEW_WALLET_6 RW6-3): `false` — the node answered
+    /// `"active": false`, **the shielded pool is not active on that node** (its chain has no
+    /// activation height, or the node runs a build without the pool). Nothing was read and the
+    /// state is unchanged. That is not an empty pool (an active pool without a transaction is
+    /// scanned like any other: `pool_active` is `true`, `scanned_height` moves), not a short
+    /// page and not evidence against the node: `NOTES.md` §6, "the pool is not active".
+    pub pool_active: bool,
     /// `true`: the page numbers its first output BELOW where the wallet's own tree stands — the
     /// listing the state was built on held more leaves than this node has. The page was applied
     /// (positions are the wallet's own), but a state built on two listings that disagree will
@@ -1102,6 +1120,42 @@ pub struct Dissent {
     pub height: u64,
 }
 
+/// One height at which more configured nodes contradict the wallet's state than a lying minority
+/// can be, **with what is needed to say whose listing is in doubt** (REVIEW_WALLET_6 RW6-1).
+///
+/// A report for `height` is compared with the wallet's state after the block at `height`, which
+/// is everything the listing showed up to there. So a contradiction at `height` says "the
+/// listing is not the chain's somewhere at or below `height`" — and how far down depends on what
+/// a quorum has vouched for before:
+///
+/// * `confirmed: false` — `height` is ABOVE the height the state had confirmed when the call was
+///   made. The state at that confirmed height was a quorum's, so the fault is in the listing of
+///   the heights `from_height ..= height` (`from_height`: the confirmed height + 1, or 0 when
+///   nothing was confirmed). Whoever served those heights served a listing that is not a
+///   chain's.
+/// * `confirmed: true` — `height` is AT OR BELOW that confirmed height: a state a quorum
+///   vouched for earlier (at the confirmed height, not at this one) is contradicted now. The
+///   pages below a confirmed height may have come from any node the state was ever listed
+///   from, and the confirmation says nothing about the heights in between (a transaction listed
+///   one block late leaves the state at the confirmed height exact). **This implicates
+///   nobody**: rebuild from `fresh_for_rescan` and blame no node. `from_height` is 0.
+///
+/// Fewer dissenters than that (`dissenting ≤ configured − quorum`) are never listed here: a
+/// strict minority contradicting the wallet is noise or a lie, at any height.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Refutation {
+    /// The first height of the listing that is in doubt.
+    pub from_height: u64,
+    /// The reported height at which the state is contradicted (the last height in doubt).
+    pub height: u64,
+    /// See above: the contradicted state is at or below the confirmed height.
+    pub confirmed: bool,
+    /// Configured nodes whose report for `height` is not the wallet's state.
+    pub dissenting: usize,
+    /// Configured nodes whose report for `height` is the wallet's state.
+    pub agreeing: usize,
+}
+
 /// What [`WalletState::recover_locks`] read out of a state that does not validate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recovery {
@@ -1152,10 +1206,26 @@ pub struct ConfirmReport {
     /// wallet. Ask again; if it stays, see `listing_refuted`.
     pub diverged: bool,
     /// `true`: at some height more configured nodes contradict the wallet than a lying minority
-    /// can be (`> configured − quorum`). At least one of them is honest, so **the wallet's own
-    /// listing is not the chain** from that height on: rebuild from `fresh_for_rescan` against
-    /// ANOTHER node. (What was confirmed below that height stays confirmed.)
+    /// can be (`> configured − quorum`: never a strict minority of the configured nodes, however
+    /// many heights or reports it uses). At least one of them is honest, so **the wallet's own
+    /// listing is not the chain's**: rebuild from `fresh_for_rescan`. **Which node is to blame
+    /// — if any — is in `refuted`**: only a height above the confirmed height implicates the
+    /// node that listed it (`listing_refuted_above_confirmed`). (What was confirmed stays
+    /// confirmed until the rescanned state replaces this one.)
     pub listing_refuted: bool,
+    /// `true`: one of the heights of `refuted` is ABOVE the height the state had confirmed
+    /// before this call — the part of the state that is one listing's word is contradicted, and
+    /// the heights `from_height ..= height` of that entry were listed falsely (REVIEW_WALLET_6
+    /// RW6-1). The listing node is to blame **if it is the node that served those heights**
+    /// (`NOTES.md` §6: the loop keeps which node served which heights).
+    pub listing_refuted_above_confirmed: bool,
+    /// `true`: one of the heights of `refuted` is AT OR BELOW the height the state had confirmed
+    /// before this call: what an earlier quorum vouched for is contradicted by more nodes than
+    /// can be lying. Nobody is to blame for that (see [`Refutation`]): rescan, ban no node.
+    pub confirmed_refuted: bool,
+    /// Every height that made `listing_refuted` true, ascending, with the range of the listing
+    /// that is in doubt. Empty when `listing_refuted` is false.
+    pub refuted: Vec<Refutation>,
     /// The height a quorum of the configured nodes says the chain has reached: the quorum-th
     /// highest height among the nodes' reports. At least one honest node has reached it, and no
     /// lying minority can push it above the highest honest claim. `None` without that many
@@ -2848,6 +2918,9 @@ impl WalletState {
         out.all_reported = configured > 0 && tops.len() == configured;
         out.listing_ahead = out.quorum_tip.is_some_and(|tip| self.checkpoints.last().is_some_and(|c| c.height > tip));
         let mut matched: Option<(u64, usize)> = None;
+        // what a quorum had vouched for BEFORE this call (RW6-1): a contradiction at or below it
+        // is not a statement about the pages above it
+        let confirmed_before = self.confirmed_height;
         let heights: BTreeSet<u64> = said.keys().map(|&(h, _)| h).collect();
         for height in heights {
             let at = said.range((height, 0)..=(height, usize::MAX));
@@ -2867,9 +2940,21 @@ impl WalletState {
             if dissenting > 0 {
                 out.conflicts.push(height);
             }
-            // more dissent than a strict minority can be: an honest node says this is not the chain
+            // more dissent than a lying minority can be (`configured − quorum` is the largest
+            // strict minority that leaves a quorum: `dissenting` is then at least half of the
+            // configured nodes, never a strict minority): an honest node says that the state at
+            // this height is not the chain's. WHERE the listing went wrong — and so whose
+            // pages are in doubt — depends on what was confirmed before (RW6-1, `Refutation`).
             if configured >= MIN_CONFIGURED_NODES && dissenting > configured - quorum {
                 out.listing_refuted = true;
+                let below = confirmed_before.is_some_and(|c| height <= c);
+                if below {
+                    out.confirmed_refuted = true;
+                } else {
+                    out.listing_refuted_above_confirmed = true;
+                }
+                let from_height = if below { 0 } else { confirmed_before.map_or(0, |c| c + 1) };
+                out.refuted.push(Refutation { from_height, height, confirmed: below, dissenting, agreeing });
             }
             if configured >= MIN_CONFIGURED_NODES && agreeing >= quorum {
                 matched = Some((height, agreeing)); // ascending: the last match is the highest
@@ -2993,7 +3078,22 @@ impl WalletState {
     ///
     /// **Every string of the page is validated before anything is stored**: nullifiers,
     /// commitments, ciphertexts and `tx_hash` are fixed-length lowercase hexadecimal, `tx_type`
-    /// is one of the three V2 types.
+    /// is one of the three V2 types, and a nullifier or a commitment is a canonical digest of
+    /// spec §2.8.
+    ///
+    /// **Every error has one cause** (REVIEW_WALLET_6 RW6-2; the table is in `NOTES.md` §6):
+    ///
+    /// * the PAGE — anything about its content that is invalid, whatever it is — is
+    ///   [`WalletError::Listing`], and nothing else is. The state is unchanged;
+    /// * the caller's KEY: [`WalletError::Request`] (another wallet's key),
+    ///   [`WalletError::NonCanonical`] (`pk` or `nk` is not a digest), [`WalletError::Key`];
+    /// * the caller's STATE: [`WalletError::RescanRequired`] (below), [`WalletError::State`]
+    ///   (a stored note's `rho` is not a digest: no page stores such a note);
+    /// * an implementation fault: [`WalletError::StateInvariant`].
+    ///
+    /// **A page that says `active: false`** (the node's chain has no activation height for
+    /// the pool) is not read: the state is unchanged and the report says `pool_active: false`
+    /// (RW6-3). That is neither an error nor an empty pool.
     ///
     /// **Viewing key first, full key later** (F-3). While the state holds a note without a
     /// nullifier (it was found with `nk = None`), every nullifier that appears is remembered, up
@@ -3036,6 +3136,8 @@ impl WalletState {
             return Err(WalletError::Request("this state belongs to another wallet (pk differs)".into()));
         }
         if !page.active {
+            // "the pool is not active on this node": nothing to read, nothing changed, and
+            // nothing else of the page is looked at (RW6-3: `pool_active` is false)
             return Ok(ScanReport { next_height: self.next_height, ..Default::default() });
         }
         let fresh = self.tree.note_count == 0;
@@ -3051,7 +3153,8 @@ impl WalletState {
         if page.txs.len() > MAX_PAGE_TXS {
             return Err(listing("the page lists more than 4,096 transactions"));
         }
-        self.validate()?;
+        // a state that a call returned or `from_json` read validates: anything else is a fault
+        self.validate().map_err(|_| WalletError::StateInvariant)?;
         let pk = field::digest(&key.pk, "pk")?;
         let nk = match &key.nk {
             Some(nk) => Some(field::digest(nk, "nk")?),
@@ -3064,7 +3167,10 @@ impl WalletState {
         let mut fill: Vec<(usize, [u8; 32])> = Vec::new();
         if let Some(nk) = &nk {
             for (i, n) in self.notes.iter().enumerate().filter(|(_, n)| n.nullifier.is_none()) {
-                fill.push((i, field::bytes(&nullifier(nk, &field::digest(&n.rho.0, "a stored note's rho")?))));
+                // (no page stores such a note — `rho` is computed, `derive_rho` — so this is a state
+                // text that was edited: the caller's state, `state:`)
+                let rho = field::digest(&n.rho.0, "rho").map_err(|_| WalletError::State("a stored note's rho is not a canonical digest".into()))?;
+                fill.push((i, field::bytes(&nullifier(nk, &rho))));
             }
             if !fill.is_empty() && self.blind.overflow {
                 return Err(WalletError::RescanRequired);
@@ -3140,14 +3246,20 @@ impl WalletState {
                 hex32(&tx.nf1).ok_or_else(|| listing("nf1 is not 32 bytes of lowercase hex"))?,
                 hex32(&tx.nf2).ok_or_else(|| listing("nf2 is not 32 bytes of lowercase hex"))?,
             ];
-            let nf = [field::digest(&nf_b[0], "nf1")?, field::digest(&nf_b[1], "nf2")?];
+            // REVIEW_WALLET_6 RW6-2: 32 bytes that are not a digest of spec §2.8 (a word ≥ p) are
+            // a malformed string of the page like any other — `listing:`, never `non_canonical:`,
+            // which the loop has no rule for but "stop"
+            let nf = [
+                field::digest(&nf_b[0], "nf1").map_err(|_| listing("nf1 is not a canonical digest"))?,
+                field::digest(&nf_b[1], "nf2").map_err(|_| listing("nf2 is not a canonical digest"))?,
+            ];
             if nf_b[0] == nf_b[1] {
                 return Err(listing("a listed transaction has nf1 = nf2"));
             }
             let mut outs: [Option<PreparedOutput>; 2] = [None, None];
             for (j, out) in tx.outputs.iter().enumerate() {
                 let cm_b = hex32(&out.cm_out).ok_or_else(|| listing("cm_out is not 32 bytes of lowercase hex"))?;
-                let cm = field::digest(&cm_b, "cm_out")?;
+                let cm = field::digest(&cm_b, "cm_out").map_err(|_| listing("cm_out is not a canonical digest"))?;
                 let kem: [u8; KEM_CT_BYTES] = hex_exact(&out.kem_ct).ok_or_else(|| listing("kem_ct is not 1,088 bytes of lowercase hex"))?;
                 let note_ct: [u8; NOTE_CT_BYTES] = hex_exact(&out.note_ct).ok_or_else(|| listing("note_ct is not 56 bytes of lowercase hex"))?;
                 let leaf = out.leaf.ok_or_else(|| listing("an output has no leaf position"))?;
@@ -3184,12 +3296,12 @@ impl WalletState {
                 }
                 outs[j] = Some(PreparedOutput { cm: cm_b, kem_ct: Box::new(kem), note_ct, mine, own: own.is_some() });
             }
-            let [Some(o0), Some(o1)] = outs else { return Err(WalletError::Internal("outputs")) };
+            let [Some(o0), Some(o1)] = outs else { return Err(WalletError::StateInvariant) };
             prepared.push(PreparedTx { height: tx.height, nf: nf_b, tx_hash: tx.tx_hash.clone(), outputs: [o0, o1] });
         }
 
         // ---- pass 2: apply. Nothing below can fail (the tree was checked, its room measured) -------
-        let mut report = ScanReport { leaf_mismatch: leaf_offset.is_some_and(|o| o != 0), ..Default::default() };
+        let mut report = ScanReport { leaf_mismatch: leaf_offset.is_some_and(|o| o != 0), pool_active: true, ..Default::default() };
         if !fill.is_empty() {
             for (i, nf) in fill {
                 self.notes[i].nullifier = Some(B32(nf));
@@ -3295,7 +3407,7 @@ impl WalletState {
                     None => false,
                 };
                 unspent += store as usize;
-                let leaf = self.tree.append(&out.cm, store).map_err(|_| WalletError::Internal("the tree refused a checked leaf"))?;
+                let leaf = self.tree.append(&out.cm, store).map_err(|_| WalletError::StateInvariant)?;
                 if let (true, Some((value, r_b, rho))) = (store, out.mine) {
                     let nf = nk.as_ref().map(|nk| B32(field::bytes(&nullifier(nk, &rho))));
                     if let Some(nf) = nf {
