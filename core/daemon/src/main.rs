@@ -3252,6 +3252,11 @@ struct BalanceResponse {
     balance: f64,
     token_balances: std::collections::HashMap<String, f64>,
     lp_balances: std::collections::HashMap<String, f64>,
+    /// Native balance in integer quanta (1 XRGE = 10^9 quanta) as a decimal string, exactly as
+    /// stored. `balance` is the same amount as a float and can round above 2^53 quanta.
+    balance_quanta: String,
+    /// Each token balance in integer units as a decimal string, exactly as stored. Sorted by symbol.
+    token_balances_raw: std::collections::BTreeMap<String, String>,
 }
 
 async fn get_balance(
@@ -3262,7 +3267,14 @@ async fn get_balance(
     let balance = node.get_balance(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let token_balances = node.get_all_token_balances(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let lp_balances = node.get_all_lp_balances(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(BalanceResponse { success: true, balance, token_balances, lp_balances }))
+    let balance_quanta = node.get_balance_quanta(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.to_string();
+    let token_balances_raw = node
+        .get_all_token_balances_raw(&public_key)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .map(|(symbol, units)| (symbol, units.to_string()))
+        .collect();
+    Ok(Json(BalanceResponse { success: true, balance, token_balances, lp_balances, balance_quanta, token_balances_raw }))
 }
 
 #[derive(Serialize)]
@@ -3270,6 +3282,23 @@ struct TokenBalanceResponse {
     success: bool,
     token_symbol: String,
     balance: f64,
+    /// True when `token_symbol` named the native coin: `balance` is then in display XRGE (the same
+    /// value as `balance` in `/api/balance/:public_key`), not in raw token units.
+    native: bool,
+    /// The balance exactly as stored, as a decimal string of integer units: quanta for the native
+    /// coin, token units otherwise. Use this, not `balance`, for threshold checks.
+    balance_raw: String,
+    /// Decimal places of one whole unit: `balance_raw / 10^decimals` is the displayed amount.
+    decimals: u8,
+}
+
+/// Decimal places of the native coin's stored unit (1 XRGE = 10^9 quanta).
+const NATIVE_DECIMALS: u8 = 9;
+
+/// XRGE is the native coin, not an entry in the token ledger, and the symbol is reserved in every
+/// case for `create_token`, so no token can shadow it.
+fn is_native_symbol(token_symbol: &str) -> bool {
+    token_symbol.eq_ignore_ascii_case("XRGE")
 }
 
 async fn get_token_balance(
@@ -3277,8 +3306,20 @@ async fn get_token_balance(
     Path((public_key, token_symbol)): Path<(String, String)>,
 ) -> Result<Json<TokenBalanceResponse>, StatusCode> {
     let node = &state.node;
-    let balance = node.get_token_balance(&public_key, &token_symbol).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(TokenBalanceResponse { success: true, token_symbol, balance }))
+    // Asking for "XRGE" used to read the token ledger and answer 0 for every wallet.
+    let native = is_native_symbol(&token_symbol);
+    let (balance, raw, decimals) = if native {
+        (node.get_balance(&public_key), node.get_balance_quanta(&public_key), NATIVE_DECIMALS)
+    } else {
+        (
+            node.get_token_balance(&public_key, &token_symbol),
+            node.get_token_balance_raw(&public_key, &token_symbol),
+            token_decimals(&token_symbol),
+        )
+    };
+    let balance = balance.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let balance_raw = raw.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.to_string();
+    Ok(Json(TokenBalanceResponse { success: true, token_symbol, balance, native, balance_raw, decimals }))
 }
 
 // ===== AMM/DEX Endpoints =====
@@ -11054,6 +11095,21 @@ async fn social_following_feed_signed(
     let offset: usize = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let posts = state.node.social_get_following_feed(&authed_key, limit, offset).map_err(|e| signed_internal(&e))?;
     Ok(Json(serde_json::json!({ "success": true, "posts": posts })))
+}
+
+#[cfg(test)]
+mod token_balance_symbol_tests {
+    use super::is_native_symbol;
+
+    #[test]
+    fn xrge_in_any_case_is_the_native_coin_and_nothing_else_is() {
+        for s in ["XRGE", "xrge", "Xrge"] {
+            assert!(is_native_symbol(s), "{s}");
+        }
+        for s in ["", "XRG", "XRGE ", "qXRGE", "QTEK", "qUSDC", "XRGE2"] {
+            assert!(!is_native_symbol(s), "{s}");
+        }
+    }
 }
 
 #[cfg(test)]

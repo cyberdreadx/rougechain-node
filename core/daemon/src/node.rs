@@ -1756,6 +1756,13 @@ impl L1Node {
         Ok(quanta_to_display(*balances.get(&canon_addr(public_key)).unwrap_or(&0)))
     }
 
+    /// Native balance exactly as stored: integer quanta (1 XRGE = 10^9 quanta). `get_balance`
+    /// converts to `f64`, which cannot represent every quanta value above 2^53.
+    pub fn get_balance_quanta(&self, public_key: &str) -> Result<u128, String> {
+        let balances = self.balances.lock().map_err(|_| "balance lock")?;
+        Ok(*balances.get(&canon_addr(public_key)).unwrap_or(&0))
+    }
+
     /// Get a transaction receipt by hash.
     pub fn get_receipt(&self, tx_hash: &str) -> Result<Option<TxReceipt>, String> {
         self.receipt_store.get(tx_hash)
@@ -2028,6 +2035,24 @@ impl L1Node {
         let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let key = (canon_addr(&public_key), token_symbol.to_string());
         Ok(*token_balances.get(&key).unwrap_or(&0) as f64)
+    }
+
+    /// One token balance exactly as stored (integer units).
+    pub fn get_token_balance_raw(&self, public_key: &str, token_symbol: &str) -> Result<u128, String> {
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let key = (canon_addr(&public_key), token_symbol.to_string());
+        Ok(*token_balances.get(&key).unwrap_or(&0))
+    }
+
+    /// Every non-zero token balance of a wallet exactly as stored (integer units).
+    pub fn get_all_token_balances_raw(&self, public_key: &str) -> Result<HashMap<String, u128>, String> {
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let addr = canon_addr(&public_key);
+        Ok(token_balances
+            .iter()
+            .filter(|((pubkey, _), balance)| pubkey == &addr && **balance > 0)
+            .map(|((_, symbol), balance)| (symbol.clone(), *balance))
+            .collect())
     }
 
     pub fn get_all_token_balances(&self, public_key: &str) -> Result<HashMap<String, f64>, String> {
