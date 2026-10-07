@@ -122,6 +122,18 @@ on; a majority of nodes answering "not active" idles the loop, a minority is lef
 banned. Wallet rules only: nothing of §2, §3 or §4 changed, and no call of the reference
 library changed its shape (two reports gained fields).
 
+*Amended 2026-10-07 after the second confirmation review of the wallet core
+(`core/shield-v2-wallet/REVIEW_WALLET_6B.md`, findings RW6B-1 … RW6B-3 and one
+recommendation):* (W-22) §5.4 — **what a listing page is** (JSON, an object, at least one of
+the five members of a page), that anything else is no answer and never evidence (RW6B-2),
+and that a call which applies several pages at once classifies every page as the call for
+one page does, applies all of them or none and names the page it refused (RW6B-1); a
+malformed state report is no report from that node; §5.5 — a page that does not continue the
+state is evidence only against the node that listed the state's unconfirmed part (RW6B-3);
+**rescans that blame nobody are capped** (two in a row, six per listing node and session:
+the node is left, not banned), and the round bound is restated with the cap — the term
+`D + 1` is per such rescan. Wallet rules only: nothing of §2, §3 or §4 changed.
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -1232,6 +1244,22 @@ wallet is configured with, and the quorum is a property of that set:
   error of another class (the caller's key, the caller's state, an internal fault): a client
   bans a node for a listing error and goes on, and can only stop for the others — one lying
   node would stop every session with its first page.
+* *(W-22, RW6B-2.)* **A listing page is a response with status 200 whose body is JSON, an
+  object at its top level, with at least one of the members `active`, `tip_height`,
+  `from_height`, `next_height`, `txs`.** Anything else — no response, another status, an empty
+  body, text that is not JSON, JSON that is not an object, an object with none of the five
+  (the reference node's own error answer `{ "success": false, "error": … }`, which it sends
+  with status 200) — is **no answer**: it says nothing about a chain, a client MUST NOT ban a
+  node for it, and a library that is handed such a body MUST let the caller tell it from a
+  page that was refused. "At least one" and not "all": a node must not be able to leave the
+  rule by leaving a member out — a body that carries any part of a listing is judged as a
+  listing, and what is missing or malformed in it is a listing error (W-21).
+* *(W-22, RW6B-1.)* **Several pages in one call are judged page by page.** A library call
+  that applies the pages of a round together MUST classify whatever is wrong with one of them
+  exactly as the call for a single page does (a listing error for that page, never the
+  caller's error), MUST apply all of the pages or none, and MUST say which page it refused.
+  Likewise for state reports: a report that is malformed in any way is **no report from that
+  node** — not an error of the call, not a vote, not dissent.
 * *(W-21, RW6-3.)* **"The pool is not active" is an answer, not a page to be judged.** A node
   whose chain has no activation height answers the listing request with `active: false`
   (the node's read-only listing; the reference node sends no transactions with it). A library MUST
@@ -1562,6 +1590,17 @@ CONSTANTS (the client's; none is consensus)
   K = 3    consecutive rounds a listing node may fail to deliver before it is left
   W = 5    rounds the first state check of a state without an embargo base waits for every node
   R        keeps the reports of the last 3 rounds, at most 1,024
+  R_c = 2  rescans that blame nobody IN A ROW on one listing node (no round between them that
+           ended with the tip confirmed) at which that node is left
+  R_s = 6  rescans that blame nobody on one listing node IN A SESSION at which it is left
+
+A LISTING PAGE is an answer with status 200 whose body is JSON, is an OBJECT at its top level,
+  and has at least one of the five members  active, tip_height, from_height, next_height, txs.
+  Everything else is NO ANSWER: no response, another status, an empty body, text that is not
+  JSON (a proxy's error page), JSON that is not an object, an object with none of the five
+  (the node's own error answer { "success": false, "error": … }). No answer is never evidence
+  and is not handed to `scan`. (Handed to it anyway it is `listing: … not a listing page …`,
+  for which the rule is the same: no answer.)
 
 STORED    S            the state, under its revision_id
           listed_from  the node every page that S holds above its confirmed height came from
@@ -1578,6 +1617,11 @@ SESSION   (memory only; lost in a crash and when the application ends)
                    applied in this session since S was last empty
           origin   the listed_from this session started with (none: unknown)
           inactive the nodes whose LATEST answer says that the pool is not active
+          own_tail whether every height S holds above its confirmed height was listed by L:
+                   the entries of `served` above the confirmed height are all L's, and what
+                   the stored S held unconfirmed at the start (if anything) is L's because
+                   origin = L
+          row, on_L rescans that blamed nobody while L is the listing node: in a row, in all
           seen     the nodes whose report showed a pool that holds notes or nullifiers
 
 START OF A SESSION
@@ -1595,13 +1639,17 @@ ROUND
   0. stopped → return (nothing is asked, nothing is written). answered := true
   1. at most P times:
        page := the answer of L for since = S.next_height, blocks = B
-       no answer, or not a page          → answered := false; strikes += 1; if strikes ≥ K:
+       no answer (not a listing page)    → answered := false; strikes += 1; if strikes ≥ K:
                                            LEAVE(no ban), end the round; otherwise go to
                                            step 2
-       r := scan(S, page, FULL scan key)
-       `listing:`                        → LEAVE(ban); end the round. EVERY way the content
-                                           of a page can be invalid is this error, also a
-                                           body that is not the JSON of a page
+       r := scan(S, page, FULL scan key)   (or, for the pages of the round together,
+                                           scan_pages: all of them are applied or none, and
+                                           an error names the page — `listing: page i: …`)
+       `listing:`                        → EVERY way the content of a listing page can be
+                                           invalid is this error.
+                                           own_tail: LEAVE(ban); end the round
+                                           otherwise: BLAMELESS; end the round   (the page
+                                           may be true and the tail another node's)
        `rescan_required:`                → S := rescan_state(S) → persist; prev := none;
                                            L stays, NOBODY is blamed (the client's own
                                            worker caused it); end the round
@@ -1615,7 +1663,8 @@ ROUND
                                            read. Not a short page, not evidence.
                                            said_inactive := true; go to step 2
            served += (L, page.from_height … page.next_height − 1); into an empty S: from 0
-           r.leaf_mismatch               → LEAVE(ban); end the round
+           r.leaf_mismatch               → own_tail (judged before this page): LEAVE(ban);
+                                           otherwise: BLAMELESS; end the round
            not r.at_tip and page.next_height − page.from_height < B
                                          → LEAVE(ban); end the round            ("a short page")
            r.at_tip                      → at_tip := true; go to step 2
@@ -1646,9 +1695,9 @@ ROUND
          not been emptied in this session
                                          → LEAVE(ban); end the round
          otherwise (a height at or below the confirmed height is contradicted, or heights L
-         did not serve)                  → S := rescan_state(S) → persist; prev := none;
-                                           served := {}; L stays, NOBODY is blamed; end the
-                                           round
+         did not serve)                  → BLAMELESS; end the round
+       T exists, S.confirmed_height ≥ T and S.scanned_height = S.confirmed_height
+                                         → row := 0   (the tip is confirmed, and no rescan)
        c.quorum_tip = T exists (a quorum answers):
          not at_tip and S.scanned_height < T
                                          → catching up: prev := S.scanned_height; no verdict
@@ -1675,8 +1724,15 @@ ROUND
      compare-and-swap on the revision_id that was LOADED → submit the envelope.
      Not written ⇒ discard the result and do not submit.
 
+BLAMELESS   (the state is not the chain's, and nobody is blamed for it)
+  row += 1; on_L += 1
+  row ≥ R_c or on_L ≥ R_s  → LEAVE(no ban), and S := rescan_state(S) in it whatever S holds
+  otherwise                → S := rescan_state(S) → persist; prev := none; served := {};
+                             L stays
+
 LEAVE(ban)
   if ban: bad += L
+  row := 0; on_L := 0
   next := the first node after L, in the order of N, cyclically, that is not in bad and is not L
   no such node, and L ∈ bad    → S := rescan_state(S) → persist; listed_from := unknown;
                                  STOP("no honest listing node reachable"). bad is NOT cleared.
@@ -1749,13 +1805,34 @@ rule goes on from, the node listed from MUST NOT be where the next session start
 stores "listed-from unknown, start at the next node". What the stored state then holds above
 its confirmed height is nobody's — refuted, it is rescanned without a ban.
 
+*(W-22, RW6B-3.)* **A page that does not continue the state is evidence against the node
+whose tail it is.** A listing error, or leaf numbers below the wallet's tree, bans the listing
+node if and only if every height the state holds above its confirmed height was listed by
+that node — which holds in every state the loop makes itself. In the session after a fault,
+which starts at the next node on the stored state as it is, the unconfirmed part is another
+node's: there the first such signal MUST be answered with a rescan that blames nobody; after
+it every page is the listing node's own.
+
+*(W-22.)* **Rescans that blame nobody are capped.** A node can cause one at every occasion
+without ever serving anything that remains refutable (it lists a transaction one block late,
+contradicts the confirmed height together with an honest node that stood there, and lists
+the truth into the rescanned state). A client MUST leave the listing node — without a ban,
+and with the rescan — at the second such rescan in a row (no round between them that ended
+with the tip confirmed: `R_c = 2`) and at the sixth on that node in a session (`R_s = 6`).
+
 *Termination.* A tenure of one node lasts at most `D + 1 + K` rounds (one round for a node
 that answers "not active"), `D = ⌈(T − A + 1) / (B·P)⌉` being the rounds it takes to read the
 chain to the quorum's tip `T` at the speed step 1 enforces; with a strict majority of honest
 nodes reachable at the tip the loop ends with the tip confirmed within
-`(n − quorum + 1)·(D + K + 2) + W + (D + 1)` rounds — the last term for one rescan that
-blames nobody, which only reports from before the honest nodes were at one height can cause —
-or has stopped because every node is banned.
+`(n − quorum + 1)·(D + K + 2) + W + (D + 1)` rounds when the honest nodes are at one height
+— the last term for one rescan that blames nobody, which then only reports from before they
+were can cause — or has stopped because every node is banned. *(W-22: the term `D + 1` is per
+such rescan.)* In general a tenure holds at most one of them before the tip is confirmed (the
+second in a row ends it): the tip is confirmed within
+`(n − quorum + 1)·(D + K + 2 + R_c·(D + 1)) + W` rounds. Once the tip is confirmed a node
+can cause further ones an occasion at a time, at most `R_s` per session — repeated work,
+`R_s·(D + 1)` rounds per tenure at most, between which the tip is confirmed — and is then
+left.
 
 **Every bound in these rules is a number of blocks**, and this chain produces a block when a
 transaction is pending, not on a clock: on a quiet chain 64 blocks have no upper bound in time,
@@ -2301,5 +2378,5 @@ To be confirmed or changed by the owner before the first testnet activation.
 | `SHIELD_V2_POOL_CAP_QUANTA` on testnet | §4.4 | the same 10^15 as mainnet; the owner's decision names mainnet only |
 | State-root tag and layout | §4.8 | `rougechain.stateroot.shield_v2.v1`, running nullifier hash (O-12) |
 | Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, of `0x02 ‖ pk ‖ ek ‖ check`: 1,974 characters; `check` = first 8 bytes of SHA-256(`"rouge-shield/v2/address-check/v1"` ‖ `0x02` ‖ `pk` ‖ `ek`); fingerprint = first 8 bytes of SHA-256 of `pk ‖ ek` (O-11, W-4, W-9) |
-| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); the client loop's B = 64 blocks per page, K = 3 rounds, W = 5 rounds (W-20); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-21) |
+| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); the client loop's B = 64 blocks per page, K = 3 rounds, W = 5 rounds (W-20); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-22; the loop's caps on blameless rescans: 2 in a row, 6 per node and session) |
 | Node-local ciphertext hash (not consensus) | §5.4 | tag `rougechain.shield_v2.ciphertext_acc.node_local.v1`; SHA-256 over `acc ‖ cm_out ‖ kem_ct ‖ note_ct` per output in tree order, from 32 zero bytes; reported as `report.ciphertext_acc`; outside §4.8 (W-16) |

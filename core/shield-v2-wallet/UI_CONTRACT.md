@@ -6,7 +6,8 @@ RFC 2119. It holds the conditions of `REVIEW_WALLET_5.md` that no change of the 
 four obligations of the client (1–4) and three limits that are inherent and must be TOLD to
 the user (5–7). Each has the check a reviewer of a client performs. Obligation 8 (what a
 client shows when the pool is not active) and the rule for native bindings in obligation 4
-were added after `REVIEW_WALLET_6.md`.
+were added after `REVIEW_WALLET_6.md`; obligation 9 (what the client does with a node's
+answer before the core sees it) after `REVIEW_WALLET_6B.md`.
 
 The syncing algorithm is not here: it is `NOTES.md` §6 ("The client loop"), mirrored in spec
 §5.5, and it is normative too. The reference implementation of it is
@@ -191,6 +192,40 @@ shows the sentence above, no node is marked, the stored state is byte for byte w
 and no listing request is made in the following rounds. A second test with one such node and
 two active ones: the balance is confirmed from the active ones and the first is shown as not
 serving the pool, not as lying.
+
+### 9. A node's answer is the node's: what the client checks before the core sees it
+
+The core classifies what a NODE sent as the node's (`listing:`, "no report") and what the
+CLIENT assembled as the client's (`request:`, for which the loop stops). The client keeps
+the two apart:
+
+* **Is it a listing page?** Status 200, a body that is JSON, an object at its top level, with
+  at least one of `active`, `tip_height`, `from_height`, `next_height`, `txs`
+  (`ListingPage::is_page` in the Rust crate). If not — a transport failure, another status,
+  an empty body, HTML, the node's own `{ "success": false, "error": … }` — it is **no
+  answer**: a strike towards leaving the node after K rounds. The client MUST NOT ban a node
+  for it, MUST NOT show it as "node X lies", and SHOULD NOT hand it to `scan` at all (if it
+  does, the answer is `listing: note listing: not a listing page: …`, and the rule is the
+  same). It MUST NOT use any other test — not "all five members", not the `success` member:
+  a body with ONE member of a page is a page and is judged as one.
+* **`scan_pages`**: the client builds the array, from the bodies of ONE node, in the order
+  it asked for them, and only from listing pages. On `listing: page i: …` nothing of the call
+  was applied; the loop's rule for a `listing:` error is applied once (the node is the same
+  for every page). The client MUST NOT pass a node's body as the whole `pages` argument.
+* **State reports**: the client takes the `report` member of each stats answer, labels it
+  with the CONFIGURED origin, and drops what is not a JSON object or is larger than 4 KiB.
+  Whatever else is wrong with a report is the core's to count (`malformed`): no report from
+  that node.
+* **A rescan that blames nobody** is shown as work ("checking the wallet again"), never as an
+  accusation; when the loop leaves a node for them (`rescans that blamed nobody`) the node is
+  not marked as lying.
+
+**Check.** A client test in which one node answers every listing request with
+`{"success": false, "error": "…"}` and status 200: after K rounds the client lists from the
+next node, no node is marked, the stored state is unchanged. A second in which a node's
+second page of a batch lacks `txs`: the node is banned, nothing of the batch is in the stored
+state. A third in which one node's stats answer carries `"report": "x"`: the state check
+runs on the others.
 
 ## Limits that are inherent — to be stated to the user, not fixed
 

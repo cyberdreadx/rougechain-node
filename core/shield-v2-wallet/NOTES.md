@@ -510,6 +510,10 @@ that the pool is not active — §15). **It is also code**: `tests/common/client
 (`tests/settlement_properties.rs`, `World::round`) and the loop tests of
 `tests/review_wallet_5.rs`, `_6.rs` and `_6_resolution.rs` take every decision by calling it.
 A change of the loop is a change of this section, of spec §5.5 and of that file.
+**And after REVIEW_WALLET_6B** (RW6B-1 … RW6B-3 and its recommendation; §16): what a listing
+page IS and that anything else is no answer; `scan_pages` classifies like `scan`; a page that
+does not continue the state is evidence only against the node whose tail it is; rescans that
+blame nobody are capped.
 
 The names are the WebAssembly surface's. "persist" always means: store the returned state
 under its `revision_id`, in one storage transaction with `listed_from`, if the stored
@@ -524,6 +528,17 @@ CONSTANTS (the client's; none is consensus)
   K = 3    consecutive rounds a listing node may fail to deliver before it is left
   W = 5    rounds the first state check of a state without an embargo base waits for every node
   R        keeps the reports of the last 3 rounds, at most 1,024
+  R_c = 2  rescans that blame nobody IN A ROW on one listing node (no round between them that
+           ended with the tip confirmed) at which that node is left
+  R_s = 6  rescans that blame nobody on one listing node IN A SESSION at which it is left
+
+A LISTING PAGE is an answer with status 200 whose body is JSON, is an OBJECT at its top level,
+  and has at least one of the five members  active, tip_height, from_height, next_height, txs.
+  Everything else is NO ANSWER: no response, another status, an empty body, text that is not
+  JSON (a proxy's error page), JSON that is not an object, an object with none of the five
+  (the node's own error answer { "success": false, "error": … }). No answer is never evidence
+  and is not handed to `scan`. (Handed to it anyway it is `listing: … not a listing page …`,
+  for which the rule is the same: no answer.)
 
 STORED    S            the state, under its revision_id
           listed_from  the node every page that S holds above its confirmed height came from
@@ -540,6 +555,11 @@ SESSION   (memory only; lost in a crash and when the application ends)
                    applied in this session since S was last empty
           origin   the listed_from this session started with (none: unknown)
           inactive the nodes whose LATEST answer says that the pool is not active
+          own_tail whether every height S holds above its confirmed height was listed by L:
+                   the entries of `served` above the confirmed height are all L's, and what
+                   the stored S held unconfirmed at the start (if anything) is L's because
+                   origin = L
+          row, on_L rescans that blamed nobody while L is the listing node: in a row, in all
           seen     the nodes whose report showed a pool that holds notes or nullifiers
 
 START OF A SESSION
@@ -557,13 +577,17 @@ ROUND
   0. stopped → return (nothing is asked, nothing is written). answered := true
   1. at most P times:
        page := the answer of L for since = S.next_height, blocks = B
-       no answer, or not a page          → answered := false; strikes += 1; if strikes ≥ K:
+       no answer (not a listing page)    → answered := false; strikes += 1; if strikes ≥ K:
                                            LEAVE(no ban), end the round; otherwise go to
                                            step 2
-       r := scan(S, page, FULL scan key)
-       `listing:`                        → LEAVE(ban); end the round. EVERY way the content
-                                           of a page can be invalid is this error, also a
-                                           body that is not the JSON of a page
+       r := scan(S, page, FULL scan key)   (or, for the pages of the round together,
+                                           scan_pages: all of them are applied or none, and
+                                           an error names the page — `listing: page i: …`)
+       `listing:`                        → EVERY way the content of a listing page can be
+                                           invalid is this error.
+                                           own_tail: LEAVE(ban); end the round
+                                           otherwise: BLAMELESS; end the round   (the page
+                                           may be true and the tail another node's)
        `rescan_required:`                → S := rescan_state(S) → persist; prev := none;
                                            L stays, NOBODY is blamed (the client's own
                                            worker caused it); end the round
@@ -577,7 +601,8 @@ ROUND
                                            read. Not a short page, not evidence.
                                            said_inactive := true; go to step 2
            served += (L, page.from_height … page.next_height − 1); into an empty S: from 0
-           r.leaf_mismatch               → LEAVE(ban); end the round
+           r.leaf_mismatch               → own_tail (judged before this page): LEAVE(ban);
+                                           otherwise: BLAMELESS; end the round
            not r.at_tip and page.next_height − page.from_height < B
                                          → LEAVE(ban); end the round            ("a short page")
            r.at_tip                      → at_tip := true; go to step 2
@@ -608,9 +633,9 @@ ROUND
          not been emptied in this session
                                          → LEAVE(ban); end the round
          otherwise (a height at or below the confirmed height is contradicted, or heights L
-         did not serve)                  → S := rescan_state(S) → persist; prev := none;
-                                           served := {}; L stays, NOBODY is blamed; end the
-                                           round
+         did not serve)                  → BLAMELESS; end the round
+       T exists, S.confirmed_height ≥ T and S.scanned_height = S.confirmed_height
+                                         → row := 0   (the tip is confirmed, and no rescan)
        c.quorum_tip = T exists (a quorum answers):
          not at_tip and S.scanned_height < T
                                          → catching up: prev := S.scanned_height; no verdict
@@ -637,8 +662,15 @@ ROUND
      compare-and-swap on the revision_id that was LOADED → submit the envelope.
      Not written ⇒ discard the result and do not submit.
 
+BLAMELESS   (the state is not the chain's, and nobody is blamed for it)
+  row += 1; on_L += 1
+  row ≥ R_c or on_L ≥ R_s  → LEAVE(no ban), and S := rescan_state(S) in it whatever S holds
+  otherwise                → S := rescan_state(S) → persist; prev := none; served := {};
+                             L stays
+
 LEAVE(ban)
   if ban: bad += L
+  row := 0; on_L := 0
   next := the first node after L, in the order of N, cyclically, that is not in bad and is not L
   no such node, and L ∈ bad    → S := rescan_state(S) → persist; listed_from := unknown;
                                  STOP("no honest listing node reachable"). bad is NOT cleared.
@@ -691,6 +723,25 @@ on the WebAssembly surface is the same call):
 | the caller's state | the state in hand is not the stored revision (the WebAssembly surface's `expected_revision`) | `stale_state:` | reload |
 | an implementation fault | the state in hand does not validate; the call would have left a state that does not read back; a self-check of the scan failed | `state_invariant:` | STOP(fault) |
 
+**The exports that take data a node supplied** (`core/shield-v2-wasm/src/api.rs`;
+REVIEW_WALLET_6B RW6B-1: the table above was true of `scan` and not of `scan_pages`). In every
+one of them the node's data is classified as the node's, and what the CLIENT assembled as the
+client's:
+
+| Export | The node's data | Wrong with it | The client's own | Wrong with it |
+|---|---|---|---|---|
+| `scan(state, page, key, revision)` | `page`: the body of ONE answer | not a listing page: `listing: note listing: not a listing page: …` (NO ANSWER: a strike). A listing page that is invalid in any way: `listing:` (the table above) | the state, the key, the revision | `state:`, `stale_state:`, `request:`, `key:`, `non_canonical:` |
+| `scan_pages(state, pages, key, revision)` | every ELEMENT of `pages`: the body of one answer, of ONE node, in order | exactly as `scan`, with the element's index: `listing: page i: …` (`null`, a number, a missing member, a refused value — whatever it is). **All or nothing**: no page of the call is applied, the caller keeps its state | the ARRAY (the client builds it: text that is not a JSON array, or more than 64 MiB of it), the state, the key, the revision | `request:` for the array; the others as `scan` |
+| `confirm_state(state, reports, revision)` | every ELEMENT of `reports`: the `report` object of one node's stats answer, under the id the CLIENT gave it | anything — `null`, not an object, a missing member, a member of the wrong type, a height out of range, a hash that is not 32 bytes of lowercase hexadecimal: **no report from that node**. Counted in `malformed`; never an error, never a vote, never dissent. A report that lacks only `ciphertext_acc`: `outdated_nodes` | the ARRAY (not a JSON array; more than 1 MiB; more than 1,024 reports), the state, the revision | `request:`; `state:`; `stale_state:` |
+
+What a client must do so that a node cannot reach the right-hand columns: build the arrays
+itself (never pass a node's body as the whole argument); drop a `report` that is not a JSON
+object or is larger than 4 KiB before it enters `R` (the core would count it as malformed; the
+1 MiB of the whole argument is the client's to keep); hand a body to `scan` or into a batch
+only if it is a listing page (above), and no body above 32 MiB. `rw6b_f1_…`,
+`rw6br_f1_scan_pages_classifies_…` and `rw6br_f1_a_malformed_report_is_no_report_…` (wasm
+crate) hold the three exports to the table.
+
 Nothing a node serves leaves the first three rows: `rw6r_f2_every_field_of_a_page_…` corrupts
 every field of the listing's JSON shape in every way (1,906 pages) and gets `listing:` with
 the state unchanged for each one that is malformed; what is left are well-formed lies — a
@@ -702,6 +753,19 @@ or `rescan_required:`". "Anything else → STOP(fault)" stays, for the fault nob
 unknown, start at the next node", so that the next session lists from another node, and what
 the stored state holds above its confirmed height is then nobody's (refuted, it is rescanned
 without a ban).
+
+**What is a listing page, and why "one member" is the test** (REVIEW_WALLET_6B RW6B-2: step 1
+had two rules for one answer, and an honest node's `{ "success": false, … }` — which the node
+sends with status 200 when its store cannot be read — got it banned). The discriminator is
+`ListingPage::is_page`: JSON, an object, at least one of `active`, `tip_height`,
+`from_height`, `next_height`, `txs`. *Not "all five"*: a liar could then drop one member from
+every false page and never be banned. With "at least one", the only way to be "no answer" is
+to send NOTHING of a listing — no height, no tip, no transaction, no word about the pool —
+and a node that sends nothing is left after K rounds like one that is silent; it gains
+nothing a silent node does not have. *Not the `success` member*: it is the node's wrapper,
+not the listing's (a page is a page with `success: false` beside it, and is judged). *Not the
+status alone*: the reference node answers its own errors with 200. A body that carries a part
+of a listing and is wrong in any other part is a `listing:` error and a ban.
 
 **The two decisions that were open, and why.**
 
@@ -758,6 +822,29 @@ without a ban).
   majority.) A client that uses only the listing answers learns the majority one node per
   round; one that also reads the `active` field of the stats answers learns it in the first
   round, whoever it lists from.
+* *A page that does not continue the state is evidence against the node whose tail it is*
+  (REVIEW_WALLET_6B RW6B-3). A `listing:` error and `leaf_mismatch` say "this page and what
+  the state already holds are not one chain's listing". When every unconfirmed height of the
+  state was listed by `L` (and what is confirmed is the chain's), the page contradicts `L`'s
+  own word or the chain: ban. That is so in every state the loop itself makes — a change of
+  node rescans unless everything is confirmed. It is NOT so in the session after a fault,
+  which starts at the next node on the stored state as it is: the tail is another node's, and
+  an honest node's true page is numbered below it (the tail held a forged payment) or above
+  it (the tail hid a transaction). The first such signal there is a rescan that blames
+  nobody; after it every page is `L`'s own and the ordinary rule applies.
+* *Rescans that blame nobody are capped* (REVIEW_WALLET_6B, its recommendation). A node that
+  lists a transaction late, has the result confirmed, contradicts the confirmed height with
+  an honest node that stood there, and lists the TRUTH into the rescanned state is never
+  banned — nothing false is left to point at — and can do it at every occasion (a block with
+  a pool transaction and one honest node a block behind). Each occasion costs the client a
+  rescan. Two caps, both a LEAVE without a ban (the loop still has no evidence): `R_c = 2`
+  in a row — no round between them that ended with the tip confirmed: the case in which the
+  wallet would not settle at all — and `R_s = 6` on one listing node in a session, however
+  many confirmed tips lie between them: the case of the adaptive liar
+  (`rw6br_cap_the_liar_that_lists_the_truth_…`: left at the sixth). The node comes round
+  again only when every node after it has been left. `R_s` is a cost limit, not a proof: an
+  honest node that is listed from while reports contradict earlier confirmations six times
+  is left too, which costs nothing.
 
 **Termination and the bound.** Every round ends (P pages, one state check). Against any
 behaviour of the listing node, a tenure of one node lasts at most `D + 1 + K` rounds, where
@@ -775,10 +862,22 @@ answering, the nodes before the first honest one in the order are at most `n −
 **the loop ends with the tip confirmed, everything the state holds confirmed and nothing
 pending within `(n − quorum + 1)·(D + K + 2) + W + (D + 1)` rounds**, or it has stopped because every
 node is banned —
-which, bans being evidence, needs every node to have lied. (The last term is REVIEW_WALLET_6's:
-one rescan for which nobody is blamed. With the honest nodes at one height it can be caused
-only by reports from before they were — at most three rounds old — so it happens at most once;
-a node that answers "not active" has a tenure of one round.) The property test asserts this
+which, bans being evidence, needs every node to have lied. (The last term is one rescan for
+which nobody is blamed: with the honest nodes at one height it can be caused only by reports
+from before they were — at most three rounds old — so it happens at most once; a node that
+answers "not active" has a tenure of one round.)
+
+**The term `D + 1` is per rescan that blames nobody, and the caps are what bound their
+number** (REVIEW_WALLET_6B: as first written the text counted it once, which is true only
+with the honest nodes at one height). In general — honest nodes at different heights, a liar
+that picks its moments — a tenure of one listing node holds at most `R_c − 1 = 1` such rescan
+before the tip is confirmed (the second in a row ends the tenure), so within
+`D + K + 2 + R_c·(D + 1)` rounds of a tenure the tip is confirmed or the node is left, and
+**within `(n − quorum + 1)·(D + K + 2 + R_c·(D + 1)) + W` rounds overall** while a strict
+majority of honest nodes is reachable at the tip. After the tip is confirmed a node can
+cause further rescans one occasion at a time; over a session it causes at most `R_s = 6` —
+at most `R_s·(D + 1)` rounds of repeated work per tenure, between which the tip IS confirmed,
+payments are offered and pending entries settle — and is then left. The property test asserts this
 bound, that no honest node is ever banned and that the loop never stops, with lying nodes that
 lie the same way in every round (§14); the most it measured is in the Resolution of
 `REVIEW_WALLET_5.md`.
@@ -1521,3 +1620,58 @@ The results, the mutations and the times are in the Resolution of `REVIEW_WALLET
 | `active: false` → "a short page" → the node is banned | not read (`pool_active: false`); a majority: the loop idles; a minority: left |
 | a page without `txs`: a page without transactions | `listing:` |
 | the bound `(n − quorum + 1)·(D + K + 2) + W` | `+ (D + 1)` |
+
+## 16. After REVIEW_WALLET_6B: what a page is, a batch like a page, whose tail, a cap
+
+`REVIEW_WALLET_6B.md` (of `dc35299`): RW6-1 to RW6-3 confirmed fixed; three small findings in
+the same place — what a page or an answer may do to the loop — and one recommendation. Branch
+`fix/shield-v2-wallet-settlement-6`. State format 5 is unchanged; nothing of spec §2, of
+consensus or of the state root is touched; no existing function changed its shape. Added:
+`ListingPage::is_page`, `WalletError::is_not_a_page`, `WalletState::scan_pages` (with
+`PageError`). The loop of §6 and spec §5.5 (W-22) is the corrected one; `UI_CONTRACT.md`
+gained obligation 9.
+
+* **RW6B-1 — `scan_pages` answered `request:` for a malformed page.** The export read the
+  whole argument as an array of pages, so that a member missing from one page was an error of
+  the argument. It reads the array (the caller's) and hands every element to the core as the
+  text of one answer; the core's `WalletState::scan_pages` runs `ListingPage::from_json` +
+  `scan` on each, on a copy, and returns the page's own error with its index. All or nothing:
+  a batch is one node's word for one round. `confirm_state` was audited with it: its elements
+  were already read one by one and a malformed one counted, not refused; the table in §6 now
+  says so and a test holds it to that.
+* **RW6B-2 — a non-page answer got an honest node banned.** One rule: an answer that is not a
+  listing page is no answer. The discriminator and why it is "at least one member": §6.
+  `ListingPage::from_json` marks such a body (`listing: … not a listing page …`,
+  `WalletError::is_not_a_page`), and the loop's `after_scan_error` counts a strike for it.
+* **RW6B-3 — after a fault the next node was banned for the previous node's tail.**
+  `Session::unconfirmed_tail_is_listing_nodes`: a `listing:` error and `leaf_mismatch` ban
+  only when the unconfirmed part of the state is the listing node's own; otherwise the state
+  is rescanned and nobody is blamed — once: the rescanned state is the node's own.
+* **The cap.** `BLAMELESS_IN_A_ROW = 2`, `BLAMELESS_IN_A_SESSION = 6`: at either, LEAVE
+  without a ban, with the rescan. The count in a row is reset by a round that ends with the
+  tip confirmed and no rescan — so it alone would never end the review's demonstration, in
+  which the tip is confirmed between every two rescans; the count per session does (and is 6
+  because the review's own demonstration, which must keep passing as written, asserts five
+  rescans without a LEAVE). The bound of §6 is restated: `D + 1` per such rescan.
+
+**The property test** has the three behaviours: answers that are not a page — from honest
+nodes too, outside a settlement window (`not_a_page`: the node's error object, a proxy's
+page, nothing, JSON that is no object, a page one level down), a liar that sends nothing else
+(`Strategy::ErrorBodies`); in one run of three a client that applies the pages of a round in
+one `scan_pages` call (`World::sync_batch`), which meets malformed elements at any index and
+is held to "one call ≡ page by page", "all or nothing" and "the index is the refused page's";
+and the adaptive liar (`Strategy::LateAdaptive`, `World::directed_adaptive_liar`), held to
+"no more than `R_s` blameless rescans while one node is listed from". The model's knowledge
+decides as before: what the MODEL generated as no page must be called no page by the core
+and must never lead to a ban; what it generated as a page — however damaged — must never be
+called "not a page". Results and mutations: the Resolution of `REVIEW_WALLET_6B.md`.
+
+**What changed for callers.**
+
+| Before | Now |
+|---|---|
+| `scan_pages`: a malformed element → `request: pages: …` | `listing: page i: …`; nothing of the call applied |
+| a body that is not a page → `listing:` → the node banned | `listing: … not a listing page …` → no answer: a strike |
+| `leaf_mismatch` / `listing:` → always a ban | a ban when the state's unconfirmed part is the listing node's; otherwise a rescan, nobody blamed |
+| rescans that blame nobody: unlimited | 2 in a row or 6 per node and session → the node is left (no ban) |
+| the bound's `+ (D + 1)`: once | per rescan that blames nobody; with the caps: `(n − quorum + 1)·(D + K + 2 + R_c·(D + 1)) + W` to the confirmed tip |

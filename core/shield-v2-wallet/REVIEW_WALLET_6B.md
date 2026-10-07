@@ -202,3 +202,165 @@ the 7000 and 9000 ranges, the mutations, the wasm32 build, the daemon's interop 
 node's answers in section 4 are from reading `node.rs`). No source file was edited.
 `core/target/` was deleted; nothing was pushed; nothing outside this worktree was read or
 written; no service, proxy or node was touched.
+
+---
+
+## Resolution
+
+**RW6B-1, RW6B-2 and RW6B-3 are fixed and the cap on blameless rescans is in; `rw6b_f1_…`
+(wasm crate), `rw6b_f2_…` and `rw6b_f3_…` pass as the review wrote them. No earlier test was
+edited: `tests/review_wallet_6.rs` and both `review_wallet_6b.rs` are byte for byte the
+review's. One thing is not as the task worded it — the reset rule of the cap alone does not
+end the review's demonstration; a second count does (below, "The cap").**
+
+Branch `fix/shield-v2-wallet-settlement-6`, from `review/shield-v2-wallet-6b` @ `fec27d7`.
+Date: 2026-10-07. State format 5 unchanged; nothing of spec §2, of consensus or of the state
+root touched; no existing function changed its shape. Added to the public API:
+`ListingPage::is_page`, `PAGE_MEMBERS`, `NOT_A_LISTING_PAGE`, `WalletError::is_not_a_page`,
+`WalletState::scan_pages`, `PageError`. Documents: `NOTES.md` §6 and §16, spec §1 (dated line),
+§5.4 and §5.5 (W-22), `UI_CONTRACT.md` obligation 9. New tests:
+`tests/review_wallet_6b_resolution.rs` (5) and `core/shield-v2-wasm/tests/review_wallet_6b_resolution.rs` (2).
+
+### The four items
+
+| # | The fix | Where | Tests |
+|---|---|---|---|
+| RW6B-1 | `scan_pages` reads the ARRAY (the caller's: not a JSON array, or more than 64 MiB → `request:`) and hands every ELEMENT to the core as the text of one answer. `WalletState::scan_pages` runs `ListingPage::from_json` + `scan` on each, on a copy: whatever is wrong with an element — `null`, not an object, a missing or ill-typed member, a value `scan` refuses — is that page's `listing:`, in the words `scan` has for it, with its index (`listing: page i: …`). **All or nothing**: on any error no page of the call is applied, the pages before the refused one included (a batch is one node's word for one round: a client about to ban the node rescans them away, one about to count a strike keeps its stored state). `confirm_state` audited: its elements were already read one by one — a malformed report is counted in `malformed`, is not an error, not a vote, not dissent; the table says so now and a test holds it to that | `shield-v2-wasm/src/api.rs` (`scan_pages`); `store.rs` (`WalletState::scan_pages`, `PageError`); `NOTES.md` §6 (the table of the exports) | `rw6b_f1_…` passes unedited; `rw6br_f1_scan_pages_is_scan_page_by_page_…` (wallet), `rw6br_f1_scan_pages_classifies_the_array_as_the_callers_…`, `rw6br_f1_a_malformed_report_is_no_report_and_never_an_error` (wasm: 18 malformed reports, each alone and all together) |
+| RW6B-2 | One rule: an answer that is not a listing page is NO ANSWER — a strike towards LEAVE after K rounds, never a ban. `ListingPage::from_json` marks such a body (`listing: note listing: not a listing page: …`; `WalletError::is_not_a_page`), `Session::after_scan_error` counts a strike for it. A body that IS a page and is refused is a `listing:` error and a ban, as before | `store.rs` (`ListingPage::is_page`); `error.rs`; `client_loop.rs` (`after_scan_error`); `NOTES.md` §6; spec §5.4, §5.5; `UI_CONTRACT.md` 9 | `rw6b_f2_…` passes unedited; `rw6br_f2_a_body_is_a_page_if_it_has_one_member_of_a_page_…` (17 bodies that are no page: K strikes, LEAVE without a ban; 19 that are a page with members missing or ill-typed: banned) |
+| RW6B-3 | `leaf_mismatch` and the `listing:` errors ban only when every height the state holds above its confirmed height was listed by the listing node (`Session::unconfirmed_tail_is_listing_nodes`: the entries of `served` above the confirmed height are all `L`'s, and what the stored state held unconfirmed at the start is `L`'s because `origin = L`). Otherwise — the session after a fault (`new_unattributed`) — the state is rescanned and nobody is blamed; the rescanned state is the node's own, and from there the ordinary rule applies | `client_loop.rs` (`unconfirmed_tail_is_listing_nodes`, `see`, `after_scan`, `after_scan_error`) | `rw6b_f3_…` passes unedited (both tails); `rw6br_f3_a_page_that_does_not_continue_the_state_bans_only_the_node_whose_tail_it_is` (unknown `listed_from`: rescan, then the same node lying is banned; stored `listed_from`: banned at once; a confirmed state handed on: banned) |
+| the cap | `BLAMELESS_IN_A_ROW = 2` (`R_c`), `BLAMELESS_IN_A_SESSION = 6` (`R_s`): at either the listing node is LEFT — no ban — and the state rescanned in the LEAVE. Every blameless rescan the loop decides counts (a contradicted confirmation, a refutation of heights `L` did not serve, RW6B-3's). The count in a row is reset by a round that ends with the tip confirmed and no rescan; both counts start again when the listing node changes | `client_loop.rs` (`blameless_rescan`, `after_confirm`, `plan_leave`, `commit_leave`) | `rw6br_cap_the_liar_that_lists_the_truth_after_each_blameless_rescan_is_left_at_the_cap` (the review's demonstration: left at the sixth occasion, not banned, the honest node confirms the tip); `rw6br_cap_two_blameless_rescans_in_a_row_leave_the_listing_node` |
+
+### "Is a page": the discriminator
+
+**A body is a listing page if and only if it is JSON, its top level is an object, and that
+object has at least one of the five members `active`, `tip_height`, `from_height`,
+`next_height`, `txs`** (`ListingPage::is_page`; for a client: status 200 and that). Everything
+else — no response, another status, an empty body, HTML, text, JSON that is not an object, an
+object with none of the five such as the node's `{ "success": false, "error": … }`, a page
+wrapped one level down or inside an array — is no answer.
+
+Why this and nothing else:
+
+* *"At least one", not "all five".* With "all five" a liar drops one member from every false
+  page and is never banned. With "at least one" the only way to be "no answer" is to send
+  nothing of a listing at all, and a node that sends nothing is left after K rounds like one
+  that is silent: it gains nothing a silent node does not have. Anything that carries a part
+  of a listing is judged as a listing, and what is missing or malformed in it is `listing:`
+  → ban.
+* *Not the `success` member.* It is the node's wrapper, not the listing's; a liar could set
+  it to `false` on a false page. `{ "success": false, "txs": [] }` is a page (and refused:
+  banned).
+* *Not the status alone.* The reference node sends its own errors with 200
+  (`core/daemon/src/main.rs`, `shield_v2_notes`).
+
+### The cap, and the corrected bound
+
+**What the task's rule does and does not do.** "After R consecutive blameless rescans on one
+listing node, LEAVE it; reset when a round ends with the tip confirmed and no rescan" is
+`R_c = 2` and is implemented as stated. It bounds the case in which the wallet would not
+settle (rescan after rescan, the tip never confirmed between them). **It does not end the
+review's demonstration**: there the tip IS confirmed between every two rescans, so the count
+in a row never passes 1. And the demonstration itself (`rw6b_demo_…`, frozen with the
+review's file) asserts five occasions with five rescans and NO leave. So a second count was
+needed for "the liar is left": `R_s = 6` blameless rescans on one listing node in a session,
+not reset by a confirmed tip. Six, because five must pass; the review's own suggestion ("K
+on it in a session", K = 3) would fail the review's own test. If the owner prefers 3, it is
+one constant and an edit to that test.
+
+**The bound.** The term `D + 1` is per blameless rescan (the text said "once", which is true
+only while the honest nodes are at one height: then such a rescan can come only from reports
+at most three rounds old).
+
+* To the confirmed tip, in general: a tenure holds at most one blameless rescan before the
+  tip is confirmed (the second in a row ends it), so
+  **`(n − quorum + 1)·(D + K + 2 + R_c·(D + 1)) + W` rounds**, `R_c = 2`, while a strict
+  majority of honest nodes is reachable at the tip.
+* With the honest nodes at one height (what the property test drives): `(n − quorum + 1)·(D + K + 2) + W + (D + 1)`, unchanged and still asserted.
+* After the tip is confirmed: a node can cause further blameless rescans one occasion at a
+  time; at most `R_s = 6` per tenure in a session, i.e. at most `R_s·(D + 1)` rounds of
+  repeated work, between which the tip is confirmed; then it is left. Measured in the
+  converted demonstration: 6 occasions of 3 rounds, the liar left in round 18.
+
+`R_s` is a limit on cost, not evidence: an honest node listed from while six earlier
+confirmations are contradicted is left too. A new session starts the counts again.
+
+### Tests edited
+
+**None.** `git diff fec27d7 --stat -- core/shield-v2-wallet/tests core/shield-v2-wasm/tests
+core/shield-v2-wallet/src/review_wallet_1_tests.rs core/shield-v2-wallet/src/review_wallet_2_tests.rs`
+shows `tests/common/client_loop.rs` (the loop: the subject), `tests/settlement_properties.rs`
+(the property test: extended as asked) and the two new files — no `review_wallet_*` test,
+not `wallet_flow`, not `vectors`, no wasm test. In the property test one existing
+assertion was widened for the cap — "a refuted listing is kept" now also accepts the LEAVE
+without a ban that ends a run of blameless rescans (the state is rescanned in it) — and its
+coverage thresholds are the same numbers (the adversary mix was rebalanced so that they
+still hold).
+
+### The property test
+
+Added, with the model's invariants as they were:
+
+* **Answers that are no page** (`not_a_page`: the node's error object, a proxy's page,
+  nothing, `null`, an array, a page one level down, plain text): from HONEST nodes outside a
+  settlement window (1 request in 24), from a liar that sends nothing else
+  (`Strategy::ErrorBodies`), and as one lie of the memoryless adversary. The model knows it
+  generated no page: the core must call it "not a page", the loop must not ban for it — and
+  what the model generated AS a page, however damaged, must never be called "not a page".
+* **A client that applies a round's pages in one call** (`World::sync_batch`, one run in
+  three; `WalletState::scan_pages`, which the wasm export runs): it meets malformed elements
+  and non-pages at any index; held to "one call ≡ page by page", "a refused batch leaves the
+  state equal", "the index is the refused page's", and the two class invariants.
+* **The adaptive liar** (`Strategy::LateAdaptive`, `World::directed_adaptive_liar`): late
+  where an honest node stands, an honest vote, a contradiction only once the wallet has
+  confirmed past the height, the truth whenever the wallet reads from the start. Held to: no
+  more than `R_s` blameless rescans while one node is listed from, in one session.
+
+| Range | Result | Time | In it |
+|---|---|---|---|
+| seeds 1–200 × 280 | passes | 306 s | 3,095 payments, 458 restores; 1,201 answers that were no page (1,157 of them honest nodes'), none led to a ban; 11,674 rounds applied in one call, 392 refused (14 at a page after the first); 439 refuted listings, 322 of a confirmed height → 322 rescans that blamed nobody; 45 nodes left at the cap (57 scenes of the adaptive liar); 263 bans, each of a node with a false page; at most 13 rounds to settle |
+| `PROP_SEED_BASE=11000 PROP_RUNS=150` | passes | 253 s | 2,244 payments, 300 restores; 978 non-pages; 9,063 batches, 333 refused (10 inside); 487 refuted, 385 of a confirmed height → 386 blameless rescans; 59 left at the cap; 228 bans; at most 10 rounds |
+| `PROP_SEED_BASE=12000 PROP_RUNS=40 PROP_STEPS=1000` | passes | 476 s | 2,272 payments, 312 restores; 745 non-pages; 8,734 batches, 261 refused (10 inside); 445 refuted, 407 of a confirmed height → 409 blameless rescans; 62 left at the cap; 66 bans; at most 11 rounds |
+
+Each fix taken out again, seeds 1–60 (then restored):
+
+| Mutation | The property test |
+|---|---|
+| a body that is no page is a `listing:` error like any other | fails at seed 1: "a node is banned for an answer that is not a page" |
+| the core does not mark a non-page | fails at seed 1: "page 0 of a batch: …" (the model's "no page" against the core's word) |
+| `scan_pages` keeps the pages before the refused one | fails at seed 16: "a refused batch changed the state" |
+| no cap on blameless rescans | fails at seed 1: "7 rescans that blamed nobody while one node was listed from, in one session" |
+
+Not in the property test: RW6B-3 (it has no fault, so no session with `listed_from`
+unknown); the rule is tested in `rw6b_f3_…` and `rw6br_f3_…`.
+
+### Not done / to know
+
+* The cap as the task worded it (in a row, reset by a confirmed tip) does not by itself leave
+  the review's adaptive liar; `R_s = 6` does, and 6 is forced from below by the frozen
+  demonstration (above).
+* The discriminator is on the BODY. A client must apply the status rule itself (a 502 with a
+  JSON body that happens to carry `txs` is no answer by status; the core never sees a status).
+  `UI_CONTRACT.md` obligation 9.
+* `confirm_state`'s outer limits (1 MiB, 1,024 reports) are `request:`: the client builds
+  that array and must drop an oversized `report` itself (obligation 9 says 4 KiB).
+* After a blameless rescan under RW6B-3 a node that is in fact lying gets one free round
+  (the rescan) before it is banned for its own pages.
+* Not re-run: the daemon's interop tests (nothing they reach changed: `spend_input`, `scan`,
+  `confirm_state` of the Rust crate), the 5000 / 7000 / 9000 ranges, the noble cross-check.
+
+### Commands run
+
+Each as `systemd-run --user --scope -q -p MemoryMax=2500M -p MemorySwapMax=0 -p CPUWeight=10
+nice -n 19 cargo … --release --locked --offline -j 1`, one at a time, after checking that no
+`cargo` or `rustc` process was running.
+
+| Command | Result |
+|---|---|
+| `cargo test -p quantum-vault-shield-v2-wallet --features test-vectors -p quantum-vault-shield-v2-wasm … --no-fail-fast -- --test-threads=1 --nocapture` | **168 tests: 168 passed, 0 failed, 0 ignored.** Wallet 158: unit 22, `review_wallet_1` 14, `_2` 14, `_3` 17, `_4` 19, `_4_resolution` 11, `_5` 12, `_5_resolution` 7, `_6` 10, `_6_resolution` 10, `_6b` 7, `_6b_resolution` 5, `settlement_properties` 1 (seeds 1–200, 306 s), `vectors` 3, `wallet_flow` 6; wasm 10: `api` 2, `review_wallet_1` 4, `_3` 1, `_6b` 1, `_6b_resolution` 2. 536 s |
+| `PROP_SEED_BASE=11000 PROP_RUNS=150 cargo test … --test settlement_properties -- --nocapture` | 1 passed, 253 s |
+| `PROP_SEED_BASE=12000 PROP_RUNS=40 PROP_STEPS=1000 cargo test … --test settlement_properties -- --nocapture` | 1 passed, 476 s |
+| `cargo build -p quantum-vault-shield-v2-wasm --target wasm32-unknown-unknown …` | built, 116 s (2,941,822 bytes) |
+| the four mutations, `PROP_RUNS=60` each | each caught |
+
+`core/target/` was deleted afterwards; no process was left; nothing was pushed; nothing
+outside this worktree was read or written; no service, proxy or node was touched.
