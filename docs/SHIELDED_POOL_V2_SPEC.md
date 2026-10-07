@@ -94,6 +94,21 @@ shield is recorded like its change (RW4-11); a state's revision identifies its c
 only: no constant, tag, encoding or parameter of §2 changed, no body or ciphertext format of
 §3, no consensus rule, no node rule, and the state root of §4.8 is byte-for-byte what it was.
 
+*Amended 2026-10-07 after the fifth wallet core review
+(`core/shield-v2-wallet/REVIEW_WALLET_5.md`, findings RW5-1 … RW5-9; verdict: ready for UI
+integration with conditions):* (W-20) §5.4 — **a page that is not the listing of a chain is
+refused as a listing error, never applied**: a note under the nullifiers of a note the wallet
+already holds, and a spend listed below the height of the note it spends (RW5-1); an IPv6
+literal that only spells an IPv4 address is that IPv4 host (RW5-7); a wallet library reads no
+state text that does not say where it stands with the restore embargo (RW5-9); §5.5 — the
+user's statement that overrides the embargo **stands once recorded** (the SHOULD of W-19 that
+disregarded it is withdrawn, RW5-5), and who may make it is a rule for the client; **the
+client loop is restated as a terminating algorithm** (RW5-2, RW5-3): a listing node is banned
+on evidence and left without it, the state is rescanned when the listing node changes unless
+all of it is confirmed, there is a rule for every error and a stop. What a client owes its
+user is `core/shield-v2-wallet/UI_CONTRACT.md`. Wallet rules only, as before: nothing of §2,
+§3 or §4 changed.
+
 This document specifies the shielded pool V2 of RougeChain for two readers: the implementer of a
 node (validation, state, consensus) and the implementer of a wallet (keys, notes, proving). It is
 normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119.
@@ -1178,6 +1193,26 @@ wallet is configured with, and the quorum is a property of that set:
   `*.localhost`, `127.0.0.0/8`, `[::1]`): there `http` is accepted and nodes are told apart by
   port. A loopback node MUST NOT be counted in a quorum together with a node that is not
   loopback. A set SHOULD have an odd number of at least three nodes.
+* *(W-20, RW5-7.)* **An IPv6 literal that only spells an IPv4 address is that IPv4 host** for
+  the rule "one node per host": IPv4-mapped (`::ffff:a.b.c.d`), IPv4-compatible
+  (`::a.b.c.d`), IPv4-translated (`::ffff:0:a.b.c.d`), the NAT64 well-known prefix
+  (`64:ff9b::a.b.c.d`) and 6to4 (`2002:AABB:CCDD::/48`). A library MUST refuse a set that
+  holds such a literal together with the IPv4 address it spells. Teredo and ISATAP addresses
+  and network-chosen NAT64 prefixes are hosts of their own.
+* *(W-20, RW5-1.)* **A page that is not the listing of a chain is refused, not applied.** No
+  two transactions of a chain share a nullifier (§2.4), and `rho = H_rho(nf1, nf2, j)`: a
+  wallet never holds two notes with one `rho`. A library MUST refuse, as a listing error and
+  before its state is changed, a page that lists a note of the wallet whose `rho` is that of a
+  note it holds or of one the same page listed; and, for a state that was scanned without the
+  nullifier key and remembered the nullifiers it met, MUST refuse to apply a remembered
+  nullifier that was listed at a height below the block that created the note it belongs to
+  (a note is spent in a later block than the one that created it). An error that says "the
+  library's own state is inconsistent" MUST NOT be something a node's answer can cause.
+* *(W-20, RW5-9.)* **A stored state says where it stands with the restore embargo (§5.5), or
+  it is not read.** A library MUST NOT complete a state of its current format with a default
+  for the embargo, for the user's statement or for the mark of a state scanned without the
+  nullifier key; a state it cannot read gives up its locks to a recovery that puts the result
+  under the embargo unless the text itself, readably, says otherwise.
 * **The quorum is a strict majority of the configured set**, `⌊n/2⌋ + 1`, and at least 2. A
   height is **confirmed** iff that many configured nodes reported, for that height, exactly the
   wallet's five values. A node counts at most once per height; a node that made two different
@@ -1450,8 +1485,16 @@ its lock ended, in exactly three cases, each decided on the wallet's own data up
 
   *The override.* A library MAY accept the user's explicit statement that no other copy of the
   wallet has a payment in flight. It MUST be an explicit, named input; it MUST be recorded in
-  the state; it MUST NOT be accepted after the base is fixed; and it SHOULD be disregarded when
-  the first state check shows a configured node ahead of the height being confirmed. A state
+  the state; and it MUST NOT be accepted after the base is fixed. *(W-20, RW5-5: W-19 added
+  "it SHOULD be disregarded when the first state check shows a configured node ahead of the
+  height being confirmed". That is withdrawn — the condition is met by one block arriving
+  while the nodes are asked, which cost an honest user the whole embargo, and a liar avoids it
+  by waiting for a check in which the leading node is slow.)* **Once recorded, the statement
+  stands**: the first state check establishes the state without an embargo. It is therefore
+  exactly as strong as it is true, and the rule that matters is the client's: a client MAY
+  make the statement without asking only for a phrase that was generated on that device in
+  that installation, and MUST NOT make it for an imported or restored phrase unless the user
+  was shown, and explicitly confirmed, what it says (`UI_CONTRACT.md`, obligation 1). A state
   that continues a device's own stored state (a migration, a recovery with every record read)
   is under no embargo.
 * *(W-19, RW4-4.)* **"Payment to self" is the whole address.** A payment output belongs to the
@@ -1467,43 +1510,91 @@ its lock ended, in exactly three cases, each decided on the wallet's own data up
   not know, MUST report nothing as spendable, and MUST NOT build — until a scan with the full
   key has derived every missing nullifier and applied the spends that were remembered.
 
-*(W-19, RW4-8, RW4-9.)* **The client loop.** The rules of §5.4 and of this section say what
-each signal means; this is how a client SHOULD combine them — how often "ask again" is, in
-which order nodes are tried, what is persisted when. `S` is the stored state, the calls are
-those of a wallet library with the operations of this specification (the names are the
-reference implementation's):
+*(W-19, RW4-8, RW4-9; restated by W-20, RW5-2, RW5-3.)* **The client loop.** The rules of §5.4
+and of this section say what each signal means; this is how a client SHOULD combine them —
+how often "ask again" is, in which order nodes are tried, when a node is left and when it is
+banned, what is persisted when, and when the loop stops. *(As written for W-19 the loop left a
+listing node on three signals that a node which never reaches its tip triggers none of, and
+on a refuted listing it banned the node being listed from at that moment — after a change of
+node without a rescan, an honest one. Both are corrected here.)* `S` is the stored state, the
+calls are those of a wallet library with the operations of this specification (the names are
+the reference implementation's; the loop itself is `core/shield-v2-wallet/tests/common/
+client_loop.rs`, and `core/shield-v2-wallet/NOTES.md` §6 has the same text with its reasons):
 
 ```
-S     the stored state, with the revision_id it was stored under
-N     the configured nodes            L     the node listed from
-bad   nodes whose listing was refuted or contradicted in this session (memory only)
-R     the reports of the last three rounds (one per node and height, at most 1,024)
-ahead, behind   counters (memory only)
+CONSTANTS (the client's; none is consensus)
+  B = 64   blocks asked for per page: GET L/api/shield-v2/notes?since=…&blocks=64
+  P ≥ 1    pages per round (the client's choice; the reference uses 6)
+  K = 3    consecutive rounds a listing node may fail to deliver before it is left
+  W = 5    rounds the first state check of a state without an embargo base waits for every node
+  R        keeps the reports of the last 3 rounds, at most 1,024
 
-round():
-  1. page from L at S.next_height → scan with the FULL scan key → persist; repeat until
-     report.at_tip or a page budget.
-       a `listing:` error, report.leaf_mismatch, or `rescan_required:`   → RESCAN(L); end
+STORED    S            the state, under its revision_id
+          listed_from  the node every page that S holds above its confirmed height came from
+SESSION   (memory only; lost in a crash and when the application ends)
+          L        the node listed from
+          bad      nodes whose listing was shown not to be a chain's
+          strikes  rounds in a row in which L did not deliver
+          prev     S.scanned_height at the end of the previous round on L (none at first)
+          waited   rounds the first state check has waited
+          R        the reports
+
+START OF A SESSION
+  bad := {}; strikes := 0; prev := none; waited := 0; R := {}
+  L := listed_from. If listed_from is not known: L := any node of N, and if
+       S.scanned_height ≠ S.confirmed_height then S := rescan_state(S) → persist.
+  A `state:` error on the STORED state: recover_locks(text) → persist → set_nodes if
+       nodes_kept is false. NEVER new_state: that state has no locks.
+
+ROUND
+  0. stopped → return (nothing is asked, nothing is written).
+  1. at most P times:
+       page := the answer of L for since = S.next_height, blocks = B
+       no answer, or not a page          → strikes += 1; if strikes ≥ K: LEAVE(no ban), end
+                                           the round; otherwise go to step 2
+       r := scan(S, page, FULL scan key)
+       `listing:`                        → LEAVE(ban); end the round
+       `rescan_required:`                → S := rescan_state(S) → persist; prev := none;
+                                           L stays, NOBODY is blamed (the client's own
+                                           worker caused it); end the round
+       `stale_state:`                    → another writer changed S: reload S; end the round
+       `state_invariant:`, anything else → STOP(fault): report a bug. S stays as it is stored:
+                                           no rescan, no new_state, no retry
+       ok                                → persist
+           r.leaf_mismatch               → LEAVE(ban); end the round
+           not r.at_tip and (the page is not active, or
+             page.next_height − page.from_height < B)
+                                         → LEAVE(ban); end the round            ("a short page")
+           r.at_tip                      → at_tip := true; go to step 2
   2. ask EVERY node of N for /api/shield-v2/stats at the same time; take `report`; drop one
      that is null or not a report; label each with the CONFIGURED origin — never with anything
      the node says about itself. A report without `ciphertext_acc` is handed in as it is: the
      core names that node in `outdated_nodes` (no vote; "node X must be updated").
      Add them to R; drop from R what is older than three rounds.
-  3. confirm_state(S, R) → persist.
-       report.listing_refuted            → RESCAN(L); end
-       report.listing_ahead              → ahead += 1; if ahead ≥ 3 (three rounds in a row, each
-                                           with fresh reports) → RESCAN(L); end either way
-       otherwise                         → ahead := 0
-       at_tip and (nothing confirmed, or confirmed_height < report.quorum_tip)
-                                         → behind += 1; if behind ≥ 2 → L := next node not in
-                                           bad (NO rescan), behind := 0
-       otherwise                         → behind := 0
-       no match and none of the above    → wait and repeat: NOTHING else
+     2a. if S has no embargo base (summary.spend.embargo_until = null) and the user's statement
+         is not recorded (summary.sole_copy_asserted = false):
+           unless THIS round's answers hold a report from every node of N for one common height,
+           and while waited < W:   waited += 1; show "waiting for every node (waited of W)";
+                                   end the round
+  3. c := confirm_state(S, R) → persist.     (a base now exists ⇒ waited := 0)
+       c.listing_refuted                 → LEAVE(ban); end the round
+       c.quorum_tip = T exists (a quorum answers):
+         not at_tip and S.scanned_height < T
+                                         → catching up: prev := S.scanned_height; no verdict
+         otherwise, with  ahead       = c.listing_ahead
+                          short       = at_tip and S.scanned_height < T
+                          unconfirmed = prev exists and S.confirmed_height < prev
+                                        (nothing confirmed counts as below everything)
+           prev := S.scanned_height
+           ahead or short or unconfirmed → strikes += 1; if strikes ≥ K: LEAVE(no ban), end
+                                           the round
+           none of the three             → strikes := 0
+       no quorum_tip                     → nothing is counted (the node is not what is missing)
   4. resolve_pending → persist → tell the user: mined / superseded / expired.
   5. for every entry that is still pending and whose envelope is stored: if its submit failed
      or was not answered, submit THE SAME envelope again (to any node). Never build again for it.
      A payment is offered only if
-       – this round's confirm_state matched, and confirmed_height = scanned_height;
+       – at_tip, this round's confirm_state matched, and confirmed_height = scanned_height;
        – `spend.can_spend_now` of that result (the core's answer: no embargo, not view-only,
          the root confirmed, a window left);
        – the payment is new, or step 4 reported its last attempt superseded or expired.
@@ -1511,22 +1602,49 @@ round():
      compare-and-swap on the revision_id that was LOADED → submit the envelope.
      Not written ⇒ discard the result and do not submit.
 
-RESCAN(L):  bad += L;  S := rescan_state(S) → persist;  L := next node not in bad.
-            Every node in bad → stop and tell the user: more than a minority of the configured
-            nodes lies or cannot be reached. (A new session starts with bad empty.)
+LEAVE(ban)
+  if ban: bad += L
+  next := the first node after L, in the order of N, cyclically, that is not in bad and is not L
+  no such node, and L ∈ bad    → S := rescan_state(S) → persist; listed_from := unknown;
+                                 STOP("no honest listing node reachable"). bad is NOT cleared.
+  no such node, L not in bad   → strikes := 0; prev := none; return   (L is the only node left)
+  if ban, or S.scanned_height ≠ S.confirmed_height:  S := rescan_state(S)
+  L := next; listed_from := next → persist S and listed_from together
+  strikes := 0; prev := none
+  (The user choosing another node in the settings is LEAVE(no ban).)
 
-a `state:` error on the STORED state:
-            recover_locks(text) → persist → set_nodes if nodes_kept is false → rounds.
-            NEVER new_state: that state has no locks.
+STOP  The loop does nothing more in this session. "no honest listing node reachable" is shown
+      to the user with the banned nodes; a fault is reported as a bug. A new session — the
+      application started again, or the user's explicit "try again" — starts with bad empty;
+      nothing else ever removes a node from bad.
 
-after new_state (a new wallet, a restore, a second device):
-            nothing for the client to remember. The core refuses build_* (`restored_recently:`)
-            until the embargo has ended; show `spend.reason = "embargo"`, `embargo_until`,
-            `embargo_blocks_left` and "payments made from another copy of this wallet may still
-            be in flight". Make the FIRST state check with every node answering (a node that is
-            silent then costs 256 blocks). `assert_sole_copy` only on the user's explicit
-            statement — a new wallet on a new phrase.
+THE BACKGROUND WORKER (export_scan_key(seed, false): the viewing key)
+  lists from L and from no other node, persists under the same compare-and-swap, and applies
+  the rules of step 1 to every answer. The state it leaves is marked view-only: nothing is
+  built from it until step 1 has applied one page with the full key (W-18). After a
+  `rescan_required:` the worker is not started again in that session.
+
+AFTER new_state (a new wallet, a restore, a second device)
+  nothing for the client to remember: the core refuses build_* (`restored_recently:`) until
+  the embargo has ended. Show `spend.reason = "embargo"`, `embargo_until`,
+  `embargo_blocks_left` and "payments made from another copy of this wallet may still be in
+  flight". `assert_sole_copy`: `UI_CONTRACT.md`, obligation 1 — never from this loop.
 ```
+
+*A node is banned only on evidence, and left without it.* Evidence is what no honest node
+produces: a listing error, leaf numbers below the wallet's own tree, a page that neither
+reaches the node's tip nor covers the 64 heights asked for (64 blocks hold at most
+`64 · SHIELD_V2_MAX_TX_PER_BLOCK` = 512 transactions, the listing's cap), a refuted listing. A
+node that does not get the wallet to where the quorum is may be honest — ahead, behind, or
+listed from while the others lag: it is left after K rounds and comes round again. *The state
+is rescanned on every change of the listing node unless everything it holds is confirmed*:
+every unconfirmed page of a state is then its current listing node's, so the node that is
+banned is the node that lied; a state whose scanned height is confirmed is the chain's,
+whoever listed it. *Termination.* A tenure of one node lasts at most `D + 1 + K` rounds,
+`D = ⌈(T − A + 1) / (B·P)⌉` being the rounds it takes to read the chain to the quorum's tip
+`T` at the speed step 1 enforces; with a strict majority of honest nodes reachable at the tip
+the loop ends with the tip confirmed within `(n − quorum + 1)·(D + K + 2) + W` rounds, or has
+stopped because every node is banned.
 
 **Every bound in these rules is a number of blocks**, and this chain produces a block when a
 transaction is pending, not on a clock: on a quiet chain 64 blocks have no upper bound in time,
@@ -2072,5 +2190,5 @@ To be confirmed or changed by the owner before the first testnet activation.
 | `SHIELD_V2_POOL_CAP_QUANTA` on testnet | §4.4 | the same 10^15 as mainnet; the owner's decision names mainnet only |
 | State-root tag and layout | §4.8 | `rougechain.stateroot.shield_v2.v1`, running nullifier hash (O-12) |
 | Shielded address text | §5.3 | bech32m, prefix `rshield`, no length limit, of `0x02 ‖ pk ‖ ek ‖ check`: 1,974 characters; `check` = first 8 bytes of SHA-256(`"rouge-shield/v2/address-check/v1"` ‖ `0x02` ‖ `pk` ‖ `ek`); fingerprint = first 8 bytes of SHA-256 of `pk ‖ ek` (O-11, W-4, W-9) |
-| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-19) |
+| Wallet defaults (not consensus) | §5.4, §5.5 | state-check quorum = a strict majority of the CONFIGURED nodes, at least 2; `expiry_height` = confirmed height + 64, at most + 128; **embargo after a restore = 128 blocks above a base at most 256 blocks above the quorum's tip** (W-19); the client loop's B = 64 blocks per page, K = 3 rounds, W = 5 rounds (W-20); fee ceiling 10 × the minimum fee; minimum stored note value = the minimum fee; cap of 65,536 unspent notes from others, at most 4,096 spent notes kept (W-10, W-11, W-14 … W-20) |
 | Node-local ciphertext hash (not consensus) | §5.4 | tag `rougechain.shield_v2.ciphertext_acc.node_local.v1`; SHA-256 over `acc ‖ cm_out ‖ kem_ct ‖ note_ct` per output in tree order, from 32 zero bytes; reported as `report.ciphertext_acc`; outside §4.8 (W-16) |

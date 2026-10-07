@@ -96,7 +96,10 @@ jobs:
 
       # --no-fail-fast: a failing target must not hide the targets after it in the alphabet
       # (REVIEW_WALLET_4: while `review_wallet_4` failed, `settlement_properties`, `vectors` and
-      # `wallet_flow` did not run). The property test runs seeds 1 to 200 here.
+      # `wallet_flow` did not run). The property test runs seeds 1 to 200 x 280 steps here (a few
+      # minutes). Its LARGE ranges (seeds 5001-5300 x 280 and 7001-7100 x 1000: where RW4-5 and
+      # RW5-1 were found) are a manual step before a release and after any change of
+      # core/shield-v2-wallet/src/store.rs — the commands are in core/shield-v2-wallet/NOTES.md §14.
       - name: Test (shielded pool V2 wallet core)
         run: >
           cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors

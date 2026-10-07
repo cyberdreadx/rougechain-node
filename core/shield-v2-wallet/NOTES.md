@@ -1,10 +1,16 @@
 # Shielded pool V2 — wallet core: implementation notes
 
-Specification: `docs/SHIELDED_POOL_V2_SPEC.md` (SPEC v1, amended 2026-10-06, W-1 … W-19). Branch
+Specification: `docs/SHIELDED_POOL_V2_SPEC.md` (SPEC v1, amended 2026-10-07, W-1 … W-20). Branch
 `feat/shield-v2-wallet-core`, from `main` @4aeb25b (which contains the node side); the settlement
 redesign after the second review is on `fix/shield-v2-wallet-settlement` (§11), what the third
-review asked for is on `fix/shield-v2-wallet-settlement-2` (§12), and what the fourth asked for
-is on `fix/shield-v2-wallet-settlement-3` (§13).
+review asked for is on `fix/shield-v2-wallet-settlement-2` (§12), what the fourth asked for is
+on `fix/shield-v2-wallet-settlement-3` (§13), and what the fifth asked for is on
+`fix/shield-v2-wallet-settlement-4` (§14).
+
+**For whoever builds a client:** `UI_CONTRACT.md` (what the client owes its user: seven
+numbered obligations and limits, each with the check a reviewer performs) and §6, "The client
+loop" (the syncing algorithm; its reference implementation is `tests/common/client_loop.rs`).
+Both are normative.
 
 Three pieces:
 
@@ -48,8 +54,16 @@ too early (Medium) — and the property test failed outside its sixty seeds. §1
 was changed in answer (state format 5, the restore embargo in the core, `recover_locks`, the
 revision identity, the node-set rule) and **§6 now ends with the client loop as a normative
 algorithm**. It supersedes what §6 items 3, 4 and 7 said about the revision, the node ids and
-the restored device; those items are rewritten below. **These changes have not been reviewed by
-a second person.**
+the restored device; those items are rewritten below.
+
+They were read by a fifth reviewer (`REVIEW_WALLET_5.md`, of `43166fb`): **READY for UI
+integration with conditions** — no way was found to pay twice, release a lock early, confirm a
+note that is not on the chain or lose a note or a lock; what was not in order was liveness: a
+lying listing node could make `scan` answer `state_invariant` (Medium), and the client loop of
+§6 did not terminate against a node that lies consistently (two Medium). §14 describes what
+was changed in answer; **the loop of §6 is rewritten as a terminating algorithm and is code
+now**, and the obligations no core can meet are in `UI_CONTRACT.md`. **The changes of §14 have
+not been reviewed by a second person.**
 
 ---
 
@@ -429,7 +443,9 @@ Nothing below was built.
    (`reason: "embargo"`, `embargo_until`, `embargo_blocks_left`). **The UI must**: (a) say, after
    a restore and on first use of a phrase on a new device, that payments made from another copy
    of the wallet may still be in flight and are not shown here, and show the embargo in BLOCKS;
-   (b) offer the override (`assert_sole_copy`) only as the user's explicit statement that no
+   (b) (`UI_CONTRACT.md`, obligation 1, is the rule: without asking ONLY for a phrase generated
+   on this device, for an imported or restored phrase only after an explicit confirmation)
+   offer the override (`assert_sole_copy`) only as the user's explicit statement that no
    other copy has a payment in flight — true for a new wallet, rarely for a restore; (c) never
    offer "pay again" for a payment whose state this device does not hold.
    The expected change is not money until then: `expected_change` is reported for display and is
@@ -482,44 +498,94 @@ Whatever the option, Qwalla's entropy must be the platform generator (`SecRandom
 
 ### The client loop (normative)
 
-REVIEW_WALLET_4 §2.8 found that the items above give rules and leave the algorithm open. This is
-the algorithm. It is what the core was checked against, and **what the property test's client
-executes, step for step** (`tests/settlement_properties.rs`, `World::round`). The names are the
-WebAssembly surface's; "persist" always means: store the returned state under its `revision_id`
-if the stored `revision_id` is still the one this tab loaded (compare-and-swap), and otherwise
-discard the result.
+REVIEW_WALLET_4 §2.8 found that the items above give rules and leave the algorithm open;
+REVIEW_WALLET_5 (RW5-2, RW5-3) found that the algorithm written here then did not terminate
+against a lying node that lies the same way in every round, and blamed the honest node that
+was being listed from when a lie came to light. This is the algorithm as restated for
+condition 1 of that review. **It is also code**: `tests/common/client_loop.rs` (`Session`) is
+this loop, decision for decision; the property test's client (`tests/settlement_properties.rs`,
+`World::round`) and the loop tests of `tests/review_wallet_5.rs` take every decision by
+calling it. A change of the loop is a change of this section, of spec §5.5 and of that file.
+
+The names are the WebAssembly surface's. "persist" always means: store the returned state
+under its `revision_id`, in one storage transaction with `listed_from`, if the stored
+`revision_id` is still the one this writer loaded (compare-and-swap) — and otherwise discard
+the result and reload. What a client owes its user besides this loop is `UI_CONTRACT.md`.
 
 ```
-S     the stored state, with the revision_id it was stored under
-N     the configured nodes            L     the node listed from
-bad   nodes whose listing was refuted or contradicted in this session (memory only)
-R     the reports of the last three rounds (one per node and height, at most 1,024)
-ahead, behind   counters (memory only)
+CONSTANTS (the client's; none is consensus)
+  B = 64   blocks asked for per page: GET L/api/shield-v2/notes?since=…&blocks=64
+  P ≥ 1    pages per round (the client's choice; the reference uses 6)
+  K = 3    consecutive rounds a listing node may fail to deliver before it is left
+  W = 5    rounds the first state check of a state without an embargo base waits for every node
+  R        keeps the reports of the last 3 rounds, at most 1,024
 
-round():
-  1. page from L at S.next_height → scan with the FULL scan key → persist; repeat until
-     report.at_tip or a page budget.
-       a `listing:` error, report.leaf_mismatch, or `rescan_required:`   → RESCAN(L); end
+STORED    S            the state, under its revision_id
+          listed_from  the node every page that S holds above its confirmed height came from
+SESSION   (memory only; lost in a crash and when the application ends)
+          L        the node listed from
+          bad      nodes whose listing was shown not to be a chain's
+          strikes  rounds in a row in which L did not deliver
+          prev     S.scanned_height at the end of the previous round on L (none at first)
+          waited   rounds the first state check has waited
+          R        the reports
+
+START OF A SESSION
+  bad := {}; strikes := 0; prev := none; waited := 0; R := {}
+  L := listed_from. If listed_from is not known: L := any node of N, and if
+       S.scanned_height ≠ S.confirmed_height then S := rescan_state(S) → persist.
+  A `state:` error on the STORED state: recover_locks(text) → persist → set_nodes if
+       nodes_kept is false. NEVER new_state: that state has no locks.
+
+ROUND
+  0. stopped → return (nothing is asked, nothing is written).
+  1. at most P times:
+       page := the answer of L for since = S.next_height, blocks = B
+       no answer, or not a page          → strikes += 1; if strikes ≥ K: LEAVE(no ban), end
+                                           the round; otherwise go to step 2
+       r := scan(S, page, FULL scan key)
+       `listing:`                        → LEAVE(ban); end the round
+       `rescan_required:`                → S := rescan_state(S) → persist; prev := none;
+                                           L stays, NOBODY is blamed (the client's own
+                                           worker caused it); end the round
+       `stale_state:`                    → another writer changed S: reload S; end the round
+       `state_invariant:`, anything else → STOP(fault): report a bug. S stays as it is stored:
+                                           no rescan, no new_state, no retry
+       ok                                → persist
+           r.leaf_mismatch               → LEAVE(ban); end the round
+           not r.at_tip and (the page is not active, or
+             page.next_height − page.from_height < B)
+                                         → LEAVE(ban); end the round            ("a short page")
+           r.at_tip                      → at_tip := true; go to step 2
   2. ask EVERY node of N for /api/shield-v2/stats at the same time; take `report`; drop one
      that is null or not a report; label each with the CONFIGURED origin — never with anything
      the node says about itself. A report without `ciphertext_acc` is handed in as it is: the
      core names that node in `outdated_nodes` (no vote; "node X must be updated").
      Add them to R; drop from R what is older than three rounds.
-  3. confirm_state(S, R) → persist.
-       report.listing_refuted            → RESCAN(L); end
-       report.listing_ahead              → ahead += 1; if ahead ≥ 3 (three rounds in a row, each
-                                           with fresh reports) → RESCAN(L); end either way
-       otherwise                         → ahead := 0
-       at_tip and (nothing confirmed, or confirmed_height < report.quorum_tip)
-                                         → behind += 1; if behind ≥ 2 → L := next node not in
-                                           bad (NO rescan), behind := 0
-       otherwise                         → behind := 0
-       no match and none of the above    → wait and repeat: NOTHING else
+     2a. if S has no embargo base (summary.spend.embargo_until = null) and the user's statement
+         is not recorded (summary.sole_copy_asserted = false):
+           unless THIS round's answers hold a report from every node of N for one common height,
+           and while waited < W:   waited += 1; show "waiting for every node (waited of W)";
+                                   end the round
+  3. c := confirm_state(S, R) → persist.     (a base now exists ⇒ waited := 0)
+       c.listing_refuted                 → LEAVE(ban); end the round
+       c.quorum_tip = T exists (a quorum answers):
+         not at_tip and S.scanned_height < T
+                                         → catching up: prev := S.scanned_height; no verdict
+         otherwise, with  ahead       = c.listing_ahead
+                          short       = at_tip and S.scanned_height < T
+                          unconfirmed = prev exists and S.confirmed_height < prev
+                                        (nothing confirmed counts as below everything)
+           prev := S.scanned_height
+           ahead or short or unconfirmed → strikes += 1; if strikes ≥ K: LEAVE(no ban), end
+                                           the round
+           none of the three             → strikes := 0
+       no quorum_tip                     → nothing is counted (the node is not what is missing)
   4. resolve_pending → persist → tell the user: mined / superseded / expired.
   5. for every entry that is still pending and whose envelope is stored: if its submit failed
      or was not answered, submit THE SAME envelope again (to any node). Never build again for it.
      A payment is offered only if
-       – this round's confirm_state matched, and confirmed_height = scanned_height;
+       – at_tip, this round's confirm_state matched, and confirmed_height = scanned_height;
        – `spend.can_spend_now` of that result (the core's answer: no embargo, not view-only,
          the root confirmed, a window left);
        – the payment is new, or step 4 reported its last attempt superseded or expired.
@@ -527,36 +593,90 @@ round():
      compare-and-swap on the revision_id that was LOADED → submit the envelope.
      Not written ⇒ discard the result and do not submit.
 
-RESCAN(L):  bad += L;  S := rescan_state(S) → persist;  L := next node not in bad.
-            Every node in bad → stop and tell the user: more than a minority of the configured
-            nodes lies or cannot be reached. (A new session starts with bad empty.)
+LEAVE(ban)
+  if ban: bad += L
+  next := the first node after L, in the order of N, cyclically, that is not in bad and is not L
+  no such node, and L ∈ bad    → S := rescan_state(S) → persist; listed_from := unknown;
+                                 STOP("no honest listing node reachable"). bad is NOT cleared.
+  no such node, L not in bad   → strikes := 0; prev := none; return   (L is the only node left)
+  if ban, or S.scanned_height ≠ S.confirmed_height:  S := rescan_state(S)
+  L := next; listed_from := next → persist S and listed_from together
+  strikes := 0; prev := none
+  (The user choosing another node in the settings is LEAVE(no ban).)
 
-a `state:` error on the STORED state:
-            recover_locks(text) → persist → set_nodes if nodes_kept is false → rounds.
-            NEVER new_state: that state has no locks.
+STOP  The loop does nothing more in this session. "no honest listing node reachable" is shown
+      to the user with the banned nodes; a fault is reported as a bug. A new session — the
+      application started again, or the user's explicit "try again" — starts with bad empty;
+      nothing else ever removes a node from bad.
 
-after new_state (a new wallet, a restore, a second device):
-            nothing for the client to remember. The core refuses build_* (`restored_recently:`)
-            until the embargo has ended; show `spend.reason = "embargo"`, `embargo_until`,
-            `embargo_blocks_left` and "payments made from another copy of this wallet may still
-            be in flight". Make the FIRST state check with every node answering (a node that is
-            silent then costs 256 blocks). `assert_sole_copy` only on the user's explicit
-            statement — a new wallet on a new phrase.
+THE BACKGROUND WORKER (export_scan_key(seed, false): the viewing key)
+  lists from L and from no other node, persists under the same compare-and-swap, and applies
+  the rules of step 1 to every answer. The state it leaves is marked view-only: nothing is
+  built from it until step 1 has applied one page with the full key (§13 RW4-3). After a
+  `rescan_required:` the worker is not started again in that session.
+
+AFTER new_state (a new wallet, a restore, a second device)
+  nothing for the client to remember: the core refuses build_* (`restored_recently:`) until
+  the embargo has ended. Show `spend.reason = "embargo"`, `embargo_until`,
+  `embargo_blocks_left` and "payments made from another copy of this wallet may still be in
+  flight". `assert_sole_copy`: UI_CONTRACT.md, obligation 1 — never from this loop.
 ```
+
+**A rule for every error `scan` can return.** `listing:` — the node's page is not a chain's
+listing: ban, rescan, next node. `rescan_required:` — rescan, same node, nobody blamed.
+`stale_state:` — reload. `state_invariant:` — an implementation fault: stop and report a
+bug, keep the stored state. Since REVIEW_WALLET_5 RW5-1 no page can cause it (§14); the rule
+exists for the fault nobody thought of. `request:` (the wrong key for this state) and
+`internal:` are faults of the same kind and are treated the same way.
+
+**The two decisions that were open, and why.**
+
+* *A node is BANNED only on evidence, and LEFT without it.* Evidence is something no honest
+  node produces: a `listing:` error, `leaf_mismatch`, a short page (the listing API answers the
+  heights asked for or reaches its tip — 64 blocks hold at most 8 × 64 = 512 pool transactions,
+  the node's cap per page, so the cap never cuts such a page), `listing_refuted` (more nodes
+  contradict the state than a lying minority can be). A node that merely does not get the
+  wallet to where the quorum is — pool transactions in blocks the quorum does not have, a tip
+  below the quorum's, pages whose content stays unconfirmed — may be an honest node that is
+  ahead, behind, or listed from while the others lag: it is left after K rounds, in favour of
+  the next node, and comes round again. So an honest node is never banned (short of a chain
+  reorganisation on it), and "every node banned" means what it says.
+* *The state is rescanned on every change of the listing node — unless everything it holds is
+  confirmed.* The alternative the review offered, banning every node that contributed a page
+  since the last rescan, bans honest nodes with the liar: with five nodes and two liars it can
+  ban all three honest ones and stop a session that had an honest majority. Rescanning keeps
+  the blame exact — every unconfirmed page of `S` is `L`'s, so the node that is banned is the
+  node that lied — at the price of a rescan when a node is left with an unconfirmed tail. A
+  state whose scanned height is confirmed is the chain's, whoever listed it: it moves to the
+  next node as it is (the common case: an honest node that fell behind).
+
+**Termination and the bound.** Every round ends (P pages, one state check). Against any
+behaviour of the listing node, a tenure of one node lasts at most `D + 1 + K` rounds, where
+`D = ⌈(T − A + 1) / (B·P)⌉` is what it takes to read the chain up to the quorum's tip `T` from
+the activation height `A` at the speed step 1 enforces: while the node is below `T` and not at
+its tip every page covers at least B heights (or it is banned), a round without an answer is a
+strike, and once the wallet has scanned to `T` each round either confirms what was scanned
+the round before or is a strike. `strikes` is reset only by a round in which the node is
+neither ahead nor short and what it listed a round ago is confirmed — after `T` is reached,
+that is the tip confirmed. With a strict majority of honest nodes reachable at the tip and
+answering, the nodes before the first honest one in the order are at most `n − quorum` liars:
+**the loop ends with the tip confirmed and nothing pending within
+`(n − quorum + 1)·(D + K + 2) + W` rounds**, or it has stopped because every node is banned —
+which, bans being evidence, needs every node to have lied. The property test asserts this
+bound, that no honest node is ever banned and that the loop never stops, with lying nodes that
+lie the same way in every round (§14); the most it measured is in the Resolution of
+`REVIEW_WALLET_5.md`.
+
+**What the bound does not cover.** While the honest nodes themselves are not at one height —
+more than a round apart for K rounds — nothing above the highest height a quorum reported can
+be confirmed by anybody, and the loop leaves the node it lists from every K rounds, with a
+rescan if that node was ahead. That is work, not harm (nothing confirmed is lost, no lock
+moves); a client SHOULD lengthen its round interval after it has left every node once without
+a round that confirmed the tip.
 
 What the loop guarantees, given a strict majority of honest configured nodes: G2 and the
 settlement rules always; G1 on one device with durable writes, and across a restore under the
-assumption stated in §13 (RW4-1); G3 / G4 — with the honest majority reachable at the tip, the
-loop ends with nothing pending and the tip confirmed within `4·nodes + 8` rounds (the property
-test's bound; the most it measured is 8). Two deliberate differences from the loop as the review
-wrote it: the listing node is changed when the confirmed height stays below the quorum's tip
-after a full sync **whether or not this round matched** (a lying node that serves a true but
-short listing never produces a match at its own height, and "wait" would then wait for ever);
-and the embargo after `new_state` is the core's, not the client's.
-
-A background worker that scans with the viewing key (`export_scan_key(seed, false)`) leaves a
-state that is marked view-only: no balance of it is spendable and nothing is built from it until
-step 1 has applied one page with the full key (§13 RW4-3).
+assumption stated in §13 (RW4-1) and `UI_CONTRACT.md` (limit 5); G3 / G4 — the bound above.
 
 ## 7. Not done
 
@@ -567,9 +687,11 @@ step 1 has applied one page with the full key (§13 RW4-3).
   confirmed, so nothing is ever spendable by default and no transfer or unshield is built — by
   decision (REVIEW_WALLET_3), not by omission. There is no "I trust my own node, quorum 1" any
   more; an operator who wants that configures two endpoints and owns the consequence.
-* The client loop of §6 item 4 (ask all nodes, rotate the listing node, rescan) is documented and
-  modelled in `tests/settlement_properties.rs`; it is not code a client can call — no part of
-  this crate makes a network request.
+* The client loop of §6 is an algorithm in this file and a reference implementation of its
+  decisions in `tests/common/client_loop.rs` (which the property test and the loop tests run);
+  it is not code a client can call — no part of this crate makes a network request, and each
+  client transcribes the loop for its own storage and transport.
+* Nothing of `UI_CONTRACT.md` is built: it is a list of obligations with the checks to make.
 * `listing_ahead` is a signal, not a verdict: the core cannot tell an honest listing node that is
   one block ahead from one that invented a block. The client decides after asking again.
 * `wasm-bindgen-cli` and `wasm-pack` are not installed on this host, so the JavaScript bindings
@@ -976,10 +1098,11 @@ is 256 blocks, and the property test's world (honest nodes up to 200 behind, the
 replaying where the slowest honest node stands) runs inside it.
 
 *The override.* `assert_sole_copy` (core: `assert_no_other_copy_has_a_pending_payment`) records
-the user's statement in the state. It is accepted only before the first confirmed state check,
-and honoured at that check only if no configured node reported a tip above the height being
-confirmed — a quorum that forms below a known tip is the shape of the attack, and then the core
-does not take the user's word. A state migrated from an older format, and a state recovered
+the user's statement in the state. It is accepted only before the first confirmed state check.
+*(As written for REVIEW_WALLET_4 it was honoured at that check only if no configured node
+reported a tip above the height being confirmed. REVIEW_WALLET_5 RW5-5 showed that rule cost
+an honest user 129 blocks for a one-block race and stopped no liar; it is removed — §14: once
+recorded, the statement stands.)* A state migrated from an older format, and a state recovered
 with every lock read, is a device's own state and has no embargo.
 
 **RW4-4 (Medium) — a payee's address with the payer's `pk`.** "To self" is the whole address:
@@ -1046,3 +1169,141 @@ randomly placed range whose base it prints. The mutation table is in the Resolut
 | `build_shield` for one's own address, any value | `build_own_shield` (recorded); `note_below_minimum:` |
 | a recipient with one's own `pk`: "payment to self" | the whole address, or `recipient_mixed_address:` |
 | a report without `ciphertext_acc`: `malformed` | `outdated_nodes` |
+
+## 14. After REVIEW_WALLET_5: no page reaches the guard, the loop terminates, the contract
+
+`REVIEW_WALLET_5.md` (of `43166fb`): READY for UI integration with ten conditions — three
+Medium (one in the core, two in the loop of §6), one Medium for the product (the embargo is a
+number of blocks), one Low, four Info. Branch `fix/shield-v2-wallet-settlement-4`. State format
+5 is unchanged (what a state may contain is narrower: below). No constant, tag, encoding or
+parameter of spec §2, no consensus rule and nothing of the state root is touched; no function
+of the public API changed its shape.
+
+**RW5-1 (Medium) — no page makes `scan` answer `state_invariant`.** The guard of §13 (every
+call validates its result) stays; what a NODE can send no longer reaches it. Both ways in were
+pages that are not the listing of any chain, and both are now refused as that — `listing:`,
+before the state is touched:
+
+* (a) *A spend listed before the note it spends, read with the viewing key.* The blind log
+  remembers every nullifier with its height; the first scan with the full key applies the
+  sightings. A sighting BELOW the height that created its note (on a chain a note is spent in
+  a later block: the spend proves against an anchor that holds it) is not applied: every scan
+  with the full key answers `listing:` until the state is rescanned (`rescan_state` drops the
+  log). A sighting at or above the note's height is applied as before.
+* (b) *A note of the wallet under the nullifiers of a note it already holds.* `rho =
+  H_rho(nf1, nf2, j)` names one output slot of one transaction, and no two transactions of a
+  chain share a nullifier: two notes with one `rho` exist only in a listing that shows a
+  transaction twice — as it is (twins: one commitment) or with other outputs (other
+  commitments and, since a nullifier is `H(nk, rho)`, ONE nullifier; the review tried the
+  first, a hostile sender can make the second in any number). A page with a note whose `rho`
+  the state holds, or the page already listed, is refused whole. `validate` holds every state
+  to it ("two stored notes have one rho"), so the bound on spent notes — 4,096 plus four per
+  pending entry — is a property of every state and not of what a listing does.
+* `state_invariant:` therefore means what the documents say: an implementation fault. The loop
+  has a rule for it all the same (§6: stop, report, keep the state).
+* A state TEXT with two notes of one `rho` (which an earlier revision could write from such a
+  listing) is refused on read and gives up its locks to `recover_locks`.
+
+**RW5-5 (Low) — the statement, once recorded, stands.** The rule that disregarded
+`assert_sole_copy` when a configured node reported above the height being confirmed is removed
+(the reasons: §13, "The override"). The statement is the user's word, and the control is who
+may make it: `UI_CONTRACT.md`, obligation 1. The shared test helper no longer makes it —
+`tests/common::configure` only sets the nodes, and a test whose wallet is a NEW wallet that
+has to spend says so with `configure_as_sole_copy`. Every test that models a restore or a
+second device runs with the embargo in force (the count is in the Resolution).
+
+**RW5-6, RW5-7, RW5-9 (Info).**
+
+* `rescan_state` with other limits computes the revision identity AFTER the limits are set: a
+  rescan with another minimum note value or cap has its own `revision_id`. (A state made by
+  `new_state` still has revision 0 and the all-zero identity whatever its limits: it has no
+  predecessor to be told from.)
+* One node per host, and **an IPv6 literal that only spells an IPv4 address is that IPv4
+  host**: IPv4-mapped (`::ffff:a.b.c.d`), IPv4-compatible (`::a.b.c.d`), IPv4-translated
+  (`::ffff:0:a.b.c.d`), the NAT64 well-known prefix (`64:ff9b::a.b.c.d`) and 6to4
+  (`2002:AABB:CCDD::/48`, the address of the 6to4 router). NOT Teredo, ISATAP interface
+  identifiers, or a network-chosen NAT64 prefix. The canonical text of an id is unchanged; the
+  rule for a set counts such a literal as the IPv4 host, on `set_nodes` and on every read.
+* **Nothing about the embargo is defaulted on read.** A format-5 text must contain the five
+  fields format 5 added — `spend_embargo`, `sole_copy_asserted`, `view_only_since` (as `null`
+  or a height), `revision_id`, `own_shields`: without one it is refused (`state:`), and
+  `recover_locks` puts it under the embargo unless it names, readably, where it stood. A text
+  that names format 1–4 and carries `spend_embargo` is a format-5 text with a damaged version:
+  refused, and recovered by what the field says. Formats 2 and 3 without their `pending` list
+  are refused (not "no locks"). Format 4 is given the five fields explicitly by its migration
+  (`not_required`: a device's own state), and formats 1–3 by theirs.
+
+  *Every field that still has a default when a state or a page is read, and why it is safe:*
+
+  | Field | Default | Why it is the safe reading |
+  |---|---|---|
+  | `ListingPage.txs` | empty | a page without transactions is one the node could have sent anyway; `tip_height`, `from_height`, `next_height` are required |
+  | `ListedTx.tx_hash`, `tx_type` | empty text | not a hash, not a V2 type: the page is refused (`listing:`) |
+  | `ListedOutput.leaf` | none | the page is refused (`listing:`) |
+  | `PendingChange.r` | none | the entry's own output is then found through its ciphertext, like anyone's (an entry migrated from format 2/3); the lock does not depend on it |
+  | `PendingTx.change`, `own_payment` | none | no record of an own output: the note is found through its ciphertext; an entry without outputs AND without change is refused unless `legacy` |
+  | `PendingTx.outputs` | empty | settles as mined only by its nullifier pair and its change commitment — harder, never easier; refused without a change unless `legacy` |
+  | `PendingTx.inputs` | empty | derived for display; nothing is identified by it (an entry without `input_cms` and without nullifiers is refused) |
+  | `PendingTx.input_cms` | empty | the lock is then held by the entry's nullifiers and positions — still held; with neither, refused |
+  | `PendingTx.status`, `seen_height` | `pending`, none | "not seen": locked, nothing settles on it (and the two must agree, or the entry is refused) |
+  | `PendingTx.rejected_hint`, `abandoned_hint` | false | hints for the UI; neither releases anything |
+  | `PendingTx.legacy` | false | the STRICT reading: a non-legacy entry needs two nullifiers and its outputs, or it is refused |
+  | `WalletState.confirmed_height` | none (an `Option`) | nothing confirmed: nothing is spendable, nothing settles |
+  | format 2: `PendingTxV2.rejected_hint` | false | a hint |
+  | the version probe: `spend_embargo` | absent | read as absent — which is what makes an older text an older text |
+
+**Conditions 1 and 3 to 10 — documents.** §6 "The client loop" is rewritten as a terminating
+algorithm (the two decisions it had to take, the bound and what it does not cover are stated
+there) and mirrored in spec §5.5 (W-20); it is code in `tests/common/client_loop.rs`.
+`UI_CONTRACT.md` holds conditions 3, 4, 5, 7 (obligations of the client) and 8, 9, 10 (limits
+to be told to the user), each with its check, the embargo stated in blocks for product owners,
+and the owner's open decision on its length.
+
+**The property test** (RW5-8). Its client IS the loop (`common::client_loop::Session` takes
+every decision) and does not clear its ban set — the model asserts instead that only lying
+nodes are ever banned and that the loop never stops. Half the lying nodes have a strategy
+that they keep for the whole run (never the tip; no progress; true but short; the truth and
+then empty heights; a consistent forged listing; a lie until left, then the truth); a lying
+node may not answer. `directed_restore` builds the worst case of the embargo on purpose —
+a lagging honest node, a last payment with the longest expiry, a stale quorum with the leading
+nodes unreachable, the chain taken to one block before the end — and `recover` damages the
+stored state. The three invariants that restated the code's own rule are gone; in their
+place: the waiver against the USER's act, "no spend while a transaction this state holds no
+lock of can still be mined" at every step, and the embargo's end against the true chain. The
+mutation table is in the Resolution of `REVIEW_WALLET_5.md`.
+
+*Running it.* The default range (seeds 1–200 × 280 steps) takes about four minutes in a
+release build on one throttled core and is what CI runs, with a second range of 60 seeds
+whose base it prints. **The large ranges are a manual step** — before a release, and after any
+change of `store.rs` (both findings the test made by itself, RW4-5 and RW5-1, were outside the
+default range):
+
+```
+cd core
+PROP_SEED_BASE=5000 PROP_RUNS=300 \
+  cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors --test settlement_properties -- --nocapture
+PROP_SEED_BASE=7000 PROP_RUNS=100 PROP_STEPS=1000 \
+  cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors --test settlement_properties -- --nocapture
+```
+
+**What the property test still cannot see.** Honest nodes more than 200 blocks behind (the
+world stays inside the 256 the embargo assumes; the edge itself is
+`rw5_demo_the_restore_embargo_holds_up_to_exactly_256_blocks_…`); a lying node that reads the
+true chain at exactly 64 heights a page, slowly (the `D` of the bound is asserted, not
+approached: its liars serve the truth in one page); a chain reorganisation on an honest node;
+an adversary that WRITES the stored state; the loop while the honest nodes are spread over
+many heights for long (it is asserted to settle only once they are at the tip); and anything
+on the wire — no part of the test makes a network request.
+
+**What changed for callers.**
+
+| Before | Now |
+|---|---|
+| a page with a transaction shown twice: applied (twin notes, unverified for ever) | `listing:` — ban the node, rescan |
+| a spend listed before its note, read with the viewing key: `state_invariant:` at the next full-key scan | `listing:` at the next full-key scan — ban the node, rescan |
+| `assert_sole_copy` disregarded when a node reported a higher tip | it stands; `UI_CONTRACT.md` obligation 1 says who may call it |
+| a format-5 text without `spend_embargo`: "no embargo" | `state:` → `recover_locks` → under the embargo |
+| `https://192.0.2.7` and `https://[::ffff:192.0.2.7]`: two nodes | one host: refused together |
+| `rescan_state` with other limits: the `revision_id` of the plain rescan | its own `revision_id` |
+| the loop: `RESCAN(L)` bans L, "next node, NO rescan", clears nothing, stops never | `LEAVE(ban)` on evidence, `LEAVE(no ban)` after 3 strikes, a rescan on every change of node unless all is confirmed, `STOP` when every node is banned |
+
