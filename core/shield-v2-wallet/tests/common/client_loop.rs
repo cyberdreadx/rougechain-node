@@ -84,6 +84,8 @@ pub struct Session {
     pub prev: Option<Option<u64>>,
     /// Rounds the first state check has waited for every node.
     pub waited: u32,
+    /// `L` left a listing request of THIS round unanswered: the round cannot clear its strikes.
+    pub unanswered: bool,
     /// `R`: (round, report)
     pub reports: Vec<(u64, StateReport)>,
     pub round: u64,
@@ -93,7 +95,17 @@ pub struct Session {
 impl Session {
     /// The start of a session: `bad` empty, the listing node the one the state was stored with.
     pub fn new(nodes: usize, listed_from: usize) -> Self {
-        Self { listing: listed_from, nodes, bad: BTreeSet::new(), strikes: 0, prev: None, waited: 0, reports: Vec::new(), round: 0, stopped: None }
+        Self { listing: listed_from, nodes, bad: BTreeSet::new(), strikes: 0, prev: None, waited: 0, unanswered: false, reports: Vec::new(), round: 0, stopped: None }
+    }
+
+    /// Step 0: a round begins. `false`: the loop has stopped — nothing is asked, nothing written.
+    pub fn begin_round(&mut self) -> bool {
+        if self.stopped.is_some() {
+            return false;
+        }
+        self.round += 1;
+        self.unanswered = false;
+        true
     }
 
     /// `true` when everything the state holds is confirmed (or it holds nothing): such a state
@@ -120,9 +132,12 @@ impl Session {
     }
 
     /// Step 1, no answer: the listing node did not answer the request, or answered something
-    /// that is not a page. A strike; the round goes on with step 2 (the state check is made
-    /// with whatever the state holds).
+    /// that is not a page. A strike — which no state check of this round takes back: a node
+    /// that does not answer is not "delivering" because the state it was handed happens to be
+    /// confirmed (a state the worker left view-only would otherwise wait for its one page with
+    /// the full key for as long as the node stays silent). The round goes on with step 2.
     pub fn after_no_answer(&mut self) -> Decision {
+        self.unanswered = true;
         self.strikes += 1;
         if self.strikes >= STRIKES {
             return Decision::Leave { ban: false, why: "no answer" };
@@ -186,7 +201,7 @@ impl Session {
             if self.strikes >= STRIKES {
                 return Decision::Leave { ban: false, why: if ahead { "listing_ahead" } else if short { "behind the quorum's tip" } else { "scanned stays above confirmed" } };
             }
-        } else {
+        } else if !self.unanswered {
             self.strikes = 0;
         }
         Decision::Go
@@ -281,10 +296,9 @@ impl LoopClient {
     /// One round. `page(node, since)`: what that node answers to the listing request;
     /// `reports()`: what the nodes answer to step 2.
     pub fn round(&mut self, key: &ScanKey, page: &mut dyn FnMut(usize, u64) -> ListingPage, reports: &mut dyn FnMut() -> Vec<StateReport>) {
-        if self.session.stopped.is_some() {
+        if !self.session.begin_round() {
             return;
         }
-        self.session.round += 1;
         // 1. pages from L until its tip or the page budget
         let mut at_tip = false;
         for _ in 0..self.pages_per_round {

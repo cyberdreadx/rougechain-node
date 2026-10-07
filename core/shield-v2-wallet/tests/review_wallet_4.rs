@@ -405,9 +405,13 @@ fn rw4_f3_a_viewing_key_state_reports_a_spent_note_as_confirmed_and_spendable() 
     configure(&mut watch, &[N1, N2, N3]);
     watch.scan(&chain.page(0), &alice.incoming_viewing_key()).unwrap();
     // the same phrase on another device spends the 10 XRGE note; mined
+    // (a SECOND device: it makes no statement, and lets its restore embargo run out first —
+    // REVIEW_WALLET_5: the shared helper no longer makes the statement for it)
     let mut other = WalletState::new(alice.address().pk);
-    configure_as_sole_copy(&mut other, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     other.scan(&chain.page(0), &alice.scan_key()).unwrap();
+    confirm(&chain, &mut other);
+    chain.advance_to(other.spend_embargo_until().expect("the first state check fixed the base"));
+    other.scan(&chain.page(other.next_height()), &alice.scan_key()).unwrap();
     confirm(&chain, &mut other);
     let p10 = position_of(&other, 10 * Q);
     let t = pay(&mut other, &alice, &[p10], &bob.address(), 9 * Q, "rw4-f3-other-device");

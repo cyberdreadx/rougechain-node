@@ -528,6 +528,7 @@ SESSION   (memory only; lost in a crash and when the application ends)
           strikes  rounds in a row in which L did not deliver
           prev     S.scanned_height at the end of the previous round on L (none at first)
           waited   rounds the first state check has waited
+          answered whether L answered every listing request of the current round
           R        the reports
 
 START OF A SESSION
@@ -538,11 +539,12 @@ START OF A SESSION
        nodes_kept is false. NEVER new_state: that state has no locks.
 
 ROUND
-  0. stopped → return (nothing is asked, nothing is written).
+  0. stopped → return (nothing is asked, nothing is written). answered := true
   1. at most P times:
        page := the answer of L for since = S.next_height, blocks = B
-       no answer, or not a page          → strikes += 1; if strikes ≥ K: LEAVE(no ban), end
-                                           the round; otherwise go to step 2
+       no answer, or not a page          → answered := false; strikes += 1; if strikes ≥ K:
+                                           LEAVE(no ban), end the round; otherwise go to
+                                           step 2
        r := scan(S, page, FULL scan key)
        `listing:`                        → LEAVE(ban); end the round
        `rescan_required:`                → S := rescan_state(S) → persist; prev := none;
@@ -579,7 +581,9 @@ ROUND
            prev := S.scanned_height
            ahead or short or unconfirmed → strikes += 1; if strikes ≥ K: LEAVE(no ban), end
                                            the round
-           none of the three             → strikes := 0
+           none of the three             → strikes := 0 — unless L left a request of this
+                                           round unanswered (a strike is not taken back by
+                                           a state check of the same round)
        no quorum_tip                     → nothing is counted (the node is not what is missing)
   4. resolve_pending → persist → tell the user: mined / superseded / expired.
   5. for every entry that is still pending and whose envelope is stored: if its submit failed
@@ -656,12 +660,16 @@ behaviour of the listing node, a tenure of one node lasts at most `D + 1 + K` ro
 the activation height `A` at the speed step 1 enforces: while the node is below `T` and not at
 its tip every page covers at least B heights (or it is banned), a round without an answer is a
 strike, and once the wallet has scanned to `T` each round either confirms what was scanned
-the round before or is a strike. `strikes` is reset only by a round in which the node is
-neither ahead nor short and what it listed a round ago is confirmed — after `T` is reached,
-that is the tip confirmed. With a strict majority of honest nodes reachable at the tip and
+the round before or is a strike. `strikes` is reset only by a round in which the node answered
+every request, is neither ahead nor short, and what it listed a round ago is confirmed — after
+`T` is reached, that is the tip confirmed. (A node that does not answer is left after K
+rounds even when the state it was handed is confirmed to the tip: a state the worker left
+view-only waits for one page with the full key, and found by the property test at seed 5025
+— §14 — a silent node would otherwise have withheld it for as long as it liked.) With a strict majority of honest nodes reachable at the tip and
 answering, the nodes before the first honest one in the order are at most `n − quorum` liars:
-**the loop ends with the tip confirmed and nothing pending within
-`(n − quorum + 1)·(D + K + 2) + W` rounds**, or it has stopped because every node is banned —
+**the loop ends with the tip confirmed, everything the state holds confirmed and nothing
+pending within `(n − quorum + 1)·(D + K + 2) + W` rounds**, or it has stopped because every
+node is banned —
 which, bans being evidence, needs every node to have lied. The property test asserts this
 bound, that no honest node is ever banned and that the loop never stops, with lying nodes that
 lie the same way in every round (§14); the most it measured is in the Resolution of

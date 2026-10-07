@@ -1537,6 +1537,7 @@ SESSION   (memory only; lost in a crash and when the application ends)
           strikes  rounds in a row in which L did not deliver
           prev     S.scanned_height at the end of the previous round on L (none at first)
           waited   rounds the first state check has waited
+          answered whether L answered every listing request of the current round
           R        the reports
 
 START OF A SESSION
@@ -1547,11 +1548,12 @@ START OF A SESSION
        nodes_kept is false. NEVER new_state: that state has no locks.
 
 ROUND
-  0. stopped → return (nothing is asked, nothing is written).
+  0. stopped → return (nothing is asked, nothing is written). answered := true
   1. at most P times:
        page := the answer of L for since = S.next_height, blocks = B
-       no answer, or not a page          → strikes += 1; if strikes ≥ K: LEAVE(no ban), end
-                                           the round; otherwise go to step 2
+       no answer, or not a page          → answered := false; strikes += 1; if strikes ≥ K:
+                                           LEAVE(no ban), end the round; otherwise go to
+                                           step 2
        r := scan(S, page, FULL scan key)
        `listing:`                        → LEAVE(ban); end the round
        `rescan_required:`                → S := rescan_state(S) → persist; prev := none;
@@ -1588,7 +1590,9 @@ ROUND
            prev := S.scanned_height
            ahead or short or unconfirmed → strikes += 1; if strikes ≥ K: LEAVE(no ban), end
                                            the round
-           none of the three             → strikes := 0
+           none of the three             → strikes := 0 — unless L left a request of this
+                                           round unanswered (a strike is not taken back by
+                                           a state check of the same round)
        no quorum_tip                     → nothing is counted (the node is not what is missing)
   4. resolve_pending → persist → tell the user: mined / superseded / expired.
   5. for every entry that is still pending and whose envelope is stored: if its submit failed

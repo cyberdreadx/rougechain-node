@@ -1903,8 +1903,7 @@ impl World {
     /// `common::client_loop::Session`; `upto` cuts the round after that step (the user closes
     /// the application). `true`: a whole state check was made and left nothing to do.
     fn round(&mut self, upto: u8, settled: bool) -> bool {
-        assert!(self.session.stopped.is_none());
-        self.session.round += 1;
+        assert!(self.session.begin_round(), "seed {}: the loop has stopped", self.seed);
         // 1. pages from L, with the FULL key, until its tip or the page budget
         let mut at_tip = false;
         for _ in 0..PAGES_PER_ROUND {
@@ -2438,7 +2437,14 @@ impl World {
         self.no_crash = true;
         let mut clean = false;
         loop {
-            let done = clean && self.stored.pending().is_empty() && self.stored.confirmed_height() == Some(tip);
+            // Settled: the tip is confirmed, EVERYTHING the state holds is confirmed, nothing is
+            // pending. (A lying node can leave a tail above the confirmed tip — a block that is on
+            // no chain, in which one of the wallet's notes is "spent" — and a state the worker
+            // left view-only needs one page with the full key, which a node that does not
+            // answer withholds: neither is settled, and the loop leaves such a node within K
+            // rounds. The bound is on reaching THIS, not merely a confirmed tip.)
+            let st = &self.stored;
+            let done = clean && st.pending().is_empty() && st.confirmed_height() == Some(tip) && st.scanned_height() == Some(tip) && st.view_only_since().is_none();
             if done {
                 break;
             }
@@ -2455,8 +2461,10 @@ impl World {
         // the state check that fixed the base, and the tip is confirmed, the state can spend —
         // whatever a lying or silent minority reported in that check
         if self.embargo_deadline.is_some_and(|d| tip >= d) {
+            // (the gate: the embargo and nothing else — a listing that is above the confirmed
+            // height keeps a spend from being built for another reason, which the next round ends)
             let status = self.stored.spend_status(Some(tip));
-            assert!(status.can_spend_now, "seed {seed}, {what}: the embargo has not ended {EMBARGO_MAX_BLOCKS} blocks after its base was fixed (true height {tip}): {status:?}");
+            assert!(self.stored.spend_gate().is_ok() && status.reason != Some("embargo"), "seed {seed}, {what}: the embargo has not ended {EMBARGO_MAX_BLOCKS} blocks after its base was fixed (true height {tip}): {status:?}");
             self.stats.embargo_deadlines_checked += 1;
             self.embargo_deadline = None;
         }
@@ -2487,9 +2495,12 @@ impl World {
         let mut truth: Vec<(u64, u64, bool)> = self.chain.unspent_at(Who::Alice, self.chain.height).map(|n| (n.value, n.created, n.stranger)).collect();
         mine.sort();
         truth.sort();
+        let spent: Vec<(u64, u64, Option<u64>)> = self.stored.notes().iter().filter(|n| n.spent).map(|n| (n.value, n.height, n.spent_height)).collect();
         format!(
-            "wallet (value, height, confirmed): {mine:?}\nchain (value, height, from a stranger): {truth:?}\nbelow_minimum {:?}, over_capacity {:?}, pruned {:?}, cap {}, peak {}, tip {}",
-            self.stored.below_minimum(), self.stored.over_capacity(), self.stored.pruned(), self.cap, self.chain.alice_unspent_peak, self.chain.height
+            "wallet (value, height, confirmed): {mine:?}\nchain (value, height, from a stranger): {truth:?}\nbelow_minimum {:?}, over_capacity {:?}, pruned {:?}, cap {}, peak {}, tip {}\n\
+             the state: minimum note value {}, cap {}, view-only since {:?} (scanned with the viewing key since it was last empty: {}), spent notes kept (value, height, spent at): {spent:?}",
+            self.stored.below_minimum(), self.stored.over_capacity(), self.stored.pruned(), self.cap, self.chain.alice_unspent_peak, self.chain.height,
+            self.stored.min_note_value(), self.stored.max_unspent_notes(), self.stored.view_only_since(), self.viewed
         )
     }
 
