@@ -2602,6 +2602,12 @@ impl L1Node {
         shield_v2::shield_v2_local_rule(&tx, next_height)?;
         let shield_v2_parsed = shield_v2_tx_rule(&tx, next_height, &self.opts.chain.chain_id)?;
 
+        // Node-local: a liquidity op that would compute to nothing aborts block apply (see
+        // `amm_liquidity_applicable`); refuse it here so it never queues or propagates.
+        if !self.amm_liquidity_applicable(&tx) {
+            return Err(format!("{} would move no tokens against the current pool reserves", tx.tx_type));
+        }
+
         let identity = quantum_vault_types::tx_identity(&tx);
         if let Some(h) = self.tx_included_at(&identity) {
             return Err(format!("transaction {} already included in block {}", &identity[..16], h));
@@ -3819,6 +3825,9 @@ impl L1Node {
             // carry the fields (the V2 types are judged by the selection below)
             .filter(|(_, tx)| shield_v2::shield_v2_local_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| shield_v2::is_shield_v2_type(&tx.tx_type) || !shield_v2::has_shield_v2_fields(&tx.payload))
+            // Node-local: never seal a liquidity op that would compute to nothing (it would abort
+            // the block via the applier's `?`); dropping it here breaks the requeue/re-fail stall.
+            .filter(|(_, tx)| self.amm_liquidity_applicable(tx))
             .collect();
         // SHIELD_V2: V2 transactions in order against the evolving pool state; failing ones are
         // left out (spec §4.6), at most 8 per block — the valid ones beyond the limit go straight
@@ -6079,6 +6088,35 @@ impl L1Node {
             if let Ok(mut f) = self.bridge_store_failed_ids.lock() { f.clear(); }
         }
         Ok(added)
+    }
+
+    /// Node-local guard: `false` when `tx` is an `add_liquidity` / `remove_liquidity` whose amount
+    /// computation against the CURRENT committed pool state would yield `None` — e.g. a dust
+    /// `remove_liquidity` on an imbalanced pool where one side rounds to zero. The applier turns
+    /// that `None` into an `Err` (via `?`), which aborts the whole block and, in `mine_pending`,
+    /// requeues the tx so the producer re-drains and re-fails: one cheap, individually-valid tx
+    /// stalls block production. This is pure node policy (mempool admission + producer selection);
+    /// it changes neither block validity nor the applier, so it needs no activation height and
+    /// cannot fork the network.
+    fn amm_liquidity_applicable(&self, tx: &TxV1) -> bool {
+        let pool = |id: &str| self.pool_store.get_pool(id).ok().flatten();
+        match tx.tx_type.as_str() {
+            "remove_liquidity" => match (tx.payload.pool_id.as_deref(), tx.payload.lp_amount) {
+                (Some(id), Some(lp)) => match pool(id) {
+                    Some(p) => amm::calculate_remove_liquidity(lp, p.reserve_a, p.reserve_b, p.total_lp_supply).is_some(),
+                    None => true, // unknown pool: the applier already skips (return Ok)
+                },
+                _ => true, // missing fields are out of scope for this guard
+            },
+            "add_liquidity" => match (tx.payload.pool_id.as_deref(), tx.payload.amount_a, tx.payload.amount_b) {
+                (Some(id), Some(a), Some(b)) => match pool(id) {
+                    Some(p) => amm::calculate_lp_mint(a, b, p.reserve_a, p.reserve_b, p.total_lp_supply).is_some(),
+                    None => true,
+                },
+                _ => true,
+            },
+            _ => true,
+        }
     }
 
     /// Apply AMM-specific transaction effects
@@ -9422,6 +9460,75 @@ mod live_amm_tests {
         // Fresh node: empty ledger, no pools.
         assert_eq!(node.get_balance("nobody").unwrap(), 0.0);
         assert!(node.pool_store.list_pools().unwrap().is_empty());
+    }
+
+    // Build the imbalanced pool used by the liveness regression tests: sorted id "QTOK-XRGE",
+    // reserves QTOK=1_000_000 / XRGE=100, total_lp_supply = isqrt(1e8) - 1000 = 9000. Removing 1 LP
+    // rounds the XRGE side to zero, so `calculate_remove_liquidity(1, ..)` is `None`.
+    fn node_with_imbalanced_pool() -> (TmpDir, L1Node) {
+        let (dir, node) = test_node();
+        node.balances.lock().unwrap().insert("user".to_string(), 1_000_000 * Q);
+        node.token_balances.lock().unwrap()
+            .insert(("user".to_string(), "QTOK".to_string()), 2_000_000u128);
+        let proposer = node.keys.lock().unwrap().public_key_hex.clone();
+        let create_block = BlockV1 {
+            version: 1,
+            header: BlockHeaderV1 {
+                version: 1, chain_id: "test".to_string(), height: 1, time: 1001,
+                prev_hash: String::new(), tx_hash: String::new(),
+                proposer_pub_key: proposer, state_root: None, parent_commit: None,
+            },
+            txs: vec![amm_tx("create_pool", "user", 0.1, TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(100),
+                amount_b: Some(1_000_000),
+                ..Default::default()
+            })],
+            proposer_sig: String::new(),
+            hash: String::new(),
+        };
+        node.apply_balance_block(&create_block).expect("pool created");
+        assert_eq!(node.pool_store.get_pool("QTOK-XRGE").unwrap().unwrap().total_lp_supply, 9000);
+        (dir, node)
+    }
+
+    fn dust_remove_tx() -> TxV1 {
+        let mut tx = amm_tx("remove_liquidity", "user", 0.1, TxPayload {
+            pool_id: Some("QTOK-XRGE".to_string()),
+            lp_amount: Some(1),
+            ..Default::default()
+        });
+        tx.nonce = 1; // must be > the account's current nonce (0)
+        tx
+    }
+
+    // FIX: a dust remove_liquidity is refused at mempool admission, so it never queues or
+    // propagates — and therefore can never be drained into a block production attempt.
+    #[test]
+    fn admission_refuses_a_dust_remove_liquidity() {
+        let (_dir, node) = node_with_imbalanced_pool();
+        let err = node.add_tx_to_mempool_verified(dust_remove_tx()).unwrap_err();
+        assert!(err.contains("no tokens"), "clear refusal, got: {err}");
+        assert_eq!(node.get_mempool_snapshot().len(), 0, "nothing queued");
+    }
+
+    // FIX: even if such a tx reaches the mempool by another path, the producer drops it from
+    // selection instead of aborting+requeuing — so block production no longer stalls.
+    #[test]
+    fn mine_pending_drops_a_dust_remove_instead_of_stalling() {
+        let (_dir, node) = node_with_imbalanced_pool();
+        // Force it straight into the mempool, bypassing the admission guard.
+        let tx = dust_remove_tx();
+        let hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+        node.mempool.lock().unwrap().insert(hash.clone(), tx);
+        node.verified_tx_ids.lock().unwrap().insert(hash);
+        assert_eq!(node.get_mempool_snapshot().len(), 1);
+
+        // Previously this returned Err and requeued the tx (stall). Now: no error, tx dropped.
+        let out = node.mine_pending().expect("production must not error on a dust liquidity tx");
+        assert!(out.is_none(), "no block sealed (the only tx was dropped)");
+        assert_eq!(node.get_mempool_snapshot().len(), 0, "the dust tx was dropped, not requeued");
     }
 
     #[test]
