@@ -28,21 +28,44 @@
 //! that scans with the viewing key alone, blocks with several transactions, and — in one run of
 //! eight — 280 pool-changing blocks in a row, which evict the wallet's oldest checkpoints.
 //!
+//! **Lying nodes with a strategy** (added after REVIEW_WALLET_5, RW5-8). The adversary above
+//! draws a fresh lie for every page; half the lying nodes now lie THE SAME WAY in every round,
+//! for the whole run (`Strategy`): pages that make no progress; the truth and then 64 empty
+//! heights per page, never the node's tip; a true listing that is always some blocks short;
+//! the truth followed by empty heights above the tip; one forged payment in front of the true
+//! listing, consistently, with every leaf number shifted to match; a forged payment until the
+//! client has left the node once, the truth from then on. A lying node may also not answer.
+//!
+//! **The embargo at its edges, on purpose** (`World::directed_restore`): one honest node stops
+//! following, the chain moves on by up to 200 blocks, the device pays once more — mostly with
+//! the longest expiry — a liar keeps the payment, the device is lost; the restored device meets
+//! a stale quorum at the lagging node's height, half the time with the honest nodes at the tip
+//! unreachable; then the chain is taken to one block before the end of the embargo and the
+//! device looks. **A damaged stored state** (`World::recover`): an unreadable pending entry, a
+//! missing pending list, a missing embargo field, a damaged value — answered with
+//! `recover_locks`; a lock that was lost is, to the model, a transaction of an earlier copy.
+//!
 //! **Honest nodes** stand anywhere up to 200 blocks behind the tip, never go back, and may be
 //! unreachable — any number of them, outside the settlement windows: safety does not depend on
 //! anybody answering. (200 is inside the 256 blocks of lag the restore embargo covers; the
 //! assumption that remains is stated in `WalletState::spend_embargo`.)
 //!
-//! **The client follows the loop of `NOTES.md` §6 exactly** (`World::round`): pages from the
-//! listing node with the full key; every node asked, the reports of the last rounds kept;
-//! `confirm_state`; `listing_refuted`, a `listing:` error or a page with `leaf_mismatch` ⇒
-//! rescan against a node not yet found lying; `listing_ahead` three rounds in a row ⇒ the same;
-//! the confirmed height below the quorum's tip two rounds in a row ⇒ list from the next node;
-//! `resolve_pending`; the SAME envelope again for what is still out; a payment only when this
-//! round matched at the scanned tip and `spend_status` says a spend can be built — persist the
-//! returned state, then submit; retry only what `resolve` reported expired or superseded.
-//! Nothing about a restore is the client's to remember: the core enforces the embargo. A round
-//! can end after any step (the user closes the application).
+//! **The client IS the loop of `NOTES.md` §6** (`World::round`): every decision of it — when a
+//! listing node is left, when it is banned, when the state is rescanned, when the first state
+//! check waits, when a payment is offered — is taken by `common::client_loop::Session`, the
+//! loop as code, which the loop tests of `tests/review_wallet_5.rs` run too. Pages of 64
+//! heights from the listing node with the full key; every node asked, the reports of the last
+//! three rounds kept; `confirm_state`; a `listing:` error, `leaf_mismatch`, a short page or
+//! `listing_refuted` ⇒ the node is BANNED and the state rescanned; three rounds in which the
+//! node does not get the wallet to where the quorum is ⇒ the node is LEFT (rescan unless
+//! everything is confirmed); `rescan_required:` ⇒ rescan, nobody blamed; `state_invariant:`
+//! ⇒ stop (here: the test fails — no page may cause it); `resolve_pending`; the SAME envelope
+//! again for what is still out; a payment only at the listing node's tip, when this round
+//! matched, everything scanned is confirmed and the core says a spend can be built — persist
+//! the returned state, then submit; retry only what `resolve` reported expired or superseded.
+//! The client does NOT clear its ban set: the loop stops when every node is banned — which the
+//! model says never happens while an honest node is configured (below). A round can end after
+//! any step (the user closes the application), and a crash loses the session.
 //!
 //! **Value is the oracle's own** (`Tx::checked`): what each transaction must move is computed
 //! from the request and the books; the body's public amounts are read at their offsets and the
@@ -53,29 +76,41 @@
 //! * **G1 — no double payment by the wallet's own behaviour.** Every payment the user asked for
 //!   is mined at most once, although it is retried whenever the wallet says the last attempt is
 //!   dead; no note is handed to a new transaction while an earlier one of this device from that
-//!   note is mined or can still be mined; whatever `resolve` returns is the truth; **and the
-//!   core lets a restored state spend only when nothing an earlier copy built can still be
-//!   mined** — against the stale-quorum adversary, with the longest expiry the builders accept.
+//!   note is mined or can still be mined; whatever `resolve` returns is the truth; **and, at
+//!   every step, the core lets no state spend while a transaction it holds no lock of — built
+//!   by an earlier copy, or lost with a damaged state — can still be mined** on the true chain:
+//!   against the stale-quorum adversary, with the longest expiry the builders accept, up to
+//!   the last block of the embargo. The embargo is waived if and only if the USER made the
+//!   statement for that state (the model's own knowledge of what the user did).
 //! * **G2 — the confirmed balance never exceeds the true balance** at the confirmed height,
 //!   note by note; the confirmed height is one the chain has reached; a state scanned with the
 //!   viewing key offers nothing to spend.
 //! * **G3 — bounded-time settlement.** Every transaction this version builds has
 //!   `expiry_height ≤ (the TRUE height at the build) + 128`; a transaction mined at or below
 //!   the confirmed height is settled by the next `resolve`; and whenever the honest majority is
-//!   reachable at the tip, the client's loop ends — within `4·nodes + 8` rounds, the liars
-//!   lying throughout — with nothing pending, nothing locked, the confirmed height at the tip
-//!   and the confirmed balance EQUAL to the true balance (less only what the documented
-//!   policies leave out).
+//!   reachable at the tip, the client's loop ends — within the bound of `NOTES.md` §6,
+//!   `(liars + 1)·(D + K + 2) + W` rounds, the liars lying throughout, each in its own way —
+//!   with nothing pending, nothing locked, the confirmed height at the tip and the confirmed
+//!   balance EQUAL to the true balance (less only what the documented policies leave out).
 //! * **G4 — a lying or unreachable minority causes delay only**: the same loop, the same
-//!   bound; a true listing is never refuted, a truthful node never named as dissenting, the
-//!   embargo base never more than 256 blocks above the true height; **and no call ever returns
-//!   a state that does not read back** (RW4-5), whatever the pages did to leaf positions.
+//!   bound; a true listing is never refuted, a truthful node never named as dissenting; **only
+//!   a lying node is ever banned, and the loop never stops** while an honest node is
+//!   configured; the embargo is over once the TRUE chain is 128 + 256 blocks past the state
+//!   check that fixed its base, whatever the minority reported in it; **no page makes `scan`
+//!   answer anything but `listing:` or `rescan_required:`** (RW5-1) — and no call ever returns
+//!   a state that does not read back (RW4-5), whatever the pages did to leaf positions.
+//!
+//! **What was removed** (REVIEW_WALLET_5 section 5: three "invariants" restated the code's own
+//! rule): the waiver condition (the rule is gone: RW5-5), `until == base + 128` and
+//! `base ≤ true height + 256`. In their place: the waiver against the user's act, G1 at every
+//! step, and the embargo's end against the true chain.
 #![cfg(feature = "test-vectors")]
 
 mod common;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use common::client_loop::{Decision, Session, FIRST_CHECK_ROUNDS, PAGE_BLOCKS, STRIKES};
 use common::{fake_account_key, keys, A, CHAIN, PHRASE_1, PHRASE_2, Q};
 use quantum_vault_shield_v2::pool::{MemoryPoolStore, Pool, PoolTx, TxKind as PoolKind};
 use quantum_vault_shield_v2::reference::{derive_rho, digest_from_bytes, digest_to_bytes, nullifier, Digest, Note, SparseTree, MODULUS};
@@ -105,6 +140,35 @@ const EXPIRY_BOUND: u64 = 128;
 /// to 200 blocks"). The embargo after a restore covers 256 (`RESTORE_LAG_BOUND_BLOCKS`): the
 /// world stays inside the stated assumption, with the adversary using all of it.
 const HONEST_LAG_MAX: u64 = 200;
+/// `P` of `NOTES.md` §6: the pages this client reads per round.
+const PAGES_PER_ROUND: u64 = 6;
+/// The longest the restore embargo can last, from the documents (spec §5.5 W-19, `UI_CONTRACT.md`):
+/// 128 blocks above a base that a lying or silent minority can push at most 256 blocks above
+/// the true height.
+const EMBARGO_MAX_BLOCKS: u64 = 128 + 256;
+
+/// How a lying node lies when it is LISTED from (REVIEW_WALLET_5 RW5-8: the adversary of the
+/// earlier revisions drew a fresh lie for every page, so that a lying node reached the tip, or
+/// was refuted, within a few rounds whatever the loop did). A node keeps its strategy for the
+/// whole run: the same lie in every round.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Strategy {
+    /// a fresh lie for every page (the adversary of the earlier revisions)
+    Memoryless,
+    /// pages that make no progress and claim a tip far away
+    NoProgress,
+    /// the truth, then 64 empty heights per page: never its tip
+    NeverAtTip,
+    /// the true chain as it was this many blocks ago, as its tip
+    TrueButShort(u64),
+    /// the truth to the tip, then 64 empty heights above it, claimed as its tip
+    TruthThenEmpty,
+    /// one forged payment in front of the true listing — consistently, on every page, with
+    /// every leaf number shifted to match — and the true tip
+    ForgedTwin,
+    /// a payment that is on no chain until the client has left it once; the truth from then on
+    RefutesThenBehaves,
+}
 
 fn b32(b: &[u8]) -> [u8; 32] {
     b.try_into().unwrap()
@@ -502,13 +566,24 @@ struct Stats {
     matched: usize,
     matched_with_dissent: usize,
     refuted: usize,
-    ahead: usize,
-    rotations: usize,
+    /// `LEAVE` with a ban (always of a lying node: checked), and without
+    banned: usize,
+    left: usize,
+    left_without_rescan: usize,
+    no_answers: usize,
+    first_check_waits: usize,
+    persistent_liars: usize,
     rescans: usize,
-    all_bad: usize,
     states_lost: usize,
     migrations: [usize; 4],
     restores: usize,
+    directed_restores: usize,
+    directed_payments: usize,
+    silent_leader_bases: usize,
+    boundary_looks: usize,
+    recoveries: usize,
+    recoveries_embargoed: usize,
+    embargo_deadlines_checked: usize,
     embargo_bases: usize,
     stale_bases: usize,
     embargo_refusals: usize,
@@ -573,13 +648,24 @@ struct World {
     /// what device A has in its storage: the state, and the envelopes stored with it
     stored: WalletState,
     envelopes: Vec<usize>,
-    // ---- the client's session (NOTES §6: `L`, `bad`, the reports of the last rounds); lost in a crash
-    listing: usize,
-    bad: BTreeSet<usize>,
-    ahead: usize,
-    behind: usize,
-    cache: Vec<(u64, StateReport)>,
-    round_no: u64,
+    /// how each lying node lies when it is listed from
+    strategy: Vec<Strategy>,
+    /// `RefutesThenBehaves`: the client has left this node once
+    behaved: Vec<bool>,
+    /// `ForgedTwin`: the forged transaction (one per run)
+    forged_twin: Option<Vec<u8>>,
+    /// **The client's session — `common::client_loop::Session`, the loop of `NOTES.md` §6 as
+    /// code**: `L` (also stored with the state: `listed_from`), `bad`, the strikes, the reports
+    /// of the last rounds. Lost in a crash, but for `L`.
+    session: Session,
+    /// the honest nodes at the tip do not answer until the restored device has its embargo base
+    mute_leaders: bool,
+    /// the device's own user made the statement for the stored state (a new wallet)
+    statement: bool,
+    /// the true height by which the embargo of the stored state must have ended
+    embargo_deadline: Option<u64>,
+    /// the directed restore: the lost device's last payment — the longest expiry, withheld
+    directed: bool,
     /// the stale-quorum adversary of RW4-1: the liars serve and report the TRUE chain as it was
     /// at this height (where an honest node is standing)
     stale: Option<u64>,
@@ -634,12 +720,14 @@ impl World {
             cap,
             cap_attack,
             envelopes: Vec::new(),
-            listing: 0,
-            bad: BTreeSet::new(),
-            ahead: 0,
-            behind: 0,
-            cache: Vec::new(),
-            round_no: 0,
+            strategy: vec![Strategy::Memoryless; n],
+            behaved: vec![false; n],
+            forged_twin: None,
+            session: Session::new(n, 0),
+            mute_leaders: false,
+            statement: false,
+            embargo_deadline: None,
+            directed: false,
             stale: None,
             viewed: false,
             burst_at,
@@ -653,9 +741,25 @@ impl World {
         };
         w.stats.nodes = n;
         w.stats.liars = liars;
+        // half the lying nodes lie the same way in every round
+        for i in 0..n {
+            if w.liar[i] {
+                w.strategy[i] = match w.rng.below(12) {
+                    0 => Strategy::NoProgress,
+                    1 => Strategy::NeverAtTip,
+                    2 => Strategy::TrueButShort(1 + w.rng.below(40)),
+                    3 => Strategy::TruthThenEmpty,
+                    4 => Strategy::ForgedTwin,
+                    5 => Strategy::RefutesThenBehaves,
+                    _ => Strategy::Memoryless,
+                };
+                w.stats.persistent_liars += (w.strategy[i] != Strategy::Memoryless) as usize;
+            }
+        }
         // a NEW wallet on a new phrase: the user can truthfully say that no other copy has a
         // payment in flight. (Every later `new_state` — a restore — cannot, and does not.)
         w.stored = w.new_state(true);
+        w.statement = true;
         for v in [6 * Q, 4 * Q, 9 * Q] {
             w.fund(v, 5);
         }
@@ -705,10 +809,10 @@ impl World {
     }
 
     /// The application starts again: what it held in memory is gone.
+    /// A new session starts with `bad` empty, and lists from the node the state was stored
+    /// with (`listed_from`: every unconfirmed page of the state is that node's).
     fn new_session(&mut self) {
-        self.bad.clear();
-        self.cache.clear();
-        (self.ahead, self.behind) = (0, 0);
+        self.session = Session::new(self.nodes.len(), self.session.listing);
     }
 
     // ---- other parties ---------------------------------------------------------------------------------
@@ -888,13 +992,73 @@ impl World {
         page["next_height"] = serde_json::json!(cut + 1);
     }
 
-    /// One page of a node that lies. `None` when this lie has nothing to work with.
+    /// One page of a node that lies: by its strategy. `None`: it does not answer.
     fn lying_page(&mut self) -> Option<serde_json::Value> {
         let since = self.stored.next_height();
         // the stale-quorum adversary serves the TRUE chain as it was at the stale height
         if let Some(x) = self.stale {
             return Some(self.chain.page(since, x));
         }
+        let (tip, start) = (self.chain.height, since.max(A));
+        let empty = |from: u64, next: u64, tip: u64| serde_json::json!({ "active": true, "tip_height": tip, "from_height": from, "next_height": next, "txs": [] });
+        match self.strategy[self.session.listing] {
+            Strategy::Memoryless => self.memoryless_page(),
+            Strategy::NoProgress => Some(empty(start, start, 1_000_000)),
+            Strategy::NeverAtTip => Some(if since > tip {
+                empty(since, since + PAGE_BLOCKS, 1_000_000)
+            } else {
+                let mut page = self.chain.page(since, tip);
+                page["tip_height"] = serde_json::json!(1_000_000);
+                page["next_height"] = serde_json::json!((tip + 1).max(start + PAGE_BLOCKS));
+                page
+            }),
+            Strategy::TrueButShort(k) => Some(self.chain.page(since, tip.saturating_sub(k).max(A - 1))),
+            Strategy::TruthThenEmpty => Some(if since > tip {
+                empty(since, since, since - 1)
+            } else {
+                let mut page = self.chain.page(since, tip);
+                page["tip_height"] = serde_json::json!(tip + PAGE_BLOCKS);
+                page["next_height"] = serde_json::json!(tip + PAGE_BLOCKS + 1);
+                page
+            }),
+            Strategy::ForgedTwin => {
+                if self.forged_twin.is_none() {
+                    self.forged_twin = Some(self.shield_to_alice(50 * Q, 6).0.body.clone());
+                }
+                let mut page = self.chain.page(since, tip);
+                let txs = page["txs"].as_array_mut().unwrap();
+                for t in txs.iter_mut() {
+                    for j in 0..2 {
+                        t["outputs"][j]["leaf"] = serde_json::json!(t["outputs"][j]["leaf"].as_u64().unwrap() + 2);
+                    }
+                    if t["height"].as_u64() == Some(A) {
+                        t["index"] = serde_json::json!(t["index"].as_u64().unwrap() + 1);
+                    }
+                }
+                if start == A && tip >= A {
+                    txs.insert(0, RefChain::entry(self.forged_twin.as_ref().unwrap(), A, 0, 0));
+                }
+                Some(page)
+            }
+            Strategy::RefutesThenBehaves => {
+                let mut page = self.chain.page(since, tip);
+                if !self.behaved[self.session.listing] {
+                    let (u, _) = self.shield_to_alice(50 * Q, 6);
+                    let fake_height = (tip + 1).max(start);
+                    let next_leaf = self.stored.tree().note_count() + 2 * page["txs"].as_array().unwrap().len() as u64;
+                    page["txs"].as_array_mut().unwrap().push(RefChain::entry(&u.body, fake_height, 0, next_leaf));
+                    page["tip_height"] = serde_json::json!(fake_height);
+                    page["next_height"] = serde_json::json!(fake_height + 1);
+                }
+                Some(page)
+            }
+        }
+    }
+
+    /// One page of a node that draws a fresh lie for every page. `None` when this lie has
+    /// nothing to work with (the node does not answer).
+    fn memoryless_page(&mut self) -> Option<serde_json::Value> {
+        let since = self.stored.next_height();
         let mut page = self.chain.page(since, self.chain.height);
         let from = page["from_height"].as_u64().unwrap();
         let listed = page["txs"].as_array().unwrap().len();
@@ -1026,9 +1190,12 @@ impl World {
             // the truth (a liar need not lie every time)
             _ => {}
         }
-        // … and whatever it is, cut anywhere: between two notes of one pending transaction, too
+        // … and whatever it is, cut: between two notes of one pending transaction, too. A page
+        // that is cut below the 64 heights that were asked for is a SHORT page — the client
+        // bans the node for it — so a liar that wants to stay cuts mostly above them
         if self.rng.below(3) == 0 {
-            let heights: Vec<u64> = page["txs"].as_array().unwrap().iter().map(|t| t["height"].as_u64().unwrap()).collect();
+            let short = self.rng.below(4) == 0;
+            let heights: Vec<u64> = page["txs"].as_array().unwrap().iter().map(|t| t["height"].as_u64().unwrap()).filter(|h| short || *h + 1 >= from + PAGE_BLOCKS).collect();
             if let Some(cut) = self.rng.pick(&heights) {
                 Self::cut_page(&mut page, cut);
                 self.stats.pages_cut += 1;
@@ -1037,26 +1204,34 @@ impl World {
         Some(page)
     }
 
-    /// One page from the node the client lists from, scanned with the full key — or, for the
-    /// background worker, with the viewing key alone. `Ok(at_tip)`; `Err`: rescan (a `listing:`
-    /// error, a page that numbers its leaves differently from the wallet's tree, or a state the
-    /// viewing key left unable to tell its spends).
-    fn sync_once(&mut self, settled: bool, view_only: bool) -> Result<bool, ()> {
+    /// NOTES §6 step 1, one page from `L`, scanned with the full key — or, for the background
+    /// worker, with the viewing key alone — and the loop's rule for the answer
+    /// (`Session::after_scan`). `Ok(true)`: the page reached the node's tip; `Ok(false)`: go
+    /// on; `Err(true)`: no more pages in this round, the round goes on; `Err(false)`: the
+    /// round has ended (the node was left, the state rescanned, the client crashed).
+    fn sync_once(&mut self, settled: bool, view_only: bool) -> Result<bool, bool> {
         let seed = self.seed;
         self.follow();
-        let page = if self.liar[self.listing] {
+        let l = self.session.listing;
+        let page = if self.liar[l] {
             self.stats.lying_pages += 1;
             match self.lying_page() {
                 Some(p) => p,
-                None => return Ok(false),
+                None => {
+                    // the node did not answer: a strike
+                    self.stats.no_answers += 1;
+                    let d = self.session.after_no_answer();
+                    return Err(self.apply(d));
+                }
             }
         } else {
-            let mut page = self.chain.page(self.stored.next_height(), self.node_height[self.listing]);
+            let mut page = self.chain.page(self.stored.next_height(), self.node_height[l]);
             if !settled && self.rng.below(3) == 0 {
-                // an honest node's page has a budget too
+                // an honest node's page has a budget too — the heights that were asked for
+                // (`blocks=64`), or more: never fewer, unless it reaches the node's tip
                 let (from, next) = (page["from_height"].as_u64().unwrap(), page["next_height"].as_u64().unwrap());
-                if next > from + 1 {
-                    Self::cut_page(&mut page, from + self.rng.below(next - from - 1));
+                if next > from + PAGE_BLOCKS {
+                    Self::cut_page(&mut page, from + PAGE_BLOCKS - 1 + self.rng.below(next - from - PAGE_BLOCKS));
                     self.stats.pages_cut += 1;
                 }
             }
@@ -1065,75 +1240,103 @@ impl World {
         let page = ListingPage::from_json(&page.to_string()).unwrap();
         let mut s = self.stored.clone();
         let key = if view_only { self.alice.incoming_viewing_key() } else { self.alice.scan_key() };
-        match s.scan(&page, &key) {
-            Ok(r) => {
-                // the wallet's own change does not depend on what the listing served as its
-                // ciphertext: when the listing shows the transaction, the change note is there
-                for p in s.pending().iter().filter(|p| p.status == PendingStatus::SeenMined && p.seen_height.is_some_and(|h| h >= page.from_height)) {
-                    if let Some(c) = p.change.as_ref().filter(|c| c.r.is_some() && c.value > 0) {
-                        assert!(s.notes().iter().any(|n| n.cm == c.cm && n.value == c.value), "seed {seed}: the listing showed the wallet's own transaction and its change is not stored");
-                    }
-                }
-                // every note the scan stored OPENS its commitment, whatever it was taken from
-                // (a ciphertext, or the wallet's own record): value, this wallet's pk, its rho, r
-                for n in r.received.iter().filter_map(|&p| s.note_at(p)) {
-                    let note = Note { value: n.value, pk: self.pk[0], rho: digest_from_bytes(&n.rho.0).unwrap(), r: digest_from_bytes(&n.r.0).unwrap() };
-                    assert_eq!(digest_to_bytes(&note.commitment()), n.cm.0, "seed {seed}: a stored note does not open its commitment");
-                }
-                // the pending entries are untouched by whatever the listing does to positions
-                assert_eq!(s.pending().len(), self.stored.pending().len(), "seed {seed}: a scan changed the number of pending entries");
-                for (a, b) in s.pending().iter().zip(self.stored.pending()) {
-                    assert!((&a.nullifiers, &a.outputs, &a.input_cms, a.expiry_height) == (&b.nullifiers, &b.outputs, &b.input_cms, b.expiry_height), "seed {seed}: a scan changed what a pending entry is held by");
-                }
-                assert_eq!(s.view_only_since().is_some(), view_only, "seed {seed}: the view-only mark follows the key of the last scan");
-                self.stats.lying_pages_accepted += self.liar[self.listing] as usize;
-                self.stats.view_only_scans += view_only as usize;
-                if self.persist(s) {
-                    self.viewed |= view_only;
-                }
-                if r.leaf_mismatch {
-                    self.stats.leaf_mismatches += 1;
-                    return Err(());
-                }
-                Ok(r.at_tip)
-            }
-            // "a `listing:` error: rebuild from rescan_state against another node"
-            Err(WalletError::Listing(_)) | Err(WalletError::RescanRequired) => Err(()),
-            Err(e) => panic!("seed {seed}: scan failed with {e}"),
+        let result = s.scan(&page, &key);
+        // **no page makes `scan` answer `state_invariant`** (REVIEW_WALLET_5 RW5-1), or anything
+        // else the loop has no rule for: what a node serves is refused as `listing:` or applied
+        if let Err(e) = &result {
+            assert!(matches!(e, WalletError::Listing(_) | WalletError::RescanRequired), "seed {seed}: scan failed with {e} — an error no page may cause");
+            assert!(view_only || self.viewed || !matches!(e, WalletError::RescanRequired), "seed {seed}: rescan_required for a state that was never scanned without the nullifier key");
         }
+        if let Ok(r) = &result {
+            // the wallet's own change does not depend on what the listing served as its
+            // ciphertext: when the listing shows the transaction, the change note is there
+            for p in s.pending().iter().filter(|p| p.status == PendingStatus::SeenMined && p.seen_height.is_some_and(|h| h >= page.from_height)) {
+                if let Some(c) = p.change.as_ref().filter(|c| c.r.is_some() && c.value > 0) {
+                    assert!(s.notes().iter().any(|n| n.cm == c.cm && n.value == c.value), "seed {seed}: the listing showed the wallet's own transaction and its change is not stored");
+                }
+            }
+            // every note the scan stored OPENS its commitment, whatever it was taken from
+            // (a ciphertext, or the wallet's own record): value, this wallet's pk, its rho, r
+            for n in r.received.iter().filter_map(|&p| s.note_at(p)) {
+                let note = Note { value: n.value, pk: self.pk[0], rho: digest_from_bytes(&n.rho.0).unwrap(), r: digest_from_bytes(&n.r.0).unwrap() };
+                assert_eq!(digest_to_bytes(&note.commitment()), n.cm.0, "seed {seed}: a stored note does not open its commitment");
+            }
+            // the pending entries are untouched by whatever the listing does to positions
+            assert_eq!(s.pending().len(), self.stored.pending().len(), "seed {seed}: a scan changed the number of pending entries");
+            for (a, b) in s.pending().iter().zip(self.stored.pending()) {
+                assert!((&a.nullifiers, &a.outputs, &a.input_cms, a.expiry_height) == (&b.nullifiers, &b.outputs, &b.input_cms, b.expiry_height), "seed {seed}: a scan changed what a pending entry is held by");
+            }
+            assert_eq!(s.view_only_since().is_some(), view_only, "seed {seed}: the view-only mark follows the key of the last scan");
+            // (the books, not the code: no chain holds one commitment at two leaves — a state
+            // never holds two notes with one commitment, whatever was listed)
+            let cms: BTreeSet<[u8; 32]> = s.notes().iter().map(|n| n.cm.0).collect();
+            assert_eq!(cms.len(), s.notes().len(), "seed {seed}: the state holds two notes with one commitment");
+            self.stats.lying_pages_accepted += self.liar[l] as usize;
+            self.stats.view_only_scans += view_only as usize;
+            self.stats.leaf_mismatches += r.leaf_mismatch as usize;
+            if !self.persist(s) {
+                return Err(false); // a crash: the application starts again
+            }
+            self.viewed |= view_only;
+        }
+        let d = self.session.after_scan(&page, &result);
+        if !self.apply(d) {
+            return Err(false);
+        }
+        Ok(result.is_ok_and(|r| r.at_tip))
     }
 
-    /// NOTES §6, `L := next node not in bad`.
-    fn next_listing(&mut self) {
-        let n = self.nodes.len();
-        if self.bad.len() >= n {
-            // "stop and tell the user": more than a minority lies, or every node was listed
-            // from while another was lying. The user starts again.
-            self.bad.clear();
-            self.stats.all_bad += 1;
+    /// What the loop decided, carried out. `true`: go on with the round.
+    fn apply(&mut self, d: Decision) -> bool {
+        match d {
+            Decision::Go => return true,
+            Decision::Leave { ban, why } => self.leave(ban, why),
+            Decision::Rescan => self.rescan_same_node(),
+            Decision::Reload | Decision::Wait => {}
+            Decision::Stop(stop) => panic!("seed {}: the loop stopped: {stop:?}", self.seed),
         }
-        for k in 1..=n {
-            let next = (self.listing + k) % n;
-            if !self.bad.contains(&next) {
-                self.listing = next;
-                break;
-            }
-        }
-        self.stats.rotations += 1;
-        (self.ahead, self.behind) = (0, 0);
+        false
     }
 
-    /// NOTES §6, `RESCAN(L)`.
-    fn rescan(&mut self) {
-        self.bad.insert(self.listing);
+    /// NOTES §6, `LEAVE(ban)`: the state is rescanned unless everything it holds is confirmed,
+    /// `L` becomes the next node that is not in `bad`, and both are stored together.
+    ///
+    /// **A model invariant (G4): only a lying node is ever banned** — a ban needs evidence that
+    /// the listing is not a chain's, and an honest node never gives any. So the loop never stops
+    /// with "no honest listing node reachable" while an honest node is configured.
+    fn leave(&mut self, ban: bool, why: &'static str) {
+        let seed = self.seed;
+        let l = self.session.listing;
+        assert!(!ban || self.liar[l], "seed {seed}: an HONEST node was banned ({why})");
+        let plan = self.session.plan_leave(ban, &self.stored);
+        assert!(plan.next.is_some(), "seed {seed}: every node is banned — and only lying nodes are ever banned");
+        if plan.rescan {
+            let s = self.stored.fresh_for_rescan();
+            // every lock is carried over, held by what it was held by
+            assert_eq!(s.pending().len(), self.stored.pending().len());
+            if !self.persist(s) {
+                return; // a crash before the rescanned state was stored: nothing has changed
+            }
+            self.stats.rescans += 1;
+            self.viewed = false;
+        } else {
+            self.stats.left_without_rescan += (plan.next != Some(l)) as usize;
+        }
+        self.behaved[l] = true;
+        self.session.commit_leave(plan);
+        self.stats.banned += ban as usize;
+        self.stats.left += !ban as usize;
+    }
+
+    /// `rescan_state` without a change of node: `rescan_required:`, or the user's own decision.
+    fn rescan_same_node(&mut self) {
         let s = self.stored.fresh_for_rescan();
-        // every lock is carried over, held by what it was held by
         assert_eq!(s.pending().len(), self.stored.pending().len());
         if self.persist(s) {
             self.stats.rescans += 1;
             self.viewed = false;
+            self.session.after_rescan();
         }
-        self.next_listing();
     }
 
     /// What the nodes answer to "what is the pool state". Honest nodes: the truth at THEIR tip
@@ -1148,6 +1351,12 @@ impl World {
         for i in 0..self.nodes.len() {
             let id = self.nodes[i].clone();
             if !self.liar[i] {
+                // the directed restore: the honest nodes at the tip are unreachable until the
+                // restored device has its embargo base
+                if self.mute_leaders && !self.stalled[i] {
+                    self.stats.honest_silent += 1;
+                    continue;
+                }
                 // outside a settlement window an honest node may not answer at all
                 if !settled && (all_honest_silent || self.rng.below(5) == 0) {
                     self.stats.honest_silent += 1;
@@ -1157,7 +1366,9 @@ impl World {
                 continue;
             }
             // the stale-quorum adversary: the TRUE state of the height an honest node stands at
-            if let Some(x) = self.stale.filter(|_| self.rng.below(4) != 0) {
+            // (always, while it has the honest nodes at the tip cut off: it does not raise the
+            // highest claim of the call itself)
+            if let Some(x) = self.stale.filter(|_| self.mute_leaders || self.rng.below(4) != 0) {
                 out.push(self.chain.report(&id, x));
                 continue;
             }
@@ -1221,14 +1432,15 @@ impl World {
     /// `Some(report)`: the check left nothing to do (the listing is neither refuted nor ahead).
     fn confirm(&mut self, settled: bool, at_tip: bool) -> Option<ConfirmReport> {
         let seed = self.seed;
-        self.round_no += 1;
         let fresh = self.reports(settled);
-        let now = self.round_no;
-        self.cache.retain(|(round, _)| round + 2 >= now);
-        self.cache.extend(fresh.into_iter().map(|r| (now, r)));
-        let excess = self.cache.len().saturating_sub(1_024);
-        self.cache.drain(..excess);
-        let reports: Vec<StateReport> = self.cache.iter().map(|(_, r)| r.clone()).collect();
+        // step 2a: the FIRST state check of a state without the user's statement waits for
+        // every node (a bounded number of rounds)
+        let gate = self.session.first_check_may_run(&self.stored, &fresh);
+        let reports = self.session.add_reports(fresh);
+        if gate == Decision::Wait {
+            self.stats.first_check_waits += 1;
+            return None;
+        }
         let before = self.stored.clone();
         let mut s = self.stored.clone();
         let c = s.confirm_state(&reports).unwrap();
@@ -1289,60 +1501,47 @@ impl World {
         }
         // RW4-1: the embargo base of a state without lock history
         if c.embargo_base_set {
-            let SpendEmbargo::Until { first_confirmed, base, until, waived } = s.spend_embargo() else { panic!("seed {seed}: a base was set and the state has none") };
+            let SpendEmbargo::Until { first_confirmed, until, waived, .. } = s.spend_embargo() else { panic!("seed {seed}: a base was set and the state has none") };
             assert_eq!(Some(first_confirmed), c.matched_height);
             self.stats.embargo_bases += 1;
-            if waived {
-                assert!(s.sole_copy_asserted() && c.highest_reported.is_none_or(|t| t <= first_confirmed), "seed {seed}: the user's statement was honoured although a configured node is ahead");
-            } else {
-                // G4: a lying or silent minority adds at most the lag bound
-                assert!(base >= first_confirmed && until == base + EXPIRY_BOUND && base <= self.chain.height + RESTORE_LAG_BOUND_BLOCKS, "seed {seed}: the embargo base {base} is out of bounds (true height {})", self.chain.height);
-                // G1: nothing an earlier copy built can be mined above `until` — in a world whose
-                // honest nodes are at most 200 blocks behind, against liars that replay a true
-                // old state to a quorum
+            self.stats.silent_leader_bases += self.mute_leaders as usize;
+            // the statement is the USER's act, which the model knows of: it is honoured if and
+            // only if the user made it for this state (REVIEW_WALLET_5 RW5-5: once recorded,
+            // it stands, whatever the reports of this call show)
+            assert_eq!(waived, self.statement, "seed {seed}: the embargo was waived: {waived}; the user made the statement for this state: {}", self.statement);
+            if !waived {
+                // G1: nothing an earlier copy built — or a damaged state lost the lock of — can
+                // be mined above `until`, in a world whose honest nodes are at most 200 blocks
+                // behind, against liars that replay a true old state to a quorum
                 for a in self.attempts.iter().filter(|a| !a.known && self.chain.can_still_be_mined(&a.tx)) {
                     assert!(a.tx.expiry() <= until, "seed {seed}: the embargo ends at confirmed height {until} while an earlier transaction is valid until {} (first confirmed {first_confirmed}, true height {})", a.tx.expiry(), self.chain.height);
                 }
+                // G4, as the user sees it: whatever a lying or silent minority did in this
+                // call, the embargo is over once the TRUE chain is 128 + 256 blocks further
+                // (checked when the chain gets there: `drive_to_settlement`)
+                self.embargo_deadline = Some(self.chain.height + EMBARGO_MAX_BLOCKS);
                 self.stats.stale_bases += (first_confirmed + 64 < self.chain.height) as usize;
             }
             self.stale = None;
+            self.mute_leaders = false;
         }
         if !self.persist(s) {
             return None;
         }
-        // ---- the documented rules (NOTES §6 step 3) -----------------------------------------------------
-        if c.listing_refuted {
-            self.stats.refuted += 1;
-            self.rescan();
+        // ---- the loop's rules for the answer (NOTES §6 step 3: `Session::after_confirm`) -----------------
+        self.stats.refuted += c.listing_refuted as usize;
+        let d = self.session.after_confirm(&c, at_tip, &self.stored);
+        if !self.apply(d) {
             return None;
-        }
-        if c.listing_ahead {
-            // not on the first sighting: an honest listing is ahead of a quorum that is behind
-            self.ahead += 1;
-            if self.ahead >= 3 {
-                self.stats.ahead += 1;
-                self.rescan();
-            }
-            return None;
-        }
-        self.ahead = 0;
-        // the listing does not get the wallet where the quorum is: list from the next node
-        // (no rescan — what was read may well be true)
-        if at_tip && c.quorum_tip.is_some_and(|t| self.stored.confirmed_height().is_none_or(|h| h < t)) {
-            self.behind += 1;
-            if self.behind >= 2 {
-                self.next_listing();
-            }
-        } else {
-            self.behind = 0;
         }
         Some(c)
     }
 
     // ---- the device ------------------------------------------------------------------------------------
 
-    /// NOTES §6 step 5: a payment is offered only if this round's state check matched at the
-    /// scanned tip and the core says a spend can be built now.
+    /// NOTES §6 step 5: a payment is offered only if the round ended at the listing node's tip,
+    /// this round's state check matched, everything scanned is confirmed, and the core says a
+    /// spend can be built now (`Session::may_offer_payment`).
     fn pay(&mut self, c: &ConfirmReport) {
         let seed = self.seed;
         let st = self.stored.clone();
@@ -1350,6 +1549,7 @@ impl World {
             return;
         }
         let status = st.spend_status(c.quorum_tip);
+        assert_eq!(Session::may_offer_payment(c, true, &st), status.can_spend_now);
         if !status.can_spend_now {
             // whatever the reason, the builder refuses too — the user interface is not what
             // keeps the embargo or a view-only state from spending
@@ -1407,6 +1607,8 @@ impl World {
         let label = self.label("pay");
         let confirmed = st.confirmed_height().unwrap();
         let expiry = match self.rng.below(8) {
+            // the lost device's last payment (the directed restore): mostly the longest expiry
+            x if self.directed => (x < 6).then_some(confirmed + EXPIRY_BOUND),
             0 => Some(confirmed + EXPIRY_BOUND), // the longest the builders accept
             1 => Some(confirmed + 1 + self.rng.below(EXPIRY_BOUND)),
             _ => None,
@@ -1471,6 +1673,12 @@ impl World {
         self.stats.self_payments += (payee == Payee::Own) as usize;
         self.stats.unreadable_payments += (payee == Payee::BobUnreadable) as usize;
         match self.rng.below(10) {
+            // the directed restore: submitted to a lying node, which keeps it
+            _ if self.directed => {
+                self.withheld.push(i);
+                self.stats.withheld += 1;
+                self.stats.directed_payments += 1;
+            }
             // a crash between the persist and the submit: it never leaves the device. The client
             // may say so (`abandon_unsubmitted`) — which releases nothing
             0 => {
@@ -1488,7 +1696,7 @@ impl World {
     /// The envelope goes to a node: the one the client lists from, or any other. A lying node
     /// keeps it (three times in four); an honest one has it mined in the next block.
     fn submit(&mut self, i: usize) {
-        let node = if self.rng.below(2) == 0 { self.listing } else { self.rng.below(self.nodes.len() as u64) as usize };
+        let node = if self.rng.below(2) == 0 { self.session.listing } else { self.rng.below(self.nodes.len() as u64) as usize };
         if self.liar[node] && self.rng.below(4) != 0 {
             if !self.withheld.contains(&i) {
                 self.withheld.push(i);
@@ -1691,23 +1899,23 @@ impl World {
         }
     }
 
-    /// **The client loop of `NOTES.md` §6, as written there** — steps 1 to 5; `upto` cuts the
-    /// round after that step (the user closes the application). `true`: a whole state check
-    /// was made and left nothing to do.
+    /// **The client loop of `NOTES.md` §6** — steps 1 to 5, every decision taken by
+    /// `common::client_loop::Session`; `upto` cuts the round after that step (the user closes
+    /// the application). `true`: a whole state check was made and left nothing to do.
     fn round(&mut self, upto: u8, settled: bool) -> bool {
-        // 1. pages from L, with the FULL key, until the tip or a page budget
+        assert!(self.session.stopped.is_none());
+        self.session.round += 1;
+        // 1. pages from L, with the FULL key, until its tip or the page budget
         let mut at_tip = false;
-        for _ in 0..6 {
+        for _ in 0..PAGES_PER_ROUND {
             match self.sync_once(settled, false) {
                 Ok(true) => {
                     at_tip = true;
                     break;
                 }
                 Ok(false) => {}
-                Err(()) => {
-                    self.rescan();
-                    return false;
-                }
+                Err(true) => break,
+                Err(false) => return false,
             }
         }
         if upto < 3 {
@@ -1731,12 +1939,9 @@ impl World {
         true
     }
 
-    /// The device is lost and the wallet restored from the phrase: an empty state, no lock — and
-    /// NO statement that no other copy has a payment in flight. Two times in three the
-    /// adversary answers the restored device with a stale quorum: it lists and reports the true
-    /// chain as it was where the most lagging honest node stands.
-    fn restore(&mut self) {
-        self.stored = self.new_state(false);
+    /// The device is lost: what the model knows from now on. No lock of it is held by any state;
+    /// what it had out is "unknown" to the user until the core lets the restored state spend.
+    fn lose_the_device(&mut self) {
         for a in self.attempts.iter_mut() {
             a.known = false;
         }
@@ -1744,9 +1949,19 @@ impl World {
             x.state = IntentState::Unknown;
         }
         self.envelopes.clear();
-        self.new_session();
         self.viewed = false;
-        self.listing = self.rng.below(self.nodes.len() as u64) as usize;
+        self.statement = false;
+        self.embargo_deadline = None;
+    }
+
+    /// The device is lost and the wallet restored from the phrase: an empty state, no lock — and
+    /// NO statement that no other copy has a payment in flight. Two times in three the
+    /// adversary answers the restored device with a stale quorum: it lists and reports the true
+    /// chain as it was where the most lagging honest node stands.
+    fn restore(&mut self) {
+        self.stored = self.new_state(false);
+        self.lose_the_device();
+        self.session = Session::new(self.nodes.len(), self.rng.below(self.nodes.len() as u64) as usize);
         self.follow();
         let lagging = (0..self.nodes.len()).filter(|&i| !self.liar[i]).min_by_key(|&i| self.node_height[i]);
         let liars: Vec<usize> = (0..self.nodes.len()).filter(|&i| self.liar[i]).collect();
@@ -1758,9 +1973,180 @@ impl World {
             self.chain.advance_to(on);
             self.follow();
             self.stale = Some(self.node_height[j]);
-            self.listing = l;
+            self.session.listing = l;
         }
         self.stats.restores += 1;
+    }
+
+    /// **RW4-1 at its worst, on purpose** (REVIEW_WALLET_5 RW5-8: the random walk reached the
+    /// edge of the embargo too rarely to tell a lag bound of 256 from one of 64, a base that
+    /// counts a silent node from one that does not, or a gate that opens one block early).
+    ///
+    /// One honest node stops following; the chain moves on by up to 200 blocks; the device — in
+    /// sync with the tip, confirmed by the nodes that are there — makes one more payment, mostly
+    /// with the longest expiry the builders accept, and a lying node keeps it. The device is
+    /// lost. The restored device is answered with a stale quorum at the height of the lagging
+    /// node, and half the time the honest nodes at the tip are unreachable until its embargo
+    /// base is fixed. Then the chain is taken to ONE BLOCK before the end of the embargo, the
+    /// device looks — and the adversary mines the withheld payment in the block after, if that
+    /// is still inside its validity.
+    ///
+    /// Nothing here asserts a number: the invariants of `confirm` and `check` do the judging —
+    /// the embargo ends at or above the last block an earlier transaction can be mined in, and
+    /// the core lets no state spend while such a transaction can still be mined.
+    fn directed_restore(&mut self) {
+        let n = self.nodes.len();
+        let liars: Vec<usize> = (0..n).filter(|&i| self.liar[i]).collect();
+        let honest: Vec<usize> = (0..n).filter(|&i| !self.liar[i]).collect();
+        // a stale quorum is the liars and ONE honest node; the others confirm the tip
+        if liars.is_empty() || liars.len() + 1 < self.quorum() || n - 1 < self.quorum() {
+            return self.restore();
+        }
+        // ---- the lagging node, and the chain it does not follow
+        self.settle_nodes();
+        let j = self.rng.pick(&honest).unwrap();
+        self.stalled[j] = true;
+        let stale_at = self.node_height[j];
+        let lag = self.rng.below(HONEST_LAG_MAX + 1);
+        self.chain.advance_to(stale_at + lag);
+        self.follow();
+        assert_eq!(self.node_height[j], stale_at);
+        // ---- the device's last round, against the nodes at the tip (the liars tell the truth
+        // here: they may): the truth from one of them, a state check, resolve, a payment
+        let mut s = self.stored.clone();
+        if !Session::nothing_unconfirmed(&s) {
+            s = s.fresh_for_rescan();
+        }
+        let tip = self.chain.height;
+        let page = ListingPage::from_json(&self.chain.page(s.next_height(), tip).to_string()).unwrap();
+        s.scan(&page, &self.alice.scan_key()).unwrap_or_else(|e| panic!("seed {}: the truth from a node at the tip is refused: {e}", self.seed));
+        let reports: Vec<StateReport> = (0..n).filter(|&i| i != j).map(|i| self.chain.report(&self.nodes[i], tip)).collect();
+        let c = s.confirm_state(&reports).unwrap();
+        assert_eq!(c.matched_height, Some(tip), "seed {}: the nodes at the tip are a quorum", self.seed);
+        if c.embargo_base_set {
+            self.embargo_deadline = (!self.statement).then_some(tip + EMBARGO_MAX_BLOCKS);
+        }
+        self.stored = s;
+        self.viewed = false;
+        self.session.after_rescan();
+        self.check("the device's last state check");
+        self.resolve();
+        (self.no_crash, self.directed) = (true, true);
+        self.pay(&c);
+        (self.no_crash, self.directed) = (false, false);
+        self.check("the device's last payment");
+        // ---- lost; restored; a stale quorum
+        self.stored = self.new_state(false);
+        self.lose_the_device();
+        self.session = Session::new(n, self.rng.pick(&liars).unwrap());
+        self.stale = Some(stale_at);
+        self.mute_leaders = self.rng.below(2) == 0;
+        self.stats.restores += 1;
+        self.stats.directed_restores += 1;
+        for _ in 0..FIRST_CHECK_ROUNDS + 8 {
+            if self.stored.spend_embargo() != SpendEmbargo::AwaitingBase {
+                break;
+            }
+            self.round(4, false);
+            self.check("a round of the restored device");
+        }
+        (self.stale, self.mute_leaders) = (None, false);
+        // ---- one block before the end of the embargo
+        let SpendEmbargo::Until { until, waived: false, .. } = self.stored.spend_embargo() else { return };
+        if self.chain.height + 1 >= until {
+            return;
+        }
+        self.chain.advance_to(until - 1);
+        self.settle_nodes();
+        self.no_crash = true;
+        for _ in 0..self.settlement_bound() {
+            if self.stored.confirmed_height() == Some(until - 1) {
+                break;
+            }
+            self.round(4, true);
+            self.check("one block before the end of the embargo");
+        }
+        self.no_crash = false;
+        // (no assertion about the gate here: `check`, above, has judged it by the books — a
+        // transaction this state holds no lock of can still be mined ⇒ no spend)
+        self.stats.boundary_looks += (self.stored.confirmed_height() == Some(until - 1)) as usize;
+        // the adversary's best timing: the withheld payment in the block the embargo ends at
+        let last: Vec<usize> = self.withheld.iter().copied().filter(|&i| !self.attempts[i].known && self.attempts[i].tx.expiry() == until && self.chain.can_still_be_mined(&self.attempts[i].tx)).collect();
+        if let Some(i) = self.rng.pick(&last) {
+            let tx = self.attempts[i].tx.clone();
+            if self.chain.height == until - 1 && self.chain.block(Some(&tx)) {
+                self.stats.released_last_block += 1;
+            }
+        }
+    }
+
+    /// **The stored state is damaged** (a partial write, a broken medium — not an adversary who
+    /// writes the state: that is outside the model) and `from_json` refuses it. The documented
+    /// answer is `recover_locks`, never a new state: every lock that can be read is kept, and
+    /// if one could not be — or the text no longer says where the state stood with the embargo
+    /// — the recovered state is under the restore embargo.
+    ///
+    /// For the model a lock that was lost is a transaction "of an earlier copy": the invariants
+    /// of `confirm` and `check` hold the core to the same rule as after a restore.
+    fn recover(&mut self) {
+        let seed = self.seed;
+        let old = self.stored.clone();
+        let mut text: serde_json::Value = serde_json::from_str(&old.to_json().unwrap()).unwrap();
+        let own: Vec<usize> = (0..old.pending().len()).filter(|&i| !old.pending()[i].legacy && old.pending()[i].nullifiers.len() == 2).collect();
+        // the nullifier pairs of the entries whose lock the damage destroys
+        let mut lost: Vec<Vec<B32>> = Vec::new();
+        let mut embargo_expected = old.spend_embargo() != SpendEmbargo::NotRequired;
+        match (self.rng.below(4), self.rng.pick(&own)) {
+            // one entry names neither a nullifier nor an input commitment any more
+            (0, Some(i)) => {
+                lost.push(old.pending()[i].nullifiers.clone());
+                text["pending"][i]["nullifiers"] = serde_json::json!("damaged");
+                text["pending"][i]["input_cms"] = serde_json::Value::Null;
+                embargo_expected = true;
+            }
+            // the pending list is gone
+            (1, _) => {
+                lost = old.pending().iter().map(|p| p.nullifiers.clone()).collect();
+                text.as_object_mut().unwrap().remove("pending");
+                embargo_expected = true;
+            }
+            // the text no longer says where the state stands with the embargo (RW5-9)
+            (2, _) => {
+                text.as_object_mut().unwrap().remove("spend_embargo");
+                embargo_expected = true;
+            }
+            // a value of the history is damaged: every entry is readable
+            _ => text["nullifier_acc"] = serde_json::json!("11".repeat(32)),
+        }
+        let damaged = text.to_string();
+        assert!(matches!(WalletState::from_json(&damaged), Err(WalletError::State(_))), "seed {seed}: a damaged state text was read");
+        let r = WalletState::recover_locks(&damaged).unwrap_or_else(|e| panic!("seed {seed}: recover_locks gave up a damaged state: {e}"));
+        // every lock that could be read is kept, held by what it was held by
+        for p in old.pending().iter().filter(|p| !lost.contains(&p.nullifiers)) {
+            assert!(r.state.pending().iter().any(|q| q.nullifiers == p.nullifiers && q.input_cms == p.input_cms && q.expiry_height == p.expiry_height), "seed {seed}: recover_locks lost a lock it could read");
+        }
+        assert_eq!(r.embargo, embargo_expected, "seed {seed}: the recovered state's embargo (a lock was lost, or the text did not say: {embargo_expected})");
+        // the model: a transaction whose lock is gone is one this state knows nothing of
+        for a in self.attempts.iter_mut().filter(|a| a.known && lost.contains(&a.nullifiers)) {
+            a.known = false;
+            if self.intents[a.intent].state == IntentState::Open {
+                self.intents[a.intent].state = IntentState::Unknown;
+            }
+        }
+        // (the recovered state earns a new base: a waiver belonged to the base it was honoured on)
+        let mut s = r.state;
+        self.statement = s.sole_copy_asserted();
+        if !r.nodes_kept {
+            s.set_nodes(&self.nodes).unwrap();
+        }
+        if s.spend_embargo() == SpendEmbargo::AwaitingBase {
+            self.embargo_deadline = None;
+        }
+        self.stored = s;
+        self.viewed = false;
+        self.session.after_rescan();
+        self.stats.recoveries += 1;
+        self.stats.recoveries_embargoed += r.embargo as usize;
     }
 
     /// The state written back in an older format (as that format would have held it) and read
@@ -1876,7 +2262,11 @@ impl World {
             // the client configures its nodes again (a migrated state has none) — this step is not optional
             migrated.set_nodes(&self.nodes).unwrap();
             self.viewed = false;
+            self.session.after_rescan();
         }
+        // a migrated state is a device's own state: there is no embargo left to end
+        self.embargo_deadline = None;
+        self.statement = false;
         self.stored = migrated;
         self.stats.migrations[format - 1] += 1;
     }
@@ -1957,10 +2347,39 @@ impl World {
         let from_others = st.unspent().filter(|n| n.confirmed && self.chain.notes.iter().find(|t| t.cm == n.cm.0).is_none_or(|t| t.stranger)).count();
         // (the state's own cap: a state migrated from formats 1 to 3 has the default one)
         assert!(from_others <= st.max_unspent_notes(), "seed {seed} after {step}: {from_others} unspent notes from others are stored under a cap of {}", st.max_unspent_notes());
-        // an embargo that has a base ends 128 blocks above it; a state without a base builds nothing
-        if st.spend_embargo() == SpendEmbargo::AwaitingBase {
-            assert!(st.confirmed_height().is_none() && st.spend_embargo_until().is_none() && !st.spend_status(None).can_spend_now, "seed {seed} after {step}: a state without an embargo base");
+        // **G1 across a restore, at every step** — not only when the client happens to offer a
+        // payment: while a transaction that an earlier copy built, or whose lock a damaged
+        // state lost, can still be mined on the true chain, the core builds no spend from this
+        // state. (From the books: `can_still_be_mined` is the model's own rule.)
+        if let Some(a) = self.attempts.iter().find(|a| !a.known && self.chain.can_still_be_mined(&a.tx)) {
+            assert!(
+                st.spend_gate().is_err(),
+                "seed {seed} after {step}: the core lets this state spend while a transaction it holds no lock of can still be mined (expiry {}, true height {}, confirmed {:?}, embargo {:?})",
+                a.tx.expiry(), self.chain.height, st.confirmed_height(), st.spend_embargo()
+            );
         }
+        // a state that has confirmed nothing builds nothing, embargo or not
+        if st.confirmed_height().is_none() {
+            assert!(!st.spend_status(None).can_spend_now, "seed {seed} after {step}: a state that has confirmed nothing can spend");
+        }
+        // G4: the loop bans on evidence only, and an honest node never gives any
+        assert!(self.session.bad.iter().all(|&i| self.liar[i]) && self.session.stopped.is_none(), "seed {seed} after {step}: an honest node is banned, or the loop has stopped");
+    }
+
+    /// A state the worker left view-only: the BUILDER refuses it, whatever the caller allows —
+    /// the user interface is not what keeps such a state from spending.
+    fn probe_view_only(&mut self) {
+        let seed = self.seed;
+        let st = self.stored.clone();
+        if st.view_only_since().is_none() || st.confirmed_height().is_none() {
+            return;
+        }
+        let Some(p) = st.unspent().find(|n| !st.is_locked(n.position) && st.tree().path(n.position).is_some()).map(|n| n.position) else { return };
+        let (label, to) = (self.label("probe-view-only"), self.bob.address());
+        let spend = SpendOptions { chain_id: CHAIN, inputs: &[p], expiry_height: None, allow_unverified: true, max_fee: None };
+        let r = deterministic::transfer_locked(&st, st.revision(), &self.alice, &TransferParams { spend, recipient: &to, amount: 1, fee: Q }, &label);
+        assert!(matches!(r.as_ref().err(), Some(WalletError::ViewOnly)), "seed {seed}: a view-only state was handed to the builder and it answered {:?}", r.err().map(|e| e.to_string()));
+        self.stats.view_only_refusals += 1;
     }
 
     /// What a spend is built ON, tried on a state whose listing is above its confirmed height
@@ -1990,17 +2409,31 @@ impl World {
         }
     }
 
+    /// The bound of `NOTES.md` §6 on the rounds the loop needs with the honest majority at the
+    /// tip and answering: every lying node gets one tenure — `D` rounds of catching up at the
+    /// speed the listing API guarantees, one round at the quorum's tip, `K` strikes — then an
+    /// honest node, and `W` rounds for a first state check that waits for every node.
+    /// `D = ⌈(tip − A + 1) / (64 · P)⌉`.
+    fn settlement_bound(&self) -> usize {
+        let liars = self.liar.iter().filter(|l| **l).count() as u64;
+        let d = (self.chain.height + 2 - A).div_ceil(PAGE_BLOCKS * PAGES_PER_ROUND);
+        ((liars + 1) * (d + STRIKES as u64 + 2) + FIRST_CHECK_ROUNDS as u64) as usize
+    }
+
     /// **G3 / G4 as a bound.** The chain moves past every expiry (at most 128 blocks: checked
-    /// above), the honest majority answers from the tip, the liars keep lying — and the client's
-    /// documented loop must END, within `4·nodes + 8` rounds, with nothing pending, nothing
-    /// locked, the tip confirmed and the confirmed balance equal to the true balance.
+    /// above), the honest majority answers from the tip, the liars keep lying — each in its own
+    /// way, the same way in every round — and the client's loop must END, within the bound of
+    /// `NOTES.md` §6 (`settlement_bound`), with nothing pending, nothing locked, the tip
+    /// confirmed and the confirmed balance equal to the true balance. It never stops, and it
+    /// never bans an honest node (`check`).
     fn drive_to_settlement(&mut self, what: &str) {
         let seed = self.seed;
         let last_expiry = self.stored.pending().iter().map(|p| p.expiry_height).max().unwrap_or(0);
         self.chain.advance_to(self.chain.height.max(last_expiry));
         self.settle_nodes();
+        self.mute_leaders = false;
         let tip = self.chain.height;
-        let bound = 4 * self.nodes.len() + 8;
+        let bound = self.settlement_bound();
         let mut rounds = 0;
         self.no_crash = true;
         let mut clean = false;
@@ -2009,8 +2442,8 @@ impl World {
             if done {
                 break;
             }
-            assert!(rounds < bound, "seed {seed}, {what}: not settled after {rounds} rounds with an honest majority reachable (pending {}, confirmed {:?}, scanned {:?}, tip {tip}, listing from a {} node)",
-                self.stored.pending().len(), self.stored.confirmed_height(), self.stored.scanned_height(), if self.liar[self.listing] { "lying" } else { "honest" });
+            assert!(rounds < bound, "seed {seed}, {what}: not settled after {rounds} rounds (the bound) with an honest majority reachable (pending {}, confirmed {:?}, scanned {:?}, tip {tip}, listing from a {} node, {:?}; bad {:?})",
+                self.stored.pending().len(), self.stored.confirmed_height(), self.stored.scanned_height(), if self.liar[self.session.listing] { "lying" } else { "honest" }, self.strategy[self.session.listing], self.session.bad);
             rounds += 1;
             clean = self.round(4, true);
             self.check(what);
@@ -2018,6 +2451,15 @@ impl World {
         self.no_crash = false;
         self.stats.drives += 1;
         self.stats.drive_rounds_max = self.stats.drive_rounds_max.max(rounds);
+        // G4 for the embargo, as the user sees it: once the TRUE chain is 128 + 256 blocks past
+        // the state check that fixed the base, and the tip is confirmed, the state can spend —
+        // whatever a lying or silent minority reported in that check
+        if self.embargo_deadline.is_some_and(|d| tip >= d) {
+            let status = self.stored.spend_status(Some(tip));
+            assert!(status.can_spend_now, "seed {seed}, {what}: the embargo has not ended {EMBARGO_MAX_BLOCKS} blocks after its base was fixed (true height {tip}): {status:?}");
+            self.stats.embargo_deadlines_checked += 1;
+            self.embargo_deadline = None;
+        }
         let b = self.stored.balances();
         assert_eq!(b.locked, 0, "seed {seed}, {what}: nothing is pending and something is locked");
         assert!(!b.unverified_spends, "seed {seed}, {what}: a round with the full key leaves no view-only state");
@@ -2059,8 +2501,10 @@ impl World {
         self.drive_to_settlement("closing");
         let recovered = self.stored.over_capacity().count > 0;
         let wide = self.stored.fresh_for_rescan_with(Some(1), Some(MAX_UNSPENT_NOTES_LIMIT)).unwrap();
+        assert_ne!(wide.revision_id(), self.stored.fresh_for_rescan().revision_id(), "seed {seed}: a rescan with other limits is another state");
         self.stored = wide;
         self.viewed = false;
+        self.session.after_rescan();
         let (min, cap) = (self.min_note, self.cap);
         (self.min_note, self.cap) = (1, MAX_UNSPENT_NOTES_LIMIT);
         self.drive_to_settlement("closing, everything stored");
@@ -2141,19 +2585,28 @@ impl World {
                 "the adversary mines a withheld transaction in its last valid block"
             }
             93..=94 => {
-                self.rescan();
+                self.rescan_same_node();
                 "rescan"
             }
             95..=98 => {
                 self.migrate();
                 "migration"
             }
-            99..=100 => {
-                if self.rng.below(2) == 0 {
+            99..=100 => match self.rng.below(4) {
+                0 => {
                     self.restore();
+                    "restore from the phrase"
                 }
-                "restore from the phrase"
-            }
+                1 => {
+                    self.directed_restore();
+                    "the directed restore"
+                }
+                2 => {
+                    self.recover();
+                    "a damaged state, recover_locks"
+                }
+                _ => "nothing",
+            },
             101..=104 => {
                 self.second_device_pays();
                 "the second device pays"
@@ -2163,7 +2616,8 @@ impl World {
                 "the hostile sender"
             }
             110..=111 => {
-                self.next_listing();
+                // the user (or the application) picks another node: LEAVE, without a ban
+                self.leave(false, "the user's choice");
                 "another listing node"
             }
             // an honest node stops following the chain (and stays up to 200 blocks behind) …
@@ -2184,12 +2638,13 @@ impl World {
             }
             // the background worker: pages with the viewing key alone
             119..=121 => {
+                // (the worker lists from L, like the client, and follows the same rules)
                 for _ in 0..2 {
                     if self.sync_once(false, true).is_err() {
-                        self.rescan();
                         break;
                     }
                 }
+                self.probe_view_only();
                 "the worker scans with the viewing key"
             }
             122 => {
@@ -2204,9 +2659,19 @@ impl World {
     }
 }
 
-/// The seeds and the length of a run. Defaults: seeds 1 to 200, 280 steps each. `PROP_RUNS`,
-/// `PROP_STEPS` and `PROP_SEED_BASE` (the first seed is base + 1) widen or move the range — CI
-/// runs the default range and a second, randomly placed one, and the base is printed.
+/// The seeds and the length of a run. Defaults: seeds 1 to 200, 280 steps each — four minutes
+/// in a release build on one throttled core. `PROP_RUNS`, `PROP_STEPS` and `PROP_SEED_BASE` (the
+/// first seed is base + 1) widen or move the range: CI runs the default range and a second,
+/// randomly placed one of 60 seeds, and the base is printed.
+///
+/// **The large ranges are run by hand** (they are what found RW4-5 and RW5-1; neither was in
+/// the default range), before a release and after any change of `store.rs` — the commands are
+/// in `NOTES.md` §14:
+///
+/// ```text
+/// PROP_SEED_BASE=5000 PROP_RUNS=300                 cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors --test settlement_properties -- --nocapture
+/// PROP_SEED_BASE=7000 PROP_RUNS=100 PROP_STEPS=1000 cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors --test settlement_properties -- --nocapture
+/// ```
 fn env(name: &str, default: u64) -> u64 {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
@@ -2237,7 +2702,8 @@ fn settlement_guarantees_hold_against_an_independent_model() {
         macro_rules! add {
             ($($f:ident),*) => { $( total.$f += s.$f; )* };
         }
-        add!(lying_pages, lying_pages_accepted, pages_cut, leaf_mismatches, confirm_calls, matched, matched_with_dissent, refuted, ahead, rotations, rescans, all_bad, states_lost, restores,
+        add!(lying_pages, lying_pages_accepted, pages_cut, leaf_mismatches, confirm_calls, matched, matched_with_dissent, refuted, banned, left, left_without_rescan, no_answers, first_check_waits, persistent_liars, rescans, states_lost, restores,
+            directed_restores, directed_payments, silent_leader_bases, boundary_looks, recoveries, recoveries_embargoed, embargo_deadlines_checked,
             embargo_bases, stale_bases, embargo_refusals, embargo_ended, payments, retries, two_input_payments, max_expiry_payments, self_payments, unreadable_payments, mixed_refused,
             locked_refused, long_expiry_refused, two_tabs, unconfirmed_root_refused, withheld, unanswered, resubmitted, released_late, released_last_block, release_refused, honest_silent, honest_stalls,
             own_outputs_blanked, leaves_shifted, second_device, second_device_same_inputs, hostile_notes, view_only_scans, view_only_refusals, bursts, evicted_reports,
@@ -2253,14 +2719,19 @@ fn settlement_guarantees_hold_against_an_independent_model() {
     if (runs, steps, base) != (RUNS, STEPS, 0) {
         return;
     }
-    assert!(total.lying_pages_accepted > 1_000 && total.refuted > 200 && total.ahead > 20 && total.matched > 2_000 && total.matched_with_dissent > 500, "{total:?}");
-    assert!(total.payments > 300 && total.retries > 30 && total.two_input_payments > 30 && total.withheld > 60 && total.released_late > 10 && total.release_refused > 20, "{total:?}");
-    assert!(total.released_last_block > 5 && total.honest_silent > 1_000 && total.own_outputs_blanked > 5 && total.leaves_shifted > 60 && total.pages_cut > 500 && total.leaf_mismatches > 10, "{total:?}");
-    assert!(total.settled_mined > 150 && total.settled_expired > 30 && total.settled_superseded > 15, "{total:?}");
-    assert!(total.second_device > 300 && total.second_device_same_inputs > 10 && total.hostile_notes > 500 && total.states_lost > 500, "{total:?}");
-    assert!(total.migrations.iter().all(|&m| m > 30) && total.restores > 100 && total.embargo_bases > 100 && total.stale_bases > 20 && total.embargo_refusals > 50 && total.embargo_ended > 10 && total.rescans > 500, "{total:?}");
-    assert!(total.lag_max == HONEST_LAG_MAX && total.honest_stalls > 500 && total.view_only_scans > 300 && total.view_only_refusals >= 3 && total.bursts > 15 && total.evicted_reports > 20 && total.blocks_with_several > 500, "{total:?}");
-    assert!(total.max_expiry_payments > 20 && total.self_payments > 10 && total.unreadable_payments > 10 && total.mixed_refused > 20 && total.locked_refused > 10 && total.long_expiry_refused > 20 && total.two_tabs > 20 && total.unconfirmed_root_refused > 20, "{total:?}");
-    assert!(total.drives > 3 * runs as usize && total.cap_checked > 2 * runs as usize && total.cap_recovered > 2 && total.drive_rounds_max >= 4, "{total:?}");
+    assert!(total.lying_pages_accepted > 2_000 && total.refuted > 100 && total.matched > 5_000 && total.matched_with_dissent > 2_000, "{total:?}");
+    // the loop: nodes banned (on evidence) and left (without), with and without a rescan; nodes
+    // that did not answer; first state checks that waited; lying nodes with a strategy
+    assert!(total.banned > 150 && total.left > 500 && total.left_without_rescan > 200 && total.no_answers > 100 && total.first_check_waits > 500 && total.persistent_liars > 60, "{total:?}");
+    assert!(total.payments > 1_000 && total.retries > 100 && total.two_input_payments > 200 && total.withheld > 100 && total.released_late > 10 && total.release_refused > 100, "{total:?}");
+    assert!(total.released_last_block > 10 && total.honest_silent > 5_000 && total.own_outputs_blanked > 20 && total.leaves_shifted > 15 && total.pages_cut > 500 && total.leaf_mismatches > 3, "{total:?}");
+    assert!(total.settled_mined > 800 && total.settled_expired > 80 && total.settled_superseded > 50, "{total:?}");
+    assert!(total.second_device > 500 && total.second_device_same_inputs > 20 && total.hostile_notes > 800 && total.states_lost > 1_000, "{total:?}");
+    assert!(total.migrations.iter().all(|&m| m > 150) && total.restores > 150 && total.embargo_bases > 200 && total.stale_bases > 20 && total.embargo_refusals > 200 && total.embargo_ended > 50 && total.rescans > 700, "{total:?}");
+    // the embargo at its edges, on purpose; damaged states
+    assert!(total.directed_restores > 30 && total.directed_payments > 20 && total.silent_leader_bases > 15 && total.boundary_looks > 25 && total.embargo_deadlines_checked > 20 && total.recoveries > 80 && total.recoveries_embargoed > 40, "{total:?}");
+    assert!(total.lag_max == HONEST_LAG_MAX && total.honest_stalls > 800 && total.view_only_scans > 800 && total.view_only_refusals > 100 && total.bursts > 15 && total.evicted_reports > 50 && total.blocks_with_several > 1_000, "{total:?}");
+    assert!(total.max_expiry_payments > 100 && total.self_payments > 80 && total.unreadable_payments > 80 && total.mixed_refused > 100 && total.locked_refused > 20 && total.long_expiry_refused > 100 && total.two_tabs > 100 && total.unconfirmed_root_refused > 200, "{total:?}");
+    assert!(total.drives > 3 * runs as usize && total.cap_checked > 2 * runs as usize && total.cap_recovered > 5 && total.drive_rounds_max >= 4, "{total:?}");
     assert!(nodes_seen.iter().any(|&(n, l)| n >= 5 && l >= 2) && nodes_seen.iter().any(|&(n, _)| n == 3) && nodes_seen.iter().any(|&(n, _)| n == 2) && nodes_seen.iter().any(|&(n, l)| n == 7 && l == 3), "{nodes_seen:?}");
 }
