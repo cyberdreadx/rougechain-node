@@ -1284,7 +1284,9 @@ mutation table is in the Resolution of `REVIEW_WALLET_5.md`.
 release build on one throttled core and is what CI runs, with a second range of 60 seeds
 whose base it prints. **The large ranges are a manual step** — before a release, and after any
 change of `store.rs` (both findings the test made by itself, RW4-5 and RW5-1, were outside the
-default range):
+default range; and on this branch the two ranges below found a defect of the restated loop —
+a silent listing node was never left — and two errors of the test's own notion of "settled",
+after the default range had passed: the Resolution of `REVIEW_WALLET_5.md`):
 
 ```
 cd core

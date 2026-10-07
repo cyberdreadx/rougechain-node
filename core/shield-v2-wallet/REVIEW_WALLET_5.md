@@ -686,3 +686,261 @@ mutation driver restores the three source files from copies after every run, and
   is changed by this review).
 * RW5-1 (b) through the wasm surface (the core call is the same); a 256 MiB state.
 * A corrected loop: not written (the task: tests and a report only).
+
+---
+
+## Resolution (2026-10-07)
+
+Branch `fix/shield-v2-wallet-settlement-4`, from `review/shield-v2-wallet-5` @ `0d3f2bd`; local,
+not pushed. What changed: `core/shield-v2-wallet` (`src/store.rs`, `src/error.rs`, the tests),
+one doc comment in `core/shield-v2-wasm/src/api.rs`, `NOTES.md` §6 and §14, the new
+`UI_CONTRACT.md`, spec §5.4 / §5.5 (W-20), a comment in the CI workflow. No constant, tag,
+encoding or parameter of spec §2, no consensus rule, nothing of the state root; no function of
+the public API changed its shape; state format 5 is unchanged. `NOTES.md` §14 describes the
+changes; this section answers the review.
+
+### The ten conditions
+
+| # | Kind | Status | Evidence, or where it is stated |
+|---|---|---|---|
+| 1 | documents | **met** | `NOTES.md` §6 "The client loop" is rewritten as a terminating algorithm — constants, stored and session state, numbered steps — and mirrored in spec §5.5 (W-20). (a) a node is left after **K = 3** consecutive rounds in which it does not deliver (pool transactions above the quorum's tip, its tip below the quorum's, what it listed a round ago still unconfirmed, a request unanswered), and banned at once for a page that neither reaches its tip nor covers the 64 heights asked for; (b) **the state is rescanned on every change of the listing node unless everything it holds is confirmed** — chosen over "ban every contributor", which bans honest nodes with the liar (five nodes, two liars: all three honest ones) — so the node that is banned is the node that lied; (c) `rescan_required:` is a rescan that blames nobody; (d) a rule for every error of `scan`: `listing:` ban and rescan, `rescan_required:` rescan, `stale_state:` reload, `state_invariant:` and anything else **stop, report a bug, keep the state**; the loop **stops when every node is banned and does not clear the ban set** (a new session or the user's explicit action does). The loop is code (`tests/common/client_loop.rs`): the two `rw5_demo_…loop` tests, restated, end with the tip confirmed, only the liar banned; the property test's client takes every decision through it, its adversary has six persistent strategies beside the memoryless one, and it does not clear `bad` — it asserts that only lying nodes are ever banned and that the loop never stops. Bound: `(n − quorum + 1)·(D + K + 2) + W` rounds |
+| 2 | CORE | **met** | `rw5_f1_…` and `rw5_f1b_…` pass (their assertions unedited; one line of set-up each — see "One conflict in the instructions"). The property test passes at `PROP_SEED_BASE=7000 PROP_RUNS=100 PROP_STEPS=1000` (988 s). Both paths are refused as `listing:` before the state is touched; `state_invariant` is reachable by an implementation fault only (`NOTES.md` §14) |
+| 3 | UI-CONTRACT | **documented** | `UI_CONTRACT.md`, obligation 1, with its check. In the core the statement now STANDS once recorded (RW5-5), so the contract is the whole control. `tests/common::configure` no longer makes the statement |
+| 4 | UI-CONTRACT | **documented** | `UI_CONTRACT.md`, obligation 2 (W = 5 rounds); it is step 2a of the loop and `Session::first_check_may_run` of the reference, exercised by the restored-wallet case of the first loop test and by the property test (waits counted) |
+| 5 | UI-CONTRACT | **documented** | `UI_CONTRACT.md`, obligation 3 |
+| 6 | CORE | **met** | `rw5_f2_…` and `rw5_f3_…` pass unedited. The limits enter the revision identity; an IPv6 literal that only spells an IPv4 address is that host — IPv4-mapped, IPv4-compatible, IPv4-translated, the NAT64 well-known prefix, 6to4; not Teredo, ISATAP or a network-chosen NAT64 prefix (`rw5r_f6_…`, `rw5r_f7_…`) |
+| 7 | UI-CONTRACT | **documented** | `UI_CONTRACT.md`, obligation 4 (plus `listed_from`, which the restated loop stores with the state) |
+| 8 | INHERENT | **stated** | `UI_CONTRACT.md`, limit 5; `NOTES.md` §13; spec §5.5 (W-19, "The assumption that remains") |
+| 9 | INHERENT | **stated** | `UI_CONTRACT.md`, limit 6 and "For product owners"; spec §5.5; the owner's decision below |
+| 10 | INHERENT | **stated** | `UI_CONTRACT.md`, limit 7 |
+
+### The findings
+
+* **RW5-1** — fixed at its cause, both paths: a page that cannot be applied consistently is a
+  `listing:` error. (a) A nullifier the viewing-key scan remembered BELOW the height of the
+  note it belongs to is refused by every scan with the full key until the state is rescanned.
+  (b) A note of the wallet with the `rho` of a note the state holds (or the same page listed)
+  is refused whole. **The check is on `rho`, not on the commitment**: the review's page repeats
+  one transaction, but a sender who knows the address can list any number of DIFFERENT notes
+  under the same two nullifiers — other commitments, one nullifier — and each would have been
+  "an input of the pending entry" that could not be dropped (`rw5r_f1b_…`, and the second
+  half of `rw5_sound_twin_notes_…`). `validate` now holds every state to "one rho, one note"
+  and bounds spent notes by 4,096 + four per pending entry.
+  *One known edge of (a):* an owner can make the true chain list a nullifier before its note
+  (publish, as the nullifier of a dummy input, the nullifier of a note it will only create
+  later — which burns that note). A state that read such a chain with the viewing key answers
+  `listing:` once, on an honest listing; the rescan with the full key is unaffected. The full
+  key never treated such a nullifier as a spend either.
+* **RW5-2, RW5-3** — the loop: condition 1.
+* **RW5-4** — not a defect of the core; stated in `UI_CONTRACT.md` in blocks, with the rate.
+  The embargo was neither shortened nor lengthened: the owner's decision, below.
+* **RW5-5** — the voiding rule is removed; the statement, once recorded before the base
+  exists, stands (`rw5_demo_the_override_stands_…`, `rw4r_f1_…_recorded_and_stands`).
+* **RW5-6, RW5-7** — condition 6. (A state made by `new_state` still has revision 0 and the
+  all-zero identity whatever its limits: unchanged.)
+* **RW5-8** — the property test: below.
+* **RW5-9** — a format-5 text without `spend_embargo`, `sole_copy_asserted`, `view_only_since`,
+  `revision_id` or `own_shields` is refused; a text that names format 1–4 and carries
+  `spend_embargo` is refused as damaged; formats 2 and 3 without `pending` are refused;
+  format 4 gets the five fields explicitly from its migration; `recover_locks` puts a text
+  that does not say where it stood under the embargo (`rw5r_f9_…`). The table of every field
+  that still has a default on read, with the reason each is the safe reading, is in
+  `NOTES.md` §14.
+
+### One conflict in the instructions, and how it was resolved
+
+The task asked for two things that cannot both hold to the letter: "all `rw5_f*` pass
+UNEDITED" and "the shared test helper does NOT assert sole copy by default". `rw5_f1` and
+`rw5_f1b` each build a payment on a new wallet that was configured through the shared helper
+(`confirm` / `configure`), which made the statement for it; with the helper no longer making
+it, that device is under the embargo and the test stops in its SET-UP, before the scenario.
+One line of set-up was changed in each (`configure_as_sole_copy` for the device that pays);
+no assertion, no scenario and no accepted outcome of either test was touched, and `rw5_f2` and
+`rw5_f3` are byte for byte what the review wrote. The alternative — a helper that keeps making
+the statement so that two tests stay untouched — is what condition 3 forbids.
+
+### Tests edited, and why
+
+`tests/common::configure` sets the nodes and nothing else; `configure_as_sole_copy` also makes
+the statement. 54 of the 119 tests of the review's suite were touched (and four more through
+a shared scenario function):
+
+| What | Tests | Why |
+|---|---|---|
+| one line of set-up: the NEW wallet that has to spend says so (`configure_as_sole_copy`) | 43: `review_wallet_1` 3 (`rw1_f7` twice: also its state for "what `mark_pending` refuses"), `_2` 9, `_3` 10, `_4` 8, `_4_resolution` 7, `_5` 4 (`rw5_f1`, `rw5_f1b`, two `rw5_sound_…`), `wallet_flow` 2 (Alice's wallet, and Bob's) — and, through the lost device of a shared scenario, `rw4_f1`, `rw4_f1b`, `rw4_sound_without_lag` (`restore_embargo_scenario`) and `rw5_demo_the_restore_embargo_holds_…` (`stale_quorum`) | the helper no longer makes the statement (condition 3, A.3). No assertion changed. `rw4_f4` passed without it — for the embargo's reason instead of its own (`recipient_mixed_address:`); it was given the line for that |
+| a SECOND device that must spend lets its embargo run out first | `rw2_f3_another_transaction_…`, `rw3_f7c_…`, `rw4_f3_…` | a second device makes no statement; the scenarios need it live. No assertion changed |
+| a restore that paid twice only because the helper made the statement | `rw3_demo_a_restored_device_…` | without a statement the core refuses and the payee is paid once (asserted); with the user's explicit FALSE statement, twice (asserted) |
+| the voiding rule is gone (RW5-5) | `rw4r_f1_…_recorded_and_conditional` → `…_and_stands`; `rw5_demo_the_override_is_lost_…` → `rw5_demo_the_override_stands_…` | both asserted the rule that was removed |
+| a transaction shown twice is refused (RW5-1 b) | `rw5_sound_twin_notes_…` → `…_a_listing_that_shows_a_transaction_twice_is_refused`; `rw4_sound_own_outputs_…` case (b) (and its set-up line) | twin notes no longer exist in a state |
+| the fixture of an older format (and the set-up line) | `rw3_a_format_3_…` | it wrote "version 3" over a format-5 text and left `spend_embargo` in it: refused as damaged now (RW5-9); the fixture drops the five fields format 5 added |
+| the loop tests | `rw5_demo_a_listing_node_that_never_reaches_its_tip_is_never_left_…` → `…_is_left_and_the_tip_is_confirmed`; `rw5_demo_one_lying_listing_node_gets_both_honest_nodes_blamed_…` → `…_gets_no_honest_node_blamed_and_the_tip_is_confirmed` | condition 1: they asserted that the old loop did not terminate; they run `common::client_loop` and assert that it does |
+
+Added: `tests/review_wallet_5_resolution.rs` (7 tests), `tests/common/client_loop.rs`.
+`rw5_f2`, `rw5_f3`, `rw5_demo_on_an_idle_chain_…`, `rw5_demo_the_restore_embargo_holds_…`
+(but for its lost device's set-up) are unedited.
+
+### How many tests run with the embargo in force
+
+Measured, not counted from call sites — three scratch instrumentations of the core (a panic
+at the place named), each run over the whole wallet suite (126 tests; the property test on
+four seeds) and reverted:
+
+| Instrument | Tests | |
+|---|---|---|
+| a state check fixes an embargo base that is NOT waived (a state without the statement is confirmed) | **35 of 126** | `review_wallet_1` 1, `_2` 4, `_3` 6, `_4` 10, `_4_resolution` 4, `_5` 5, `_5_resolution` 2, `wallet_flow` 2, the property test |
+| a closed embargo gate is reached (a build is refused with `restored_recently:`, or `spend_status` answers `embargo`) | **13 of 126** | `rw1_sound_a_tampered_state_blob_…`, `rw3_demo_…`, `rw4_demo_the_restore_embargo_…`, `rw4_f1`, `rw4_f1b`, both `rw4r_f1_…`, `rw4r_i8_…`, four of `review_wallet_5`, the property test |
+| a state check honours the user's statement (a waived base) | 63 of 126 | `review_wallet_1` 3, `_2` 10, `_3` 13, `_4` 12, `_4_resolution` 8, `_5` 9, `_5_resolution` 5, `wallet_flow` 2, the property test — each through `configure_as_sole_copy` or the statement itself, by name |
+
+Before: 49 tests could only do what they test because the helper switched the embargo off,
+and 6 exercised its enforcement (section A.3). Now no test has the embargo switched off for
+it: 63 make the statement by name, for a wallet they describe as new (or as the subject of the
+test), 35 confirm a state without it, and 13 run into the closed gate.
+
+**Every test that models a restore or a second device runs that device under the embargo**
+(22: `wallet_flow` 2; `rw2_f3_another_…`; `rw3_f3`, `rw3_f4`, `rw3_f7c`, `rw3_demo`; `rw4_f1`,
+`rw4_f1b`, `rw4_sound_without_lag`, `rw4_demo_the_restore_embargo_…`, `rw4_f3`,
+`rw4_sound_a_hostile_sender_…`; both `rw4r_f1_…`; `rw5_demo_the_restore_embargo_holds_…`,
+`rw5_demo_on_an_idle_chain_…`, the restored case of the first loop test,
+`rw5_sound_the_longest_expiry_…`; `rw5r_f1_…` (the worker's states), `rw5r_f9_…`; the property
+test's restores, directed restores and recoveries). Three devices make the statement although
+another copy exists, each BY NAME and as the subject of the test: the second half of
+`rw3_demo_…` and case (b) of `rw5_demo_the_override_stands_…` (the user's false statement:
+paid twice), and the live second device of the property test (`second_device_pays`: the
+inherent limit 7). Two tests model a second copy by CLONING the stored state
+(`rw2_f2_a_hidden_spend_…`, `rw2_f3_the_same_two_inputs_…`): a copy of a state has its
+history, and no embargo applies to it.
+
+### The property test (RW5-8)
+
+* **Its client is the loop** — every decision through `common::client_loop::Session` — and it
+  does not clear `bad`. New model invariants: only a lying node is ever banned; the loop never
+  stops; no page makes `scan` answer anything but `listing:` or `rescan_required:`; a state
+  never holds two notes with one commitment.
+* **Persistent strategies** (half the lying nodes, one each for the whole run): no progress;
+  never the tip; true but short; the truth, then empty heights; a consistent forged twin
+  listing; a lie until left, then the truth. A lying node may also not answer.
+* **The three invariants that restated the code's own rule are deleted**: the waiver condition
+  (the rule itself is gone), `until == base + 128`, `base ≤ true height + 256`. In their
+  place, from the model: the embargo is waived iff the USER made the statement for that
+  state; **at every step, the core builds no spend while a transaction this state holds no
+  lock of can still be mined** (it was checked only when the client happened to offer a
+  payment); the embargo has ended once the TRUE chain is 384 blocks past the state check
+  that fixed its base.
+* **The embargo at its edges, on purpose** (`directed_restore`) and **damaged states**
+  (`recover`, which calls `recover_locks`) — what X1, X2, X5 and X7 needed.
+
+Results on the final tree (release, one job, `nice 19`, `CPUWeight=10`):
+
+| Range | Result | Time |
+|---|---|---|
+| seeds 1–200 × 280 (the default; CI) | passes | 260 s (245 to 260 s over four runs) |
+| seeds 5001–5300 × 280 | passes | 383 s |
+| seeds 7001–7100 × 1,000 (where RW5-1 was: seed 7032) | passes | 988 s |
+
+What the default range exercised (seeds 1–200): 2,900 payments; 424 restores, 74 of them
+directed (47 with a last payment of the lost device, 38 embargo bases fixed with the leading
+honest nodes cut off, 63 looks one block before the end of an embargo); 216 damaged states
+recovered (141 under the embargo); 611 embargo bases; 784 builds refused by the embargo, 172
+embargoes ended; 343 bans — every one of a lying node — and 1,634 nodes left without a ban
+(693 of them without a rescan: everything was confirmed); 352 listing requests without an
+answer; 1,916 rounds in which a first state check waited for every node; 137 lying nodes with
+a persistent strategy; **at most 13 rounds to settle** (10 and 13 on the two large ranges),
+inside the bound in every drive. The two large ranges: 4,210 and 4,871 payments, 645 and 781
+restores, 607 and 656 bans, 2,470 and 2,959 leaves.
+
+**The large ranges found three things on the way, none in the core** — which is the argument
+for keeping them a documented manual step (`NOTES.md` §14, and the doc comment above the
+test): at seed 5025 **a defect of the restated loop** — a round without an answer was a
+strike, but the state check of the same round cleared it when the state it was handed was
+already confirmed, so a silent listing node was never left and a state the worker had left
+view-only never got its one page with the full key. Fixed in the loop (a strike is not taken
+back in the round it was given: `NOTES.md` §6 step 3, spec §5.5, `Session::after_no_answer`).
+At seeds 5135 and 7053 two errors of the test's own "settled" condition, which called a state
+settled while a lying node's unconfirmed tail was still in it (a block on no chain that
+"spends" one of the wallet's notes; the loop leaves that node within K rounds): the bound is
+now asserted on tip confirmed AND everything scanned confirmed AND nothing pending AND not
+view-only.
+
+### Mutations
+
+Each applied alone to `src/store.rs` and reverted (the driver restores the file from a copy
+and compares; `git status` clean afterwards). "Model": the property test on seeds 1–30 × 280.
+"Named tests": `--lib` and the `review_wallet_1`, `_4`, `_4_resolution`, `_5`,
+`_5_resolution` targets.
+
+| # | Mutation | Model invariant (seeds 1–30) | Named dedicated tests that fail |
+|---|---|---|---|
+| X1 | a node that did not answer is not counted in the embargo base | **caught, seed 2**: "the embargo ends at confirmed height 417 while an earlier transaction is valid until 539" (the books: `can_still_be_mined`) | both `rw4r_f1_…`, `rw5_demo_on_an_idle_chain_…`, `rw5_demo_the_restore_embargo_holds_…` |
+| X2 | the lag bound is 64 instead of 256 | **caught, seed 2**: "the embargo ends at confirmed height 481 while an earlier transaction is valid until 539" | both `rw4r_f1_…`, `rw4r_i8_…`, `rw5_demo_on_an_idle_chain_…`, `rw5_demo_the_restore_embargo_holds_…` |
+| X5 | the gate opens one block early | **caught, seed 15**: "the core lets this state spend while a transaction it holds no lock of can still be mined (expiry 325, true height 324, confirmed 324, … until 325)" | `rw4_f1b_…`, `rw5_sound_the_longest_expiry_…` |
+| X7 | `recover_locks` never embargoes | **caught, seed 5**: the model's own account of the damage — a lock was lost, the recovered state is not under the embargo | `rw4r_f5_recover_locks_…`, `rw5r_f9_…` |
+| X9 | `leaf_mismatch` is never reported | not caught (advice, not safety: section 5) | `rw4r_f5_a_page_numbered_below_…`, `rw4r_f5_fuzz_…`, `rw5_sound_an_accepted_page_…` |
+| X10 | a page numbered ABOVE the wallet's tree is accepted | not caught | `rw1_sound_listing_manipulations_…`, `rw4r_f5_a_page_numbered_below_…` |
+| X12 | the read-back guard removed | not caught (no unmutated call trips it: that is condition 2) | `store::tests::a_state_that_does_not_read_back_is_refused_and_never_returned` |
+| X14 | a lock is held by commitment only | not caught | `rw5r_x14_an_entry_without_commitments_holds_its_note_by_nullifier_…` (new) |
+| X17 | a pending entry's nullifier does not spend its input by commitment | not caught | `rw5r_x17_a_pending_payment_seen_without_the_nullifier_key_…` (new) |
+| T1 | RW5-1 (b) undone: a second note with a stored `rho` is stored | **caught, seed 16**: "scan failed with [state_invariant] — an error no page may cause" | `rw5_f1b_…`, `rw5_sound_twin_notes_…`, `rw5r_f1b_…`, `rw4_sound_own_outputs_…` |
+| T2 | RW5-1 (a) undone: a sighting below its note is applied | not caught on 30 seeds (the review reached it at seed 7032 × 1,000) | `rw5_f1_…`, `rw5r_f1_…` |
+
+All nine of the review's are caught: four by a model invariant AND by named tests, five by
+named tests only — for those five the property test is no evidence, and the table says so.
+The "model" column is from the final tree. On the way there X1 was MISSED on 30 seeds and X5
+was caught only by an assertion of the directed restore that restated the gate's rule: that
+assertion was deleted, the directed adversary was made consistent (it does not raise the
+highest claim of a call whose honest leaders it has cut off), and both were run again. The
+"named tests" column was run once, before the last test-only commit (which changed the
+set-up of `rw4_f3` and no assertion of a named test). X7 is caught by the model's account of
+what the damage destroyed, checked where the state is recovered; the every-step invariant
+would fire later. X3 no longer applies (its rule was removed); X4, X6, X13, X15 and X16 of the
+review's table were not run again.
+
+### The owner's decision on the embargo
+
+Not taken here, and nothing in the core was changed for it. The embargo is 128 to 384 blocks:
+at the block rate the review was given about 11 to 32 days, and without an upper bound in
+time on an idle chain. The options (`UI_CONTRACT.md`, "Open decision"):
+
+1. **Keep it.** New wallets are not affected (a phrase generated on the device asserts sole
+   copy silently); a restore waits, or the user confirms the statement.
+2. **Make the longest expiry smaller** — the embargo IS the longest expiry (128): with 64 it
+   is 64–320 blocks, with 32 it is 32–288. The 256 that a silent node adds is the lag margin,
+   a second number with its own trade-off. Wallet-only, two constants.
+3. **Wait for consensus heartbeat blocks** (or an expiry by block timestamp): the only thing
+   that gives any of these bounds a duration.
+
+### Not done
+
+* The core does not refuse a page that makes no progress (the review notes it could): the loop
+  bans the node for it.
+* The identity of a state made by `new_state` (all zeros whatever its limits): unchanged.
+* The property test has no lying node that reads the true chain at exactly 64 heights a page
+  (the `D` of the bound is asserted, not approached), no honest node more than 200 blocks
+  behind, no reorganisation, and no adversary that writes the stored state (`NOTES.md` §14).
+* No client code: `UI_CONTRACT.md` is a list of obligations and checks; `client_loop.rs` is a
+  reference of the loop's decisions, not a network client.
+* The census mutations W0 and N4 of section A.3 were not run again (the two instrumentations
+  above replace them); the wasm crate's tests were run, not extended.
+* Nothing was pushed; nothing outside this worktree was read or written; no service, proxy or
+  node was touched.
+
+### Commands run
+
+Each as `systemd-run --user --scope -q -p MemoryMax=2500M -p MemorySwapMax=0 -p CPUWeight=10
+nice -n 19 cargo … --release --locked --offline -j 1`, one at a time, after checking that no
+`cargo` or `rustc` process was running.
+
+| Command | Result |
+|---|---|
+| `cargo test -p quantum-vault-shield-v2-wallet --features test-vectors -p quantum-vault-shield-v2-wasm --no-fail-fast -- --test-threads=1` (as CI) | **133 tests, 0 failed, 0 ignored** — wallet 126: unit 22, `review_wallet_1` 14, `_2` 14, `_3` 17, `_4` 19, `_4_resolution` 11, `_5` 12, `_5_resolution` 7, `settlement_properties` 1 (seeds 1–200, 260 s), `vectors` 3, `wallet_flow` 6; wasm 7: `api` 2, `review_wallet_1` 4, `review_wallet_3` 1. 7 min 52 s |
+| the property test, seeds 5001–5300 × 280 | passes, 383 s |
+| the property test, seeds 7001–7100 × 1,000 | passes, 988 s |
+| the eleven mutations (table above), then X1 and X5 again | as in the table |
+| three scratch censuses over the wallet suite | 35, 13 and 63 of 126 (above) |
+| `cargo build -p quantum-vault-shield-v2-wasm --target wasm32-unknown-unknown` | finished; 2,944,475 bytes |
+| `cargo test -p quantum-vault-daemon -- node::shield_v2_wallet_interop_tests --test-threads=1` | 4 passed, 294 filtered out (13 min, most of it the build) |
+| `NOBLE_ROOT=… node core/shield-v2-wallet/tests/noble_crosscheck.mjs` | 53 of 53 checks passed |
+
+The wasm32 build, the daemon's interop tests and the noble cross-check were run on the core as
+committed (`909e4f3`; the two later commits that touch code touch tests only). About three
+hours of `cargo` under the limits in all, most of it the property test's ranges and the
+mutations. `core/target/` was deleted afterwards.
