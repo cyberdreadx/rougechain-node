@@ -334,6 +334,11 @@ Each line was attacked; the tests named are in this review unless marked *(exist
   from the operating system *(existing `every_build_draws_fresh_randomness`; `rw1_sound_working_entropy_…`)*.
 * Anchor: the builder insists that every input's path leads to the given anchor. Expiry: any
   value is accepted, but the anchor window bounds a transaction's life to 128 blocks regardless.
+  *(Correction added 2026-10-06, not by the reviewer — REVIEW_WALLET_2 I-1: the last clause is
+  false. The anchor window is a set of root VALUES and a block without V2 transactions repeats
+  the root, so in an idle pool an anchor stays accepted indefinitely. Only `expiry_height` bounds
+  a transaction's life; the builders and `mark_pending` enforce "at most 128 blocks above the
+  anchor's height" for exactly that reason. Spec §4.3 item 8 and §5.5 now say so.)*
 
 **WASM surface**
 * Several hundred malformed calls return coded errors *(existing)*; nothing logs (no `console`

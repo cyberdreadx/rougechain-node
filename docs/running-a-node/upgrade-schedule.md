@@ -72,7 +72,7 @@ two independent schedule fields — set **both** to the same `H`.
    table.
 3. **Test** in a clean worktree (never in the live build dir): `cargo test -p quantum-vault-daemon -j 2`
    — includes `token_minting_tests`, the `nft_royalty` / `nft_marketplace` tests in `game_ready_tests`
-   and the mainnet history replays — `cargo test -p quantum-vault-vm -j 2`, and `cargo check` (the default members; `--workspace` is refused on purpose, see `core/Cargo.toml`).
+   and the mainnet history replays — `cargo test -p quantum-vault-vm -j 2`, and `cargo check` (the default members; `--workspace` is refused on purpose, see `core/Cargo.toml` — and so is `--all-targets` with the daemon selected, for `build`, `check` and `clippy` alike, which is also what an editor runs by default: it builds the test targets next to the plain binary, the daemon's test dependencies bring in the shielded pool's prover, and the daemon refuses to compile with it; use `cargo test -p quantum-vault-daemon` for the tests).
 4. **Build and install on every node** of that network (primary, node #2, any outside validator)
    **before** `H`; restart each. Confirm the startup log line
    `[upgrades] … token minting Some(H), contract NFT royalty Some(H)` and `GET /api/stats` →

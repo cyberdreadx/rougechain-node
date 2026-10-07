@@ -8,9 +8,12 @@
 //! * [`tx`] — [`build_shield`], [`build_transfer`], [`build_unshield`]: body, binding, public
 //!   inputs, proof and the envelope of spec §3.1 (the witness never leaves the module);
 //! * [`store`] — what a wallet persists per note, the incremental note tree,
-//!   [`WalletState::scan`] over the node's `/api/shield-v2/notes` listing (spec §5.4), the
-//!   pending transactions (`mark_pending` / `pending` / `resolve`) and the root check against a
-//!   quorum of nodes (`confirm_roots`);
+//!   [`WalletState::scan`] over the node's `/api/shield-v2/notes` listing (spec §5.4), the check
+//!   of the wallet's tree root, nullifier hash AND ciphertext hash against a strict majority of
+//!   the nodes the wallet is configured with (`set_nodes`, `confirm_state`), and the pending
+//!   transactions (`pending` / `resolve`), which settle on confirmed data only (spec §5.5).
+//!   A transfer or an unshield is built and locked in one call ([`build_transfer`],
+//!   [`build_unshield`] → [`LockedTx`]): persist the returned state, then submit;
 //! * [`select`] — coin selection for two inputs, and the self-merge plan when a payment needs
 //!   more.
 //!
@@ -22,6 +25,7 @@
 //! to sign. See `NOTES.md` for every ambiguity of the specification and what was done, and for
 //! what the UI layers still have to decide.
 
+pub mod batch;
 pub mod bech32m;
 pub mod body;
 mod entropy;
@@ -38,12 +42,16 @@ pub use error::{json_error, WalletError};
 pub use keys::{account_from_address, address_from_account, bip39_seed, ScanKey, ShieldedAddress, ShieldedKeys};
 pub use select::{plan_merge, plan_merge_with, select_inputs, select_inputs_with, MergePlan, Selection};
 pub use store::{
-    Balances, ConfirmReport, ListingPage, OwnedNote, PendingChange, PendingStatus, PendingTx, ReleasePolicy, Resolution,
-    RootReport, ScanReport, SpendInput, TreeTracker, WalletState, DEFAULT_CONFIRM_QUORUM, STATE_VERSION,
+    canonical_node_id, ciphertext_acc_step, Balances, ConfirmReport, Dissent, ListingPage, OwnedNote, PendingChange,
+    PageError, PendingStatus, PendingTx, PoolView, Refutation, Resolution, ScanReport, SpendInput, StateReport, Tally, TreeTracker, WalletState,
+    DEFAULT_MAX_UNSPENT_NOTES, DEFAULT_MIN_NOTE_VALUE, MAX_CONFIGURED_NODES, MAX_SPENT_RETAINED, MAX_STORED_NOTES,
+    MAX_UNSPENT_NOTES_LIMIT, MIN_CONFIGURED_NODES, PRUNE_RETENTION_BLOCKS, STATE_VERSION,
 };
+pub use store::{OwnShield, Recovery, SpendEmbargo, SpendStatus, MAX_OWN_SHIELDS, RESTORE_EMBARGO_BLOCKS, RESTORE_LAG_BOUND_BLOCKS};
 pub use tx::{
-    build_shield, build_transfer, build_unshield, BuiltTx, OutputRecord, OutputRole, ShieldRequest, TransferRequest,
-    TxContext, UnprovenTx, UnshieldRequest, DEFAULT_EXPIRY_OFFSET, DEFAULT_MAX_FEE_QUANTA, MAX_EXPIRY_OFFSET,
+    build_own_shield, build_shield, build_shield_with, build_transfer, build_unshield, BuiltTx, LockedTx, OutputRecord, OutputRole, RecordedShield, ShieldRequest,
+    SpendOptions, TransferParams, TransferRequest, TxContext, UnprovenTx, UnshieldParams, UnshieldRequest,
+    DEFAULT_EXPIRY_OFFSET, DEFAULT_MAX_FEE_QUANTA, MAX_EXPIRY_OFFSET,
 };
 
 /// The chain's transaction structure: the envelope of spec §3.1.

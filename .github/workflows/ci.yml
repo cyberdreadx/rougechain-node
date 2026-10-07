@@ -48,15 +48,67 @@ jobs:
           -p quantum-vault-finality -p quantum-vault-cli -p quantum-vault-bridge-exec
           -p quantum-vault-wasm-prover
 
-      # Its own invocation: the daemon's tests use the prover as a dev-dependency only.
-      - name: Test (daemon)
-        run: cargo test --verbose -p quantum-vault-daemon
+      # The daemon's tests, in two steps. The daemon's dev-dependencies enable `prover` and
+      # `test-prover` of quantum-vault-shield-v2 (test harness only: `cargo test` builds no node
+      # binary, and the guard in daemon/src/shield_v2.rs is `cfg(not(test))`), and four of its test
+      # modules MAKE or VERIFY real proofs. In the debug profile one proof takes minutes to hours
+      # (REVIEW_WALLET_2 RW2-8), so:
+      #   1. everything else runs in the debug profile, with those four modules skipped by name;
+      #   2. those four modules run in the release profile, by name filter.
+      # (Running the whole daemon suite in --release would also work; it would compile the daemon
+      # in release for the 272 tests that never touch a proof — a much longer build for nothing.)
+      # Feature unification, both steps: `-p quantum-vault-daemon` alone with dev-dependencies ->
+      # quantum-vault-shield-v2 = default + prover + test-prover; the wallet crate is in the graph
+      # as a dev-dependency. Neither step builds the node binary.
+      - name: Test (daemon, without the proof-making modules)
+        run: >
+          cargo test --verbose -p quantum-vault-daemon --
+          --skip node::shield_v2_wallet_interop_tests
+          --skip node::shield_v2_daemon_tests
+          --skip node::shield_v2_review_node_1_tests
+          --skip shield_v2::tests
+
+      - name: Test (daemon, shielded pool V2 modules — release profile, they make proofs)
+        run: >
+          cargo test --release -p quantum-vault-daemon --
+          node::shield_v2_wallet_interop_tests
+          node::shield_v2_daemon_tests
+          node::shield_v2_review_node_1_tests
+          shield_v2::tests
+          --test-threads=1
 
       # Release profile: the proof sweeps take hours in a debug build.
-      - name: Test (shielded pool V2 verifier and pool rules)
+      # `--features test-prover` (REVIEW_WALLET_2 RW2-8): without it the three test targets with
+      # `required-features = ["test-prover"]` (prover, forgery, negative) and the `prover::` unit
+      # tests are skipped SILENTLY — among them the scan of the source for a public function that
+      # takes a blinding seed (tests/prover.rs). The feature applies to this package only: the
+      # daemon is not selected in this invocation, so nothing here can reach a node build.
+      # (test-prover implies prover; the default-feature build of this crate — the verifier as the
+      # node links it — is what the two build steps above and the node-crate tests compile.)
+      - name: Test (shielded pool V2 verifier, pool rules and prover)
+        run: cargo test --release -p quantum-vault-shield-v2 --features test-prover -- --test-threads=1
+
+      # The verifier exactly as the node links it (default features, no prover): the same suite
+      # minus the prover-only targets, so that a test that only passes with the prover compiled in
+      # cannot hide.
+      - name: Test (shielded pool V2 verifier, default features)
         run: cargo test --release -p quantum-vault-shield-v2 -- --test-threads=1
 
+      # --no-fail-fast: a failing target must not hide the targets after it in the alphabet
+      # (REVIEW_WALLET_4: while `review_wallet_4` failed, `settlement_properties`, `vectors` and
+      # `wallet_flow` did not run). The property test runs seeds 1 to 200 x 280 steps here (a few
+      # minutes). Its LARGE ranges (seeds 5001-5300 x 280 and 7001-7100 x 1000: where RW4-5 and
+      # RW5-1 were found) are a manual step before a release and after any change of
+      # core/shield-v2-wallet/src/store.rs — the commands are in core/shield-v2-wallet/NOTES.md §14.
       - name: Test (shielded pool V2 wallet core)
         run: >
           cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors
-          -p quantum-vault-shield-v2-wasm -- --test-threads=1
+          -p quantum-vault-shield-v2-wasm --no-fail-fast -- --test-threads=1
+
+      # The property test once more, on a seed range that is different in every run. The test
+      # prints its range ("PROP_SEED_BASE=…"): a failure is reproduced by setting that variable.
+      - name: Test (wallet settlement properties, a random seed range)
+        run: >
+          PROP_SEED_BASE=$(( (RANDOM * 32768 + RANDOM) * 1000 )) PROP_RUNS=60
+          cargo test --release -p quantum-vault-shield-v2-wallet --features test-vectors
+          --test settlement_properties -- --nocapture

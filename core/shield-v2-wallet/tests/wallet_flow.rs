@@ -66,6 +66,7 @@ fn shield_transfer_unshield_with_real_proofs() {
     fund(&mut chain, &alice.address(), &[3 * Q]);
 
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     assert_eq!(a.balance(), 12 * Q as u128);
     assert_eq!(a.notes().len(), 2);
     // one node's listing is not a confirmation: nothing is selected until two nodes agree on the root
@@ -78,18 +79,32 @@ fn shield_transfer_unshield_with_real_proofs() {
     // Alice pays Bob 10 with both notes; change 1
     let sel = select_inputs(&a, 10 * Q, Q).unwrap();
     assert_eq!((sel.positions.len(), sel.total, sel.change), (2, 12 * Q, Q));
-    let inputs: Vec<SpendInput> = sel.positions.iter().map(|&p| a.spend_input(p).unwrap()).collect();
-    let t = build_transfer(&TransferRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, recipient: &bob.address(), amount: 10 * Q, fee: Q, max_fee: None }).unwrap();
+    // build AND lock, one call (REVIEW_WALLET_3 RW3-5): the anchor is the confirmed root, the
+    // expiry the confirmed height + 64, and the returned state already holds the pending entry
+    let spend = SpendOptions { chain_id: CHAIN, inputs: &sel.positions, expiry_height: None, allow_unverified: false, max_fee: None };
+    let stale = build_transfer(&a, a.revision() + 1, &alice, &TransferParams { spend: spend.clone(), recipient: &bob.address(), amount: 10 * Q, fee: Q });
+    assert!(matches!(stale.map(|_| ()), Err(WalletError::StaleState)), "the state must be at the revision the caller read from its storage");
+    let locked = build_transfer(&a, a.revision(), &alice, &TransferParams { spend, recipient: &bob.address(), amount: 10 * Q, fee: Q }).unwrap();
+    let t = locked.tx;
     check(&t);
+    assert_eq!(t.expiry_height, a.confirmed_height().unwrap() + DEFAULT_EXPIRY_OFFSET);
     assert_eq!((t.envelope.tx_type.as_str(), t.envelope.from_pub_key.as_str(), t.envelope.sig.as_str(), t.envelope.nonce), ("shielded_transfer_v2", "", "", 0));
     assert!(t.signing_bytes.is_none() && t.envelope.signed_payload.is_none());
     assert!(t.signed_envelope("ab").is_err());
     // the pending record: both nullifiers, both inputs, the change, the expiry
     let pending = t.pending().expect("a transfer has a pending record");
-    assert_eq!((pending.inputs.clone(), pending.input_total, pending.expiry_height), (sel.positions.clone(), 12 * Q, Some(t.expiry_height)));
+    assert_eq!((pending.inputs.clone(), pending.input_total, pending.expiry_height), (sel.positions.clone(), 12 * Q, t.expiry_height));
+    assert_eq!(pending.outputs.iter().map(|c| c.0).collect::<Vec<_>>(), t.output_commitments().to_vec(), "and both output commitments");
     assert_eq!(pending.change.as_ref().map(|c| c.value), Some(Q));
+    assert!(pending.change.as_ref().unwrap().r.is_some() && pending.own_payment.is_none(), "the change record opens its commitment by itself");
     assert!(s1.pending().is_none(), "a shield spends no note");
-    a.mark_pending(pending).unwrap();
+    // … and it is ALREADY in the state that came back with the transaction; the caller's own state is untouched
+    assert!(a.pending().is_empty() && !a.is_locked(sel.positions[0]));
+    let recorded = &locked.state.pending()[0];
+    assert_eq!((&recorded.nullifiers, &recorded.outputs, &recorded.change, recorded.expiry_height), (&pending.nullifiers, &pending.outputs, &pending.change, pending.expiry_height));
+    assert!(sel.positions.iter().all(|&p| locked.state.is_locked(p)) && locked.state.revision() == a.revision() + 1);
+    assert!(a.mark_pending(pending.clone()).is_ok() && a.content_eq(&locked.state), "the same record, the same state");
+    a = locked.state;
     assert_eq!(t.body[226..258], [0u8; 32]);
     let json: serde_json::Value = serde_json::from_str(&t.envelope_json().unwrap()).unwrap();
     assert_eq!(json["fee"].to_string(), "0.0");
@@ -105,12 +120,18 @@ fn shield_transfer_unshield_with_real_proofs() {
     chain.block(&[&t.body]).unwrap();
 
     let r = a.scan(&chain.page(a.next_height()), &alice.scan_key()).unwrap();
-    assert_eq!((r.spent.len(), r.received.len(), r.pending_mined), (2, 1, 1));
-    let settled = a.resolve(ReleasePolicy::Scanned);
-    assert_eq!((settled.mined.len(), settled.expired.len(), settled.still_pending), (1, 0, 0));
+    assert_eq!((r.spent.len(), r.received.len(), r.pending_seen_mined), (2, 1, 1));
+    // seen in one node's listing: not settled, the change not confirmed
+    assert_eq!(a.resolve().still_pending, 1);
+    assert_eq!((a.balances().confirmed, a.balances().unverified), (0, Q as u128));
+    confirm(&chain, &mut a);
+    let settled = a.resolve();
+    assert_eq!((settled.mined.len(), settled.superseded.len(), settled.expired.len(), settled.still_pending), (1, 0, 0, 0));
+    assert_eq!(a.balances().confirmed, Q as u128, "the change is credited when the transaction settles as mined");
     assert_eq!(a.balance(), Q as u128);
     assert_eq!(a.anchor(), chain.state().tree_root);
     let mut b = synced(&chain, &bob);
+    configure_as_sole_copy(&mut b, &[NODE_A, NODE_B]); // Bob's wallet is a new wallet too
     assert_eq!(b.balance(), 10 * Q as u128);
     // the sender's own record names the slot; the recipient found it by trying both
     let pay = t.outputs.iter().find(|o| o.role == OutputRole::Payment).unwrap();
@@ -119,8 +140,13 @@ fn shield_transfer_unshield_with_real_proofs() {
 
     // Bob unshields 6 to a public account; change 3
     let to = account_from_address(&address_from_account(&[0x42; 32])).unwrap();
-    let inputs = [b.spend_input(b.notes()[0].position).unwrap()];
-    let u = build_unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &bob, inputs: &inputs, to_account: to, v_out: 6 * Q, fee: Q, max_fee: None }).unwrap();
+    assert!(matches!(b.spend_input(b.notes()[0].position), Err(WalletError::NoteUnverified)), "an unverified note is not handed to a builder");
+    confirm(&chain, &mut b);
+    let positions = [b.notes()[0].position];
+    let spend = SpendOptions { chain_id: CHAIN, inputs: &positions, expiry_height: None, allow_unverified: false, max_fee: None };
+    let locked = build_unshield(&b, b.revision(), &bob, &UnshieldParams { spend, to_account: to, v_out: 6 * Q, fee: Q }).unwrap();
+    let u = locked.tx;
+    b = locked.state;
     check(&u);
     assert_eq!(u.envelope.tx_type, "unshield_v2");
     assert_eq!(u.body[226..258], [0x42; 32]);
@@ -137,12 +163,22 @@ fn shield_transfer_unshield_with_real_proofs() {
     a.scan(&chain.page(a.next_height()), &alice.scan_key()).unwrap();
     confirm(&chain, &mut restored_a);
     confirm(&chain, &mut a);
-    assert_eq!(restored_a, a);
-    assert_eq!(synced(&chain, &bob), b);
+    assert!(restored_a.content_eq(&a));
+    let mut restored_b = synced(&chain, &bob);
+    confirm(&chain, &mut restored_b);
+    confirm(&chain, &mut b);
+    assert_eq!(b.resolve().mined.len(), 1, "the unshield, which the builder recorded in the state it returned");
+    assert!(restored_b.content_eq(&b));
 }
 
 /// Spec §5.4: a wallet restored from its keys and the chain recovers every unspent note, the
 /// balance, the spent flags and working Merkle paths — and nothing about what it sent.
+///
+/// REVIEW_WALLET_6 (noted): this test used to spend from the restored, never-confirmed state
+/// through `spend_input_with(.., true)` and the raw assembly, which no gate looks at. Both
+/// spends now go through the gated path a client has (`build_*` without the proof): the
+/// restored state builds NOTHING until it is confirmed and its embargo has run out, and then
+/// its note is spent with the path the restore recovered.
 #[test]
 fn restore_recovers_notes_and_balance_but_no_outgoing_history() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
@@ -152,21 +188,18 @@ fn restore_recovers_notes_and_balance_but_no_outgoing_history() {
     fund(&mut chain, &alice.address(), &[4 * Q]);
     let mut a = synced(&chain, &alice);
     assert_eq!(a.balance(), 11 * Q as u128);
+    // (a NEW wallet on a new phrase: the user's statement, so that it can pay at once)
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]);
     confirm(&chain, &mut a);
 
     // Alice pays Bob 6 from the 5 and the 2 (unproven: the pool rules and the scan need no proof)
     let sel = select_inputs(&a, 6 * Q, Q).unwrap();
     assert_eq!(sel.total, 7 * Q);
-    let inputs: Vec<SpendInput> = sel.positions.iter().map(|&p| a.spend_input(p).unwrap()).collect();
-    let t = deterministic::transfer(
-        &TransferRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, recipient: &bob.address(), amount: 6 * Q, fee: Q, max_fee: None },
-        "restore-transfer",
-    )
-    .unwrap();
+    let t = pay(&mut a, &alice, &sel.positions, &bob.address(), 6 * Q, "restore-transfer");
     chain.block(&[&t.body]).unwrap();
     fund(&mut chain, &bob.address(), &[Q]);
 
-    let restored = synced(&chain, &alice);
+    let mut restored = synced(&chain, &alice);
     // every note ever sent to Alice: three shields (the zero-value change is not stored)
     assert_eq!(restored.notes().len(), 3);
     let unspent: Vec<u64> = restored.unspent().filter(|n| n.value > 0).map(|n| n.value).collect();
@@ -174,14 +207,34 @@ fn restore_recovers_notes_and_balance_but_no_outgoing_history() {
     assert_eq!(restored.balance(), 4 * Q as u128);
     assert_eq!(restored.notes().iter().filter(|n| n.spent).count(), 2);
     assert!(restored.notes().iter().filter(|n| n.spent).all(|n| n.spent_height == Some(chain.height - 1)));
-    // the unspent note's path leads to the chain's root: it can be spent right away
-    let input = restored.spend_input(unspent_position(&restored, 4 * Q)).unwrap();
-    let again = deterministic::unshield(
-        &UnshieldRequest { ctx: chain.ctx(), keys: &alice, inputs: &[input], to_account: [9; 32], v_out: Q, fee: Q, max_fee: None },
-        "restore-unshield",
-    )
-    .unwrap();
+    // the unspent note's path leads to the chain's root — and the restored state still builds
+    // NOTHING: it has no confirmed height, and once it has one it is under the restore embargo
+    // (an earlier copy of the wallet may have a payment in flight)
+    let unshield = |s: &WalletState, allow_unverified: bool| {
+        let positions = [unspent_position(s, 4 * Q)];
+        let spend = SpendOptions { chain_id: CHAIN, inputs: &positions, expiry_height: None, allow_unverified, max_fee: None };
+        deterministic::unshield_locked(s, s.revision(), &alice, &UnshieldParams { spend, to_account: [9; 32], v_out: Q, fee: Q }, "restore-unshield")
+    };
+    assert!(matches!(unshield(&restored, true).err(), Some(WalletError::StateUnconfirmed)), "nothing confirmed: nothing is built, whatever allow_unverified says");
+    confirm(&chain, &mut restored); // the two nodes, WITHOUT the user's statement: a restore
+    let until = restored.spend_embargo_until().expect("the first state check fixed the embargo base");
+    assert_eq!(until, chain.height + RESTORE_EMBARGO_BLOCKS);
+    for allow_unverified in [false, true] {
+        assert!(matches!(unshield(&restored, allow_unverified).err(), Some(WalletError::RestoredRecently { until: Some(u) }) if u == until), "the embargo applies to the restored state");
+    }
+    assert!(matches!(restored.spend_gate(), Err(WalletError::RestoredRecently { .. })) && !restored.spend_status(Some(chain.height)).can_spend_now);
+    // … one block before its end, too
+    chain.advance_to(until - 1);
+    restored.scan(&chain.page(restored.next_height()), &alice.scan_key()).unwrap();
+    confirm(&chain, &mut restored);
+    assert!(matches!(unshield(&restored, false).err(), Some(WalletError::RestoredRecently { .. })));
+    // the embargo has run out: the note is spent, with the path the restore recovered
+    chain.advance_to(until);
+    restored.scan(&chain.page(restored.next_height()), &alice.scan_key()).unwrap();
+    confirm(&chain, &mut restored);
+    let (again, locked) = unshield(&restored, false).unwrap();
     chain.block(&[&again.body]).unwrap();
+    assert!(locked.is_locked(unspent_position(&restored, 4 * Q)) && !restored.is_locked(unspent_position(&restored, 4 * Q)));
     // no outgoing history: the restored state holds no record of the payment to Bob — not its
     // value, not its r. (Its commitment is public chain data and may appear as a Merkle sibling.)
     let pay = t.outputs.iter().find(|o| o.role == OutputRole::Payment).unwrap();
@@ -253,7 +306,7 @@ fn scan_pages_must_continue_the_state() {
 
     // the right page
     paged.scan(&chain.page(first_next), &alice.scan_key()).unwrap();
-    assert_eq!(paged, synced(&chain, &alice));
+    assert!(paged.content_eq(&synced(&chain, &alice)));
     assert_eq!(paged.balance(), 9 * Q as u128);
     // an inactive listing is a no-op
     let idle = ListingPage::from_json(r#"{"active":false,"tip_height":1,"from_height":0,"next_height":0,"txs":[]}"#).unwrap();
@@ -282,6 +335,7 @@ fn selection_and_merge() {
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[5 * Q, 3 * Q, 2 * Q, 8 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     let value_of = |s: &WalletState, p: u64| s.note_at(p).unwrap().value;
 
@@ -329,15 +383,16 @@ fn selection_and_merge() {
     assert!(matches!(a.spend_input(plan.positions[0]), Err(WalletError::NoteLocked)));
     assert!(a.mark_pending(merge.pending().unwrap()).is_err());
     assert!(matches!(plan_merge(&a, Q), Ok(p) if p.positions.iter().all(|x| !plan.positions.contains(x))), "a merge plan uses the other notes");
-    assert_eq!(a.resolve(ReleasePolicy::Scanned).still_pending, 1, "nothing to settle yet");
+    assert_eq!(a.resolve().still_pending, 1, "nothing to settle yet");
     chain.block(&[&merge.body]).unwrap();
     a.scan(&chain.page(a.next_height()), &alice.scan_key()).unwrap();
-    assert_eq!(a.resolve(ReleasePolicy::Scanned).mined.len(), 1);
+    assert_eq!(a.resolve().still_pending, 1, "listed by one node: not settled");
     assert_eq!(a.balance(), 17 * Q as u128);
-    // the merged note is unverified until the root is confirmed again
+    // the merged note is unverified until the state is confirmed again
     assert!(matches!(select_inputs(&a, 13 * Q, Q), Err(WalletError::InsufficientFunds { .. })));
     assert_eq!(select_inputs_with(&a, 13 * Q, Q, true).unwrap().total, 14 * Q);
     confirm(&chain, &mut a);
+    assert_eq!(a.resolve().mined.len(), 1);
     // the notes are now 12, 3 and 2: 12 + 2 covers 13 + 1 exactly
     let s = select_inputs(&a, 13 * Q, Q).unwrap();
     assert_eq!((s.positions.len(), s.total, s.change), (2, 14 * Q, 0));
@@ -365,7 +420,7 @@ fn builder_refusals() {
     let a = synced(&chain, &alice);
     let key = fake_account_key(1);
     let addr = alice.address();
-    let inputs: Vec<SpendInput> = a.unspent().map(|n| a.spend_input(n.position).unwrap()).collect();
+    let inputs: Vec<SpendInput> = a.unspent().map(|n| a.spend_input_with(n.position, true).unwrap()).collect();
     let min = SHIELD_V2_MIN_FEE_QUANTA;
 
     // shield
@@ -408,7 +463,7 @@ fn builder_refusals() {
 
     // transfer
     let t = |inputs: &[SpendInput], amount: u64, fee: u64, ctx: TxContext| {
-        build_transfer(&TransferRequest { ctx, keys: &alice, inputs, recipient: &bob.address(), amount, fee, max_fee: None }).map(|_| ())
+        deterministic::transfer(&TransferRequest { ctx, keys: &alice, inputs, recipient: &bob.address(), amount, fee, max_fee: None }, "refused").map(|_| ())
     };
     assert!(matches!(t(&inputs, Q, min - 1, chain.ctx()), Err(WalletError::FeeBelowMinimum { .. })));
     assert!(matches!(t(&inputs, Q, 11 * min, chain.ctx()), Err(WalletError::FeeAboveMaximum { .. })));
@@ -426,7 +481,7 @@ fn builder_refusals() {
     assert!(matches!(t(&inputs, Q, min, ctx), Err(WalletError::AnchorMismatch)));
     // another wallet's key cannot spend Alice's notes: its pk gives another commitment
     assert!(matches!(
-        build_transfer(&TransferRequest { ctx: chain.ctx(), keys: &bob, inputs: &inputs, recipient: &addr, amount: Q, fee: min, max_fee: None }).map(|_| ()),
+        deterministic::transfer(&TransferRequest { ctx: chain.ctx(), keys: &bob, inputs: &inputs, recipient: &addr, amount: Q, fee: min, max_fee: None }, "refused").map(|_| ()),
         Err(WalletError::AnchorMismatch)
     ));
     // a damaged path
@@ -439,7 +494,7 @@ fn builder_refusals() {
 
     // unshield
     let u = |v_out: u64, fee: u64| {
-        build_unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, to_account: [1; 32], v_out, fee, max_fee: None }).map(|_| ())
+        deterministic::unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, to_account: [1; 32], v_out, fee, max_fee: None }, "refused").map(|_| ())
     };
     assert!(matches!(u(0, min), Err(WalletError::Request(_))));
     assert!(matches!(u(Q, 0), Err(WalletError::FeeBelowMinimum { .. })));

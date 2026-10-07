@@ -74,8 +74,9 @@ pub const SHIELD_V2_MIN_FEE_QUANTA: u64 = 1_000_000_000;
 /// Leaves of the commitment tree: 2^32 (spec §2.6).
 pub const SHIELD_V2_MAX_NOTES: u64 = 1 << TREE_DEPTH;
 
-/// Spec §4.5 step 1.
-const NULLIFIER_ACC_TAG: &[u8] = b"rougechain.shield_v2.nullifier_acc.v1";
+/// Spec §4.5 step 1. Public so that a wallet computes the same running hash from a listing
+/// (`quantum-vault-shield-v2-wallet`, REVIEW_WALLET_2 RW2-2) instead of re-implementing it.
+pub const NULLIFIER_ACC_TAG: &[u8] = b"rougechain.shield_v2.nullifier_acc.v1";
 
 /// Spec §4.8.
 const STATE_ROOT_TAG: &[u8] = b"rougechain.stateroot.shield_v2.v1";
@@ -200,8 +201,9 @@ fn to_hex(bytes: &[u8]) -> String {
     s
 }
 
-/// Spec §4.5 step 1: `SHA-256(tag ‖ acc ‖ nf)`.
-fn nullifier_acc_step(acc: &Bytes32, nf: &Bytes32) -> Bytes32 {
+/// Spec §4.5 step 1: `SHA-256(tag ‖ acc ‖ nf)`. The one implementation of the step: the pool
+/// uses it for consensus, a wallet uses it to rebuild `nullifier_acc` from a listing.
+pub fn nullifier_acc_step(acc: &Bytes32, nf: &Bytes32) -> Bytes32 {
     let mut h = Sha256::new();
     h.update(NULLIFIER_ACC_TAG);
     h.update(acc);

@@ -111,30 +111,63 @@ fn rw1_f1_a_forged_incoming_note_stays_unverified_and_is_not_spent_by_default() 
     };
     unverified_only(&wallet);
 
-    // the liar vouches for its own tree — once, twice, at every height: one node is no quorum
-    let lying_root = wallet.anchor();
-    assert!((5..=10).all(|h| wallet.root_at(h) == Some(lying_root)) && wallet.root_at(11).is_none());
-    let lie = |height: u64| RootReport { node_id: "the-lying-node".into(), height, root: lying_root };
-    let c = wallet.confirm_roots(&[lie(10)], DEFAULT_CONFIRM_QUORUM).unwrap();
-    assert_eq!((c.matched_height, c.agreeing, c.newly_confirmed.len()), (None, 1, 0));
-    wallet.confirm_roots(&[lie(10), lie(10), lie(5), lie(7)], DEFAULT_CONFIRM_QUORUM).unwrap();
+    // the liar vouches for its own state — once, twice, at every height: one node is no quorum.
+    // The wallet is configured with three nodes (REVIEW_WALLET_3 RW3-1): the quorum is two of THEM
+    configure(&mut wallet, &["the-lying-node", "an-honest-node", "another-honest-node"]);
+    let lying = wallet.state_at(10).unwrap();
+    assert!((5..=10).all(|h| wallet.state_at(h) == Some(lying)) && wallet.state_at(11).is_none());
+    let report = |id: &str, height: u64, v: PoolView| StateReport {
+        node_id: node(id),
+        height,
+        tree_root: v.tree_root,
+        nullifier_acc: v.nullifier_acc,
+        note_count: v.note_count,
+        nullifier_count: v.nullifier_count,
+        ciphertext_acc: v.ciphertext_acc,
+    };
+    let lie = |height: u64| report("the-lying-node", height, lying);
+    let c = wallet.confirm_state(&[lie(10)]).unwrap();
+    assert_eq!((c.matched_height, c.agreeing, c.newly_confirmed.len(), c.quorum, c.configured), (None, 1, 0, 2, 3));
+    wallet.confirm_state(&[lie(10), lie(10), lie(5), lie(7)]).unwrap();
     unverified_only(&wallet);
-    // an honest second node has never seen the transaction: its tree is empty
-    let honest = RootReport { node_id: "an-honest-node".into(), height: 10, root: WalletState::new(address.pk).anchor() };
-    let c = wallet.confirm_roots(&[lie(10), honest.clone()], DEFAULT_CONFIRM_QUORUM).unwrap();
-    assert_eq!((c.matched_height, c.agreeing, c.diverged), (None, 1, false));
+    // an honest second node has never seen the transaction: its pool is empty. One against one:
+    // nothing is confirmed and the caller is told WHO disagrees (RW3-1)
+    let empty = PoolView { tree_root: WalletState::new(address.pk).anchor(), nullifier_acc: [0u8; 32], note_count: 0, nullifier_count: 0, ciphertext_acc: [0u8; 32] };
+    let honest = report("an-honest-node", 10, empty);
+    let c = wallet.confirm_state(&[lie(10), honest.clone()]).unwrap();
+    assert_eq!((c.matched_height, c.agreeing, c.diverged, c.conflicts.clone(), c.listing_refuted), (None, 1, true, vec![10], false));
+    assert_eq!(c.dissenting, vec![Dissent { node_id: node("an-honest-node"), height: 10 }]);
     unverified_only(&wallet);
-    // two honest nodes against the liar: the wallet learns that its listing is not the chain's
-    let honest2 = RootReport { node_id: "another-honest-node".into(), ..honest.clone() };
-    let c = wallet.confirm_roots(&[lie(10), honest.clone(), honest2], DEFAULT_CONFIRM_QUORUM).unwrap();
-    assert!(c.diverged && c.matched_height.is_none());
-    // a node that says two things about one height, heights not scanned, a zero quorum
-    let c = wallet.confirm_roots(&[lie(10), RootReport { root: digest_bytes(9), ..lie(10) }, RootReport { node_id: "n2".into(), ..lie(10) }], 2).unwrap();
-    assert_eq!((c.matched_height, c.agreeing), (None, 1), "an equivocating node counts for nothing");
-    let c = wallet.confirm_roots(&[RootReport { node_id: "a".into(), height: 11, root: lying_root }, RootReport { node_id: "b".into(), height: 11, root: lying_root }], 2).unwrap();
+    // two honest nodes against the liar: more dissent than a lying minority of three can be — the
+    // wallet learns that its listing is not the chain's
+    let honest2 = StateReport { node_id: node("another-honest-node"), ..honest.clone() };
+    let c = wallet.confirm_state(&[lie(10), honest.clone(), honest2]).unwrap();
+    assert!(c.diverged && c.matched_height.is_none() && c.listing_refuted && c.dissenting.len() == 2);
+    // a node that says two things about one height dissents there, whatever else it says
+    let c = wallet
+        .confirm_state(&[lie(10), StateReport { tree_root: digest_bytes(9), ..lie(10) }, StateReport { node_id: node("another-honest-node"), ..lie(10) }])
+        .unwrap();
+    assert_eq!((c.matched_height, c.agreeing, c.diverged), (None, 1, true), "an equivocating node confirms nothing");
+    assert_eq!(c.dissenting, vec![Dissent { node_id: node("the-lying-node"), height: 10 }]);
+    // heights not scanned; ids that are not configured or not an origin are not counted at all
+    let c = wallet.confirm_state(&[report("the-lying-node", 11, lying), report("an-honest-node", 11, lying)]).unwrap();
     assert_eq!((c.matched_height, c.not_comparable), (None, 2), "a height the wallet has not scanned proves nothing");
-    assert!(wallet.confirm_roots(&[lie(10)], 0).is_err());
+    let stranger = |id: &str| StateReport { node_id: id.into(), ..lie(10) };
+    let c = wallet.confirm_state(&[stranger("https://a.example"), stranger("https://b.example"), stranger("b"), stranger("")]).unwrap();
+    assert_eq!((c.matched_height, c.not_configured, c.nodes), (None, 4, 0), "two strangers that agree with the wallet are nobody");
+    // the right root with another nullifier hash, another ciphertext hash, or another count, is
+    // not the wallet's state
+    for wrong in [
+        StateReport { nullifier_acc: digest_bytes(8), ..lie(10) },
+        StateReport { ciphertext_acc: digest_bytes(8), ..lie(10) },
+        StateReport { nullifier_count: 4, ..lie(10) },
+        StateReport { note_count: 4, ..lie(10) },
+    ] {
+        let c = wallet.confirm_state(&[wrong.clone(), StateReport { node_id: node("an-honest-node"), ..wrong }]).unwrap();
+        assert!(c.diverged && c.matched_height.is_none(), "the tree root alone confirms nothing");
+    }
     unverified_only(&wallet);
+    assert!(matches!(wallet.spend_input(0), Err(WalletError::NoteUnverified)), "nor is it handed to a builder");
 
     // spending it is possible only by the caller's explicit decision (and fails on the real chain)
     let sel = select_inputs_with(&wallet, 5 * Q, Q, true).unwrap();
@@ -152,24 +185,29 @@ fn rw1_f1_two_agreeing_nodes_confirm_notes_up_to_the_matched_height_only() {
     let alice = keys(PHRASE_1);
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[5 * Q]);
-    let reports_then = chain.root_reports();
+    let reports_then = chain.state_reports();
     fund(&mut chain, &alice.address(), &[3 * Q]);
     let mut a = synced(&chain, &alice);
     assert_eq!((a.confirmed_balance(), a.unverified_balance()), (0, 8 * Q as u128));
+    configure(&mut a, &[NODE_A, NODE_B]);
     // one node: nothing
-    let c = a.confirm_roots(&reports_then[..1], DEFAULT_CONFIRM_QUORUM).unwrap();
+    let c = a.confirm_state(&reports_then[..1]).unwrap();
     assert_eq!((c.matched_height, a.confirmed_balance()), (None, 0));
     // two nodes at the earlier height: the first note only
-    let c = a.confirm_roots(&reports_then, DEFAULT_CONFIRM_QUORUM).unwrap();
+    let c = a.confirm_state(&reports_then).unwrap();
     assert_eq!((c.matched_height, c.newly_confirmed.len()), (Some(chain.height - 1), 1));
     assert_eq!((a.confirmed_balance(), a.unverified_balance()), (5 * Q as u128, 3 * Q as u128));
     assert_eq!(select_inputs(&a, 3 * Q, Q).unwrap().total, 5 * Q, "selection uses the confirmed note, not the smaller unverified one");
-    // the tip: everything; a caller that trusts its own node sets the quorum to 1
-    let mut own = a.clone();
-    assert_eq!(own.confirm_roots(&chain.root_reports()[..1], 1).unwrap().matched_height, Some(chain.height));
+    // a wallet configured with ONE node — its own — confirms nothing, whatever that node says
+    // (REVIEW_WALLET_3: a single-node wallet shows everything as unverified)
+    let mut own = synced(&chain, &alice);
+    configure(&mut own, &[NODE_A]);
+    let c = own.confirm_state(&chain.state_reports()).unwrap();
+    assert_eq!((c.matched_height, c.configured, c.quorum, c.not_configured, own.confirmed_balance()), (None, 1, 2, 1, 0));
+    // the two nodes at two different heights: no height has the quorum
+    assert_eq!(a.clone().confirm_state(&[chain.report(NODE_A), reports_then[1].clone()]).unwrap().matched_height, None);
     confirm(&chain, &mut a);
     assert_eq!((a.confirmed_balance(), a.unverified_balance(), a.confirmed_height()), (8 * Q as u128, 0, Some(chain.height)));
-    assert_eq!(own.balances(), a.balances());
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -181,9 +219,10 @@ fn rw1_f1_two_agreeing_nodes_confirm_notes_up_to_the_matched_height_only() {
 /// on the UI's word; a node that lied about a rejection could then have the first attempt AND the
 /// retry mined.
 ///
-/// Since the fix the state holds the pending transaction (nullifiers, inputs, change, expiry),
-/// and its inputs stay locked until the SCANNED CHAIN shows it mined or shows a height at or
-/// above its expiry without it. The scenario of the review, replayed:
+/// Since the fix the state holds the pending transaction (nullifiers, outputs, inputs, change,
+/// expiry), and its inputs stay locked until the CONFIRMED chain data shows it mined or shows a
+/// height at or above its expiry without it (REVIEW_WALLET_2: confirmed, not merely scanned).
+/// The scenario of the review, replayed:
 ///
 /// Alice holds one 10 XRGE note and pays Bob 4. The node answers "rejected" and keeps the
 /// transaction. The retry is refused by the wallet — the "rejection" is a hint and nothing more.
@@ -195,6 +234,7 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     let pay = |a: &WalletState, chain: &Chain, label: &str| {
         let sel = select_inputs(a, 4 * Q, Q)?;
@@ -207,7 +247,7 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
     // first attempt: recorded as pending BEFORE it is submitted
     let t1 = pay(&a, &chain, "rw1-f7-first").unwrap();
     let record = t1.pending().unwrap();
-    let expiry = record.expiry_height.unwrap();
+    let expiry = record.expiry_height;
     assert_eq!((record.inputs.clone(), record.input_total, record.change.as_ref().map(|c| c.value)), (vec![a.notes()[0].position], 10 * Q, Some(5 * Q)));
     a.mark_pending(record.clone()).unwrap();
     assert_eq!(a.pending().len(), 1);
@@ -223,15 +263,16 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
     assert!(matches!(select_inputs_with(&a, 4 * Q, Q, true), Err(WalletError::InsufficientFunds { .. })));
     assert!(a.mark_pending(record.clone()).is_err(), "nor recorded twice");
     // nothing settles while the chain shows neither outcome
-    let r = a.resolve(ReleasePolicy::Scanned);
-    assert_eq!((r.mined.len(), r.expired.len(), r.still_pending), (0, 0, 1));
-    assert_eq!(a.balances().locked, 10 * Q as u128);
+    let r = a.resolve();
+    assert_eq!((r.mined.len(), r.superseded.len(), r.expired.len(), r.still_pending), (0, 0, 0, 1));
+    assert_eq!((a.balances().locked, a.balances().expected_change), (10 * Q as u128, 5 * Q as u128));
     // more blocks, still below the expiry: still locked (the last valid height is `expiry` itself)
     let mut early = chain_clone_with(&alice, &bob, &[]);
     early.advance_to(expiry - 1);
     let mut a_early = a.clone();
     a_early.scan(&early.page(a_early.next_height()), &alice.scan_key()).unwrap();
-    assert_eq!(a_early.resolve(ReleasePolicy::Scanned).still_pending, 1);
+    confirm(&early, &mut a_early);
+    assert_eq!(a_early.resolve().still_pending, 1);
     assert!(a_early.is_locked(a_early.notes()[0].position));
 
     // ---- outcome 1: the node mines the "rejected" transaction, at the last valid height ----------
@@ -240,11 +281,14 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
     mined.block(&[&t1.body]).expect("valid at its expiry height: the rejection was a lie");
     let mut a1 = a.clone();
     let rep = a1.scan(&mined.page(a1.next_height()), &alice.scan_key()).unwrap();
-    assert_eq!(rep.pending_mined, 1);
-    let r = a1.resolve(ReleasePolicy::Scanned);
-    assert_eq!((r.mined.len(), r.expired.len(), r.still_pending), (1, 0, 0));
-    assert_eq!(r.mined[0].mined_height, Some(expiry));
-    assert_eq!(a1.balance(), 5 * Q as u128, "Alice paid once: 10 - 4 - fee");
+    assert_eq!(rep.pending_seen_mined, 1);
+    assert_eq!(a1.resolve().still_pending, 1, "listed by one node: not settled");
+    assert_eq!(a1.balances().confirmed, 0, "the change is not credited before the transaction settles");
+    confirm(&mined, &mut a1);
+    let r = a1.resolve();
+    assert_eq!((r.mined.len(), r.superseded.len(), r.expired.len(), r.still_pending), (1, 0, 0, 0));
+    assert_eq!(r.mined[0].seen_height, Some(expiry));
+    assert_eq!((a1.balance(), a1.balances().confirmed), (5 * Q as u128, 5 * Q as u128), "Alice paid once: 10 - 4 - fee");
     assert_eq!(synced(&mined, &bob).balance(), 4 * Q as u128, "and Bob was paid once");
     assert!(a1.notes().iter().any(|n| !n.spent && n.cm == record.change.as_ref().unwrap().cm), "the expected change arrived");
 
@@ -253,20 +297,18 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
     dropped.advance_to(expiry);
     let mut a2 = a.clone();
     a2.scan(&dropped.page(a2.next_height()), &alice.scan_key()).unwrap();
-    // under the stricter policy the release waits for the quorum's word on that height
-    let mut strict = a2.clone();
-    assert_eq!(strict.resolve(ReleasePolicy::Confirmed).still_pending, 1, "the confirmed height is still the old one");
-    confirm(&dropped, &mut strict);
-    assert_eq!(strict.resolve(ReleasePolicy::Confirmed).expired.len(), 1);
-    let r = a2.resolve(ReleasePolicy::Scanned);
-    assert_eq!((r.mined.len(), r.expired.len(), r.still_pending), (0, 1, 0));
+    // the release waits for the quorum's word on that height: the scanned height is one node's
+    assert_eq!(a2.resolve().still_pending, 1, "the confirmed height is still the old one");
+    assert!(a2.is_locked(a2.notes()[0].position));
+    confirm(&dropped, &mut a2);
+    let r = a2.resolve();
+    assert_eq!((r.mined.len(), r.superseded.len(), r.expired.len(), r.still_pending), (0, 0, 1, 0));
     assert_eq!((a2.balance(), a2.balances().locked), (10 * Q as u128, 0), "nothing was spent and the note is free again");
     // and the transaction can no longer be mined: the node refuses a body whose expiry is below
     // the block's height (spec §3.6 check 7 — a stateless rule of the node, exercised in the
     // daemon's `shield_v2::tests` and interop tests; the stand-in chain here has only the pool rules)
     assert!(Body::decode(&t1.body).unwrap().expiry_height < dropped.height + 1);
     // the released note is spendable: the retry is now safe
-    confirm(&dropped, &mut a2);
     assert!(select_inputs(&a2, 4 * Q, Q).is_ok());
 
     // ---- a rescan keeps the lock ---------------------------------------------------------------
@@ -276,8 +318,10 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
 
     // ---- what mark_pending refuses ---------------------------------------------------------------
     let mut fresh = synced(&chain, &alice);
+    configure_as_sole_copy(&mut fresh, &[NODE_A, NODE_B]); // a NEW wallet, so that what is refused below is refused for the reason given
+    confirm(&chain, &mut fresh);
     let mut far = record.clone();
-    far.expiry_height = Some(chain.height + 129);
+    far.expiry_height = chain.height + 129;
     assert!(fresh.mark_pending(far).is_err(), "an expiry beyond the bound would lock the note for too long");
     let mut wrong = record.clone();
     wrong.nullifiers[0] = wrong.nullifiers[1];
@@ -292,8 +336,14 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
     wrong.input_total += 1;
     assert!(fresh.mark_pending(wrong).is_err());
     let mut wrong = record.clone();
-    wrong.expiry_height = None;
-    assert!(fresh.mark_pending(wrong).is_err());
+    wrong.outputs.pop();
+    assert!(fresh.mark_pending(wrong).is_err(), "a record without both output commitments");
+    let mut wrong = record.clone();
+    wrong.nullifiers.swap(0, 1);
+    assert!(fresh.mark_pending(wrong).is_err(), "the nullifier of slot 0 is the nullifier of input 0");
+    let mut wrong = record.clone();
+    wrong.change.as_mut().unwrap().cm = B32(digest_bytes(7));
+    assert!(fresh.mark_pending(wrong).is_err(), "a change that is not one of the outputs");
     assert!(fresh.pending().is_empty());
     fresh.mark_pending(record).unwrap();
 }
@@ -309,50 +359,62 @@ fn chain_clone_with(alice: &ShieldedKeys, _bob: &ShieldedKeys, extra: &[&[u8]]) 
     chain
 }
 
-/// A state in format 1 (the reviewed commit's) is migrated: notes become unverified, a note that
-/// was marked spent locally becomes the locked input of a pending entry without an expiry (it is
-/// never released on a node's word, and not by time either — its expiry is unknown), zero-value
-/// notes are dropped and a `tx_hash` that is not a hash is cleared.
+/// The JSON of a format-1 state (the first reviewed commit's): notes with their 32-sibling
+/// witnesses, no pending list, no history, no confirmation.
+fn format_1_json(pk: [u8; 32], next_height: u64, notes: &[OwnedNote], locally_spent: &[u64]) -> serde_json::Value {
+    let empty = WalletState::new(pk);
+    serde_json::json!({
+        "version": 1, "pk": hex::encode(pk), "next_height": next_height,
+        "tree": { "note_count": 0, "frontier": empty.tree().frontier().iter().map(hex::encode).collect::<Vec<_>>(), "root": hex::encode(empty.anchor()), "witnesses": {} },
+        "notes": notes.iter().map(|n| serde_json::json!({
+            "value": n.value.to_string(), "r": n.r, "rho": n.rho, "position": n.position, "cm": n.cm, "nullifier": n.nullifier,
+            "spent": n.spent || locally_spent.contains(&n.position), "spent_height": n.spent_height, "height": n.height,
+            "tx_hash": "tx-3-0", "output_index": n.output_index,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// A state in format 1 is migrated to format 3 (REVIEW_WALLET_2 I-2): an EMPTY state to rescan —
+/// format 1 has no nullifier hash and can never be confirmed — that keeps every note format 1
+/// had marked spent locally as a `legacy` lock, held by the note's commitment, with the synthetic
+/// expiry "migrated scanned height + 128". The lock settles by the same confirmed rules as any
+/// other: it is no longer permanent, and it is not released a block early or on one node's word.
 #[test]
 fn rw1_f7_a_format_1_state_is_migrated_with_its_local_marks_kept_as_locks() {
     let alice = keys(PHRASE_1);
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[5 * Q, 3 * Q]);
     let now = synced(&chain, &alice);
-    let mut v: serde_json::Value = serde_json::from_str(&now.to_json().unwrap()).unwrap();
-    // back to the old shape
-    v["version"] = serde_json::json!(1);
-    for k in ["pending", "checkpoints", "confirmed_height", "blind"] {
-        v.as_object_mut().unwrap().remove(k);
-    }
-    for n in v["notes"].as_array_mut().unwrap() {
-        n.as_object_mut().unwrap().remove("confirmed");
-        n["tx_hash"] = serde_json::json!("tx-3-0");
-    }
-    v["notes"][0]["spent"] = serde_json::json!(true); // `mark_pending_spent` of format 1
-    let mut zero = v["notes"][1].clone();
-    zero["value"] = serde_json::json!("0");
-    let used: Vec<u64> = now.notes().iter().map(|n| n.position).collect();
-    zero["position"] = serde_json::json!((0..4u64).find(|p| !used.contains(p)).unwrap());
-    v["notes"].as_array_mut().unwrap().push(zero);
+    let five = now.notes()[0].clone();
+    let v = format_1_json(alice.address().pk, now.next_height(), now.notes(), &[five.position]);
 
     let mut migrated = WalletState::from_json(&v.to_string()).unwrap();
-    assert_eq!(migrated.notes().len(), 2, "the zero-value note is dropped");
-    assert!(migrated.notes().iter().all(|n| !n.confirmed && n.tx_hash.is_empty() && !n.spent));
-    assert_eq!((migrated.balance(), migrated.confirmed_balance()), (8 * Q as u128, 0));
-    let p = &migrated.pending()[0];
-    assert_eq!((p.inputs.clone(), p.expiry_height, p.status), (vec![now.notes()[0].position], None, PendingStatus::Pending));
-    assert_eq!(p.nullifiers, vec![now.notes()[0].nullifier.unwrap()]);
-    assert!(migrated.is_locked(now.notes()[0].position));
-    // never released by time: its expiry is not known
-    chain.advance_to(chain.height + 300);
-    migrated.scan(&chain.page(migrated.next_height()), &alice.scan_key()).unwrap();
-    assert_eq!(migrated.resolve(ReleasePolicy::Scanned).still_pending, 1);
-    // the migrated state is format 2 from here on, and keeps working
-    assert!(migrated.to_json().unwrap().contains("\"version\":2"));
+    assert_eq!((migrated.next_height(), migrated.notes().len(), migrated.confirmed_height()), (0, 0, None), "an empty state to rescan");
+    let synthetic = chain.height + MAX_EXPIRY_OFFSET;
+    let p = migrated.pending()[0].clone();
+    assert_eq!((p.inputs.clone(), p.input_cms.clone(), p.expiry_height, p.status, p.legacy), (vec![five.position], vec![five.cm], synthetic, PendingStatus::Pending, true));
+    assert_eq!(p.nullifiers, vec![five.nullifier.unwrap()]);
+    assert!(migrated.to_json().unwrap().contains("\"version\":5"));
+
+    // the rescan finds the notes again; the 5 note is locked from the moment it is found
+    migrated.scan(&chain.page(0), &alice.scan_key()).unwrap();
     confirm(&chain, &mut migrated);
-    assert_eq!(migrated.balances().spendable, 3 * Q as u128);
+    assert!(migrated.is_locked(five.position));
+    assert_eq!((migrated.balances().confirmed, migrated.balances().spendable), (8 * Q as u128, 3 * Q as u128));
     assert_eq!(migrated.anchor(), chain.state().tree_root);
+    // not released one block before the synthetic expiry, also when one node claims more
+    chain.advance_to(synthetic - 1);
+    migrated.scan(&chain.page(migrated.next_height()), &alice.scan_key()).unwrap();
+    confirm(&chain, &mut migrated);
+    assert_eq!(migrated.resolve().still_pending, 1);
+    chain.advance_to(synthetic + 5);
+    migrated.scan(&chain.page(migrated.next_height()), &alice.scan_key()).unwrap();
+    assert_eq!(migrated.resolve().still_pending, 1, "scanned past the expiry on one node's word: still locked");
+    // released when the confirmed height reaches it
+    confirm(&chain, &mut migrated);
+    let r = migrated.resolve();
+    assert_eq!((r.expired.len(), r.still_pending), (1, 0));
+    assert_eq!(migrated.balances().spendable, 8 * Q as u128);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -463,7 +525,7 @@ fn rw1_f3_a_note_found_with_the_viewing_key_must_be_seen_spent_by_the_full_key()
 
     // the owner spends the note (from a fully scanned state) …
     let full = synced(&chain, &alice);
-    let inputs = [full.spend_input(full.notes()[0].position).unwrap()];
+    let inputs = [full.spend_input_with(full.notes()[0].position, true).unwrap()];
     let t = deterministic::transfer(
         &TransferRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, recipient: &bob.address(), amount: 4 * Q, fee: Q, max_fee: None },
         "rw1-f3",
@@ -492,7 +554,7 @@ fn rw1_f3_spends_seen_without_nk_are_applied_when_the_full_key_arrives_or_a_resc
     fund(&mut chain, &alice.address(), &[5 * Q, 2 * Q]);
     let full = synced(&chain, &alice);
     let five = full.unspent().find(|n| n.value == 5 * Q).unwrap().position;
-    let inputs = [full.spend_input(five).unwrap()];
+    let inputs = [full.spend_input_with(five, true).unwrap()];
     let t = deterministic::transfer(
         &TransferRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, recipient: &bob.address(), amount: 4 * Q, fee: Q, max_fee: None },
         "rw1-f3-blind",
@@ -515,7 +577,7 @@ fn rw1_f3_spends_seen_without_nk_are_applied_when_the_full_key_arrives_or_a_resc
     assert_eq!(shared.balance(), 2 * Q as u128);
     assert!(shared.notes().iter().all(|n| n.nullifier.is_some()));
     // from here the state is exactly the one a full-key scan builds
-    assert_eq!(shared, synced(&chain, &alice));
+    assert!(shared.content_eq(&synced(&chain, &alice)));
 
     // more nullifiers than the state can remember while blind: the full key is refused, the
     // state is untouched, and a rescan with the full key gives the truth
@@ -606,9 +668,15 @@ fn rw1_sound_every_byte_of_the_body_is_bound_by_the_proof() {
     let alice = keys(PHRASE_1);
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[9 * Q]);
-    let a = synced(&chain, &alice);
-    let inputs = [a.spend_input(a.notes()[0].position).unwrap()];
-    let u = build_unshield(&UnshieldRequest { ctx: chain.ctx(), keys: &alice, inputs: &inputs, to_account: [0x42; 32], v_out: 6 * Q, fee: Q, max_fee: None }).unwrap();
+    let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
+    confirm(&chain, &mut a);
+    let positions = [a.notes()[0].position];
+    let spend = SpendOptions { chain_id: CHAIN, inputs: &positions, expiry_height: None, allow_unverified: false, max_fee: None };
+    let locked = build_unshield(&a, a.revision(), &alice, &UnshieldParams { spend, to_account: [0x42; 32], v_out: 6 * Q, fee: Q }).unwrap();
+    // the transaction comes with the state it is locked in (REVIEW_WALLET_3 RW3-5)
+    assert!(locked.state.is_locked(positions[0]) && locked.state.pending().len() == 1 && locked.state.revision() == a.revision() + 1);
+    let u = locked.tx;
     verify_spend(&public_inputs_of(&u.body).unwrap(), &u.proof).expect("the untouched transaction verifies");
     assert_eq!(u.body.len(), BODY_BYTES);
     let mut unbound = Vec::new();
@@ -640,7 +708,10 @@ fn rw1_sound_every_byte_of_the_body_is_bound_by_the_proof() {
     // a built transaction carries no witness at all (I-1), and its output record does not print
     // the note's secrets (I-3)
     let printed = format!("{:?}", u.outputs);
-    assert!(printed.contains("<secret>") && !printed.contains(&hex::encode(u.outputs[0].r)) && !printed.contains(&u.outputs[0].value.to_string()));
+    // (checked on the output that has a value: the slot order is drawn, and the dummy's value "0"
+    // is a substring of "slot: 0" — this assertion used to fail whenever the dummy drew slot 0)
+    let valued = u.outputs.iter().find(|o| o.value > 0).expect("the change");
+    assert!(printed.contains("<secret>") && u.outputs.iter().all(|o| !printed.contains(&hex::encode(o.r))) && !printed.contains(&valued.value.to_string()));
 }
 
 /// A hostile or buggy node serving the listing. Each manipulation is either refused (and leaves
@@ -772,6 +843,7 @@ fn rw1_sound_a_tampered_state_blob_never_panics() {
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[5 * Q, 3 * Q, 2 * Q]);
     let mut good = synced(&chain, &alice);
+    configure_as_sole_copy(&mut good, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut good);
     // one note locked by a pending transaction, so that the pending list is mutated too
     let p_in = [good.spend_input(good.notes()[0].position).unwrap()];
@@ -781,7 +853,7 @@ fn rw1_sound_a_tampered_state_blob_never_panics() {
     )
     .unwrap();
     good.mark_pending(p_tx.pending().unwrap()).unwrap();
-    let reports = chain.root_reports();
+    let reports = chain.state_reports();
     fund(&mut chain, &alice.address(), &[Q]);
     let next_page = chain.page(good.next_height());
     let base: serde_json::Value = serde_json::from_str(&good.to_json().unwrap()).unwrap();
@@ -857,7 +929,7 @@ fn rw1_sound_a_tampered_state_blob_never_panics() {
                 for fee in [Q, u64::MAX] {
                     let _ = select_inputs(&s, amount, fee);
                     if let Ok(sel) = select_inputs_with(&s, amount, fee, true) {
-                        let inputs: Result<Vec<SpendInput>, _> = sel.positions.iter().map(|&p| s.spend_input(p)).collect();
+                        let inputs: Result<Vec<SpendInput>, _> = sel.positions.iter().map(|&p| s.spend_input_with(p, true)).collect();
                         if let Ok(inputs) = inputs {
                             let ctx = TxContext { chain_id: CHAIN.into(), anchor: s.anchor(), anchor_height: 50, expiry_height: 100 };
                             let _ = deterministic::transfer(
@@ -871,16 +943,16 @@ fn rw1_sound_a_tampered_state_blob_never_panics() {
             let _ = (plan_merge(&s, Q), plan_merge_with(&s, Q, true), s.balances(), s.pending().len(), s.confirmed_height(), s.scanned_height());
             let positions: Vec<u64> = s.notes().iter().map(|n| n.position).collect();
             for p in positions.iter().copied().chain([0, 1, u64::MAX]) {
-                let _ = (s.spend_input(p), s.is_locked(p), s.root_at(p));
+                let _ = (s.spend_input(p), s.spend_input_with(p, true), s.is_locked(p), s.root_at(p));
             }
             let _ = s.clone().mark_pending(p_tx.pending().unwrap());
-            let _ = s.clone().resolve(ReleasePolicy::Scanned);
-            let _ = s.clone().resolve(ReleasePolicy::Confirmed);
-            let _ = s.clone().confirm_roots(&reports, 1);
+            let _ = s.clone().resolve();
+            let _ = s.clone().confirm_state(&reports);
+            let _ = (s.state_at(0), s.nullifier_acc(), s.revision(), s.below_minimum(), s.pruned(), s.tree().stored_nodes());
             let _ = s.fresh_for_rescan().to_json();
             let _ = s.clone().scan(&next_page, &alice.incoming_viewing_key());
             let _ = s.scan(&next_page, &alice.scan_key());
-            let _ = (s.resolve(ReleasePolicy::Scanned), s.confirm_roots(&reports, 2), s.to_json());
+            let _ = (s.confirm_state(&reports), s.resolve(), s.to_json());
             true
         }));
         match outcome {
@@ -901,7 +973,7 @@ fn rw1_sound_value_conservation_change_and_edge_amounts() {
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[5 * Q, 3 * Q]);
     let a = synced(&chain, &alice);
-    let both: Vec<SpendInput> = a.notes().iter().map(|n| a.spend_input(n.position).unwrap()).collect();
+    let both: Vec<SpendInput> = a.notes().iter().map(|n| a.spend_input_with(n.position, true).unwrap()).collect();
     let req = |amount: u64, fee: u64, to: &ShieldedAddress, inputs: &[SpendInput], label: &str| {
         // (the fee ceiling is lifted here: this test is about amounts, `builder_refusals` covers the ceiling)
         deterministic::transfer(&TransferRequest { ctx: chain.ctx(), keys: &alice, inputs, recipient: to, amount, fee, max_fee: Some(u64::MAX) }, label)
@@ -923,7 +995,13 @@ fn rw1_sound_value_conservation_change_and_edge_amounts() {
         let mut c2 = Chain::new();
         fund(&mut c2, &alice.address(), &[5 * Q, 3 * Q]);
         c2.block(&[&t.body]).unwrap();
-        let (sa, sb) = (synced(&c2, &alice), synced(&c2, &bob));
+        // (amounts of one quantum are in the list: these two states store every non-zero note)
+        let every = |k: &ShieldedKeys| {
+            let mut s = WalletState::with_min_note_value(k.address().pk, 1).unwrap();
+            s.scan(&c2.page(0), &k.scan_key()).unwrap();
+            s
+        };
+        let (sa, sb) = (every(&alice), every(&bob));
         assert_eq!(sa.balance(), change.value as u128, "the change is the sender's");
         assert_eq!(sb.balance(), amount as u128, "the payment is the recipient's");
         assert_eq!(sb.notes().len(), 1);
