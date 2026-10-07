@@ -301,9 +301,14 @@ fn balances(st: &WalletState) -> Value {
 /// only override of the restore embargo, and `i_am_sure_no_other_copy_has_a_pending_payment`
 /// must be `true` — the parameter exists to be read by whoever writes the call. Accepted only
 /// before the first confirmed state check of a state made by [`new_state`] (`request:`
-/// afterwards). The core honours it at that first check only if no configured node reported a
-/// tip above the height being confirmed; otherwise the ordinary embargo applies. If the
-/// statement is false, the wallet can pay twice. `{ state, revision, revision_id, spend }`.
+/// afterwards). **Once recorded it stands**: the first confirmed state check establishes the
+/// state without an embargo, whatever the nodes report in it (REVIEW_WALLET_5 RW5-5 — the
+/// earlier rule, which disregarded the statement when a configured node reported a higher tip,
+/// is removed). If the statement is false, the wallet can pay twice: **a client calls this
+/// without asking only for a phrase that was generated on this device in this installation,
+/// and for an imported or restored phrase only after the user's explicit confirmation — never
+/// from a helper that initialises a state** (`core/shield-v2-wallet/UI_CONTRACT.md`,
+/// obligation 1). `{ state, revision, revision_id, spend }`.
 pub fn assert_sole_copy(state_json: &str, i_am_sure_no_other_copy_has_a_pending_payment: bool, expected_revision: f64) -> ApiResult {
     let mut st = state_for_update(state_json, expected_revision)?;
     if !i_am_sure_no_other_copy_has_a_pending_payment {

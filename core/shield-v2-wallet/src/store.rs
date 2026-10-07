@@ -177,6 +177,12 @@ fn hex_exact<const N: usize>(s: &str) -> Option<[u8; N]> {
     hex::decode(s).ok()?.try_into().ok()
 }
 
+/// An `Option` field that must be PRESENT in the text (`null` or a value): serde reads a missing
+/// `Option` field as `None`, which for a safety mark is a default like any other (RW5-9).
+fn required_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    Option::<T>::deserialize(d)
+}
+
 /// A u64 amount as a decimal string in JSON (JavaScript numbers lose integers above 2^53).
 pub(crate) mod dec {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -310,13 +316,45 @@ pub fn canonical_node_id(id: &str) -> Result<String, WalletError> {
     parse_node_id(id).map(|n| n.id)
 }
 
-/// A node id taken apart: its canonical text, scheme, canonical host and effective port.
+/// A node id taken apart: its canonical text, scheme, the host it counts as and effective port.
 struct NodeId {
     id: String,
     https: bool,
-    host: String,
+    /// What "one node per host" counts (REVIEW_WALLET_5 RW5-7): the canonical host — and for an
+    /// IPv6 literal that only spells an IPv4 address ([`embedded_ipv4`]), that IPv4 address in
+    /// its dotted form, so that both spellings of one endpoint are one host.
+    machine: String,
     port: u32,
     loopback: bool,
+}
+
+/// The IPv4 address an IPv6 literal embeds, for the forms in which the IPv6 address **is** an
+/// IPv4 endpoint written in IPv6 notation (REVIEW_WALLET_5 RW5-7). A set of configured nodes
+/// counts such a literal as the IPv4 host itself:
+///
+/// | Form | Prefix | Defined in |
+/// |---|---|---|
+/// | IPv4-mapped | `::ffff:a.b.c.d` (`::ffff:0:0/96`) | RFC 4291 §2.5.5.2 |
+/// | IPv4-compatible (deprecated) | `::a.b.c.d` (`::/96`, not `::` and `::1`) | RFC 4291 §2.5.5.1 |
+/// | IPv4-translated (SIIT) | `::ffff:0:a.b.c.d` (`::ffff:0:0:0/96`) | RFC 7915 |
+/// | NAT64, well-known prefix | `64:ff9b::a.b.c.d` (`64:ff9b::/96`) | RFC 6052 |
+/// | 6to4 | `2002:AABB:CCDD::/48` — the IPv4 address of the 6to4 router every address of that prefix is reached through | RFC 3056 |
+///
+/// NOT treated as an IPv4 host: Teredo (`2001::/32` — it embeds the address of a third-party
+/// server and an obfuscated NAT address), ISATAP interface identifiers, a NAT64 prefix chosen
+/// by a network (RFC 6052 §2.2: it cannot be recognised without that network's configuration),
+/// and every other IPv6 address. Two NAMES of one machine are two nodes, as ever.
+fn embedded_ipv4(addr: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    let v4 = |hi: u16, lo: u16| std::net::Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8);
+    match addr.segments() {
+        [0, 0, 0, 0, 0, 0xffff, hi, lo] => Some(v4(hi, lo)),
+        [0, 0, 0, 0, 0xffff, 0, hi, lo] => Some(v4(hi, lo)),
+        [0x64, 0xff9b, 0, 0, 0, 0, hi, lo] => Some(v4(hi, lo)),
+        [0x2002, hi, lo, ..] => Some(v4(hi, lo)),
+        // `::` and `::1` are the unspecified and the loopback address, not IPv4-compatible ones
+        [0, 0, 0, 0, 0, 0, hi, lo] if (hi, lo) != (0, 0) && (hi, lo) != (0, 1) => Some(v4(hi, lo)),
+        _ => None,
+    }
 }
 
 fn parse_node_id(id: &str) -> Result<NodeId, WalletError> {
@@ -335,7 +373,7 @@ fn parse_node_id(id: &str) -> Result<NodeId, WalletError> {
     if authority.contains('@') {
         return Err(bad("a node id must not carry user information"));
     }
-    let (host, port, loopback) = if let Some(v6) = authority.strip_prefix('[') {
+    let (host, machine, port, loopback) = if let Some(v6) = authority.strip_prefix('[') {
         let (inner, after) = v6.split_once(']').ok_or_else(|| bad("a node id's IPv6 host is not closed"))?;
         if inner.is_empty() || !inner.bytes().all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.') || !inner.contains(':') {
             return Err(bad("a node id's IPv6 host is malformed"));
@@ -347,7 +385,9 @@ fn parse_node_id(id: &str) -> Result<NodeId, WalletError> {
             None => return Err(bad("a node id's port is malformed")),
         };
         let loopback = addr.is_loopback() || addr.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback());
-        (format!("[{addr}]"), port, loopback)
+        let host = format!("[{addr}]");
+        let machine = embedded_ipv4(&addr).map_or_else(|| host.clone(), |v4| v4.to_string());
+        (host, machine, port, loopback)
     } else {
         let (h, port) = match authority.split_once(':') {
             Some((h, p)) => (h, Some(p)),
@@ -368,10 +408,10 @@ fn parse_node_id(id: &str) -> Result<NodeId, WalletError> {
                 return Err(bad("a node id's IPv4 host must be four decimal parts of 0 to 255 without leading zeros"));
             }
             let loopback = parts[0] == "127";
-            (h, port, loopback)
+            (h.clone(), h, port, loopback)
         } else {
             let loopback = h == "localhost" || h.ends_with(".localhost");
-            (h, port, loopback)
+            (h.clone(), h, port, loopback)
         }
     };
     let port = match port {
@@ -391,7 +431,7 @@ fn parse_node_id(id: &str) -> Result<NodeId, WalletError> {
         Some(p) => format!("{scheme}://{host}:{p}"),
         None => format!("{scheme}://{host}"),
     };
-    Ok(NodeId { id, https: scheme == "https", host, port: port.unwrap_or(default_port), loopback })
+    Ok(NodeId { id, https: scheme == "https", machine, port: port.unwrap_or(default_port), loopback })
 }
 
 /// The rule for a SET of configured nodes (REVIEW_WALLET_4 RW4-2, RW4-7). `ids`: canonical,
@@ -400,7 +440,10 @@ fn parse_node_id(id: &str) -> Result<NodeId, WalletError> {
 /// * **A production set**: every node is `https` — whoever sits on the network path answers for
 ///   every `http` node at once, a majority by construction — no host is a loopback host, and
 ///   **each host appears once**, whatever the scheme or the port (`https://h` and
-///   `https://h:8443` are one machine with two votes).
+///   `https://h:8443` are one machine with two votes). **An IPv6 literal that only spells an
+///   IPv4 address is that IPv4 host** (REVIEW_WALLET_5 RW5-7; [`embedded_ipv4`]):
+///   `https://192.0.2.7` and `https://[::ffff:192.0.2.7]` are one host and cannot be configured
+///   together.
 /// * **A development set**: every host is a loopback host (`localhost`, `*.localhost`,
 ///   `127.0.0.0/8`, `[::1]`). `http` is accepted here and only here, and nodes are told apart by
 ///   their port (each `host:port` once). A loopback node is never counted in a quorum together
@@ -420,7 +463,7 @@ fn check_node_set(ids: &[String]) -> Result<(), WalletError> {
         if !development && !n.https {
             return bad("a configured node must be an https origin (http is accepted for loopback hosts only)");
         }
-        let key = if development { format!("{}:{}", n.host, n.port) } else { n.host.clone() };
+        let key = if development { format!("{}:{}", n.machine, n.port) } else { n.machine.clone() };
         if !seen.insert(key) {
             return bad("two configured nodes are one host: one node per host, whatever the scheme or the port");
         }
@@ -926,12 +969,14 @@ impl core::fmt::Debug for OwnShield {
 /// (REVIEW_WALLET_4 RW4-1). Locks are per device: a state made from the phrase knows nothing of
 /// a transaction an earlier copy built, and a signer-less transaction stays valid until its
 /// expiry whatever anybody answers.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// There is no default (REVIEW_WALLET_5 RW5-9): a state text of the current format that does not
+/// say where it stands is refused, never read as "no embargo".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SpendEmbargo {
     /// The state has a lock history: it was migrated from a state that held the device's
     /// pending list, or recovered from one with every entry read. No embargo.
-    #[default]
     NotRequired,
     /// Made by [`WalletState::new`] (a new wallet, a restore, a second device) and nothing
     /// confirmed yet: no base, **no spend** (`spend_embargo_until` is `None`).
@@ -1193,6 +1238,14 @@ pub struct Balances {
 }
 
 /// The persistent shielded-pool state of one wallet.
+///
+/// **Every field of the current format is required when a state is read** (REVIEW_WALLET_5
+/// RW5-9): none has a serde default. A format-5 text that lacks `spend_embargo`,
+/// `sole_copy_asserted`, `view_only_since`, `revision_id` or `own_shields` — the fields format 5
+/// added — is refused (`state:`), not completed with a value that would read as "no embargo" or
+/// "sees every spend"; `recover_locks` then reads its locks into a state that IS under the
+/// embargo. The older formats, which never had these fields, are given them explicitly by their
+/// migrations ([`WalletState::from_json`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletState {
     version: u32,
@@ -1200,20 +1253,17 @@ pub struct WalletState {
     revision: u64,
     /// What identifies this revision (REVIEW_WALLET_4 RW4-10): a hash over the previous
     /// revision's identity, the counter and the change. See [`WalletState::revision_id`].
-    #[serde(default)]
     revision_id: B32,
     /// See [`SpendEmbargo`].
-    #[serde(default)]
     spend_embargo: SpendEmbargo,
     /// The user's recorded statement that no other copy of the wallet has a payment in flight.
-    #[serde(default)]
     sole_copy_asserted: bool,
     /// `Some(h)`: the state has been scanned without the nullifier key from height `h` on and
-    /// no scan with the full key has repaired it yet (REVIEW_WALLET_4 RW4-3).
-    #[serde(default)]
+    /// no scan with the full key has repaired it yet (REVIEW_WALLET_4 RW4-3). Required in the
+    /// text, as `null` or a height (serde would read a missing `Option` as `None`).
+    #[serde(deserialize_with = "required_option")]
     view_only_since: Option<u64>,
     /// Shields the wallet made to its own address, not yet settled (RW4-11).
-    #[serde(default)]
     own_shields: Vec<OwnShield>,
     /// The wallet's `pk`: a state is scanned with one key only.
     pk: B32,
@@ -1257,7 +1307,8 @@ struct WalletStateV2 {
     pk: B32,
     next_height: u64,
     notes: Vec<OldNote>,
-    #[serde(default)]
+    /// Required (REVIEW_WALLET_5 RW5-9): a format-2 text without its pending list is not read
+    /// as "no locks" — it is refused, and `recover_locks` puts what is left under the embargo.
     pending: Vec<PendingTxV2>,
 }
 
@@ -1294,13 +1345,21 @@ struct WalletStateV3 {
     pk: B32,
     #[serde(with = "dec")]
     min_note_value: u64,
-    #[serde(default)]
+    /// Required, as in format 2 (REVIEW_WALLET_5 RW5-9).
     pending: Vec<PendingTx>,
 }
+
+/// The fields format 5 added to the state text. A text of an OLDER format that carries
+/// `spend_embargo` is not a text that format wrote (REVIEW_WALLET_5 RW5-9).
+const FORMAT_5_FIELDS: [&str; 5] = ["revision_id", "spend_embargo", "sole_copy_asserted", "view_only_since", "own_shields"];
 
 #[derive(Deserialize)]
 struct VersionOnly {
     version: u32,
+    /// Present or not — never its value. (The one serde default of the state reader that
+    /// concerns the embargo, and it reads "absent" as absent.)
+    #[serde(default)]
+    spend_embargo: Option<serde::de::IgnoredAny>,
 }
 
 /// One transaction of a page, validated and trial-decrypted, before the state is touched.
@@ -1419,7 +1478,13 @@ impl WalletState {
     /// rescan finds the notes again. The revision continues. The confirmed height starts again
     /// at nothing: a new listing has to earn it.
     pub fn fresh_for_rescan(&self) -> Self {
-        let mut s = Self::empty(self.pk.0, self.min_note_value, self.max_unspent_notes);
+        self.fresh_for_rescan_inner(self.min_note_value, self.max_unspent_notes)
+    }
+
+    /// The limits are set BEFORE the revision identity is computed (REVIEW_WALLET_5 RW5-6): two
+    /// rescans of one state with different limits are two states with two identities.
+    fn fresh_for_rescan_inner(&self, min_note_value: u64, max_unspent_notes: u64) -> Self {
+        let mut s = Self::empty(self.pk.0, min_note_value, max_unspent_notes);
         s.revision = self.revision;
         s.revision_id = self.revision_id;
         s.nodes = self.nodes.clone();
@@ -1458,15 +1523,14 @@ impl WalletState {
     /// [`WalletState::fresh_for_rescan`] with another minimum note value and / or another cap on
     /// unspent notes (`None`: keep the state's). **Raising the cap and rescanning is how the
     /// notes counted in [`WalletState::over_capacity`] are recovered**; lowering the minimum note
-    /// value recovers those counted in [`WalletState::below_minimum`].
+    /// value recovers those counted in [`WalletState::below_minimum`]. The limits are part of
+    /// what the revision identity is computed over: a rescan with other limits has its own
+    /// `revision_id` (REVIEW_WALLET_5 RW5-6).
     pub fn fresh_for_rescan_with(&self, min_note_value: Option<u64>, max_unspent_notes: Option<usize>) -> Result<Self, WalletError> {
         let min = min_note_value.unwrap_or(self.min_note_value);
         let cap = max_unspent_notes.unwrap_or(self.max_unspent_notes as usize);
         Self::check_limits(min, cap)?;
-        let mut s = self.fresh_for_rescan();
-        s.min_note_value = min;
-        s.max_unspent_notes = cap as u64;
-        Ok(s)
+        Ok(self.fresh_for_rescan_inner(min, cap as u64))
     }
 
     /// Every change of the state ends here: the derived positions are recomputed, the counter
@@ -1627,11 +1691,31 @@ impl WalletState {
         }
         let bad = |e: serde_json::Error| WalletError::State(json_error("wallet state", &e));
         let v: VersionOnly = serde_json::from_str(json).map_err(bad)?;
+        if (1..STATE_VERSION).contains(&v.version) && v.spend_embargo.is_some() {
+            // RW5-9: no older format wrote this field. A format-5 text whose version number is
+            // damaged must not be read as an older format — which would end its embargo.
+            return Err(WalletError::State("the state names an older format and carries a spend embargo: its version is damaged (recover_locks reads its locks)".into()));
+        }
         let s = match v.version {
             1 => Self::migrate_v1(serde_json::from_str(json).map_err(bad)?)?,
             2 => Self::migrate_v2(serde_json::from_str(json).map_err(bad)?)?,
             3 => Self::migrate_v3(serde_json::from_str(json).map_err(bad)?)?,
-            4 => Self::migrate_v4(serde_json::from_str(json).map_err(bad)?),
+            4 => {
+                // format 4 is format 5 without the five fields format 5 added: they are given
+                // their migration values EXPLICITLY here — nothing is left to a default
+                let mut text: serde_json::Value = serde_json::from_str(json).map_err(bad)?;
+                let Some(fields) = text.as_object_mut() else { return Err(WalletError::State("the state is not a JSON object".into())) };
+                if FORMAT_5_FIELDS.iter().any(|k| fields.contains_key(*k)) {
+                    return Err(WalletError::State("the state names format 4 and carries fields of format 5: its version is damaged (recover_locks reads its locks)".into()));
+                }
+                fields.insert("revision_id".into(), serde_json::json!(B32([0u8; 32])));
+                // a device's own stored state: its lock history continues, no embargo
+                fields.insert("spend_embargo".into(), serde_json::json!(SpendEmbargo::NotRequired));
+                fields.insert("sole_copy_asserted".into(), serde_json::json!(false));
+                fields.insert("view_only_since".into(), serde_json::Value::Null);
+                fields.insert("own_shields".into(), serde_json::json!([]));
+                Self::migrate_v4(serde_json::from_value(text).map_err(bad)?)
+            }
             STATE_VERSION => {
                 let mut s: Self = serde_json::from_str(json).map_err(bad)?;
                 s.set_confirmed_flags();
@@ -1853,7 +1937,8 @@ impl WalletState {
     /// that does validate (the result is then `fresh_for_rescan`'s, entry for entry).
     ///
     /// **The embargo.** If every entry of the list was read, the device's lock history is
-    /// complete and the old state's embargo is carried over as it was. If an entry could not be
+    /// complete and the old state's embargo is carried over as it was — a format-5 text that
+    /// does not say where it stood (no readable `spend_embargo`) is under the embargo. If an entry could not be
     /// read at all, or the list itself is missing, a transaction of this device may be in flight
     /// without a lock: the recovered state is then under the restore embargo like a state made
     /// by [`WalletState::new`] ([`Recovery::embargo`]). An entry whose expiry could not be read
@@ -1908,9 +1993,13 @@ impl WalletState {
         let complete = list.is_some() && unreadable == 0 && !guessed_any;
         let version = number("version").unwrap_or(0);
         let old_embargo = v.get("spend_embargo").and_then(|e| serde_json::from_value::<SpendEmbargo>(e.clone()).ok());
-        s.spend_embargo = match (complete, version, old_embargo) {
-            (true, 1..=4, _) => SpendEmbargo::NotRequired,
-            (true, _, Some(e)) if Self::embargo_ok(&e) => e,
+        // an older format had no embargo and wrote no such field; a text that names an older
+        // format AND carries the field is a format-5 text with a damaged version, and is
+        // treated by what the field says (REVIEW_WALLET_5 RW5-9)
+        let older_format = (1..=4).contains(&version) && v.get("spend_embargo").is_none();
+        s.spend_embargo = match (complete, older_format, old_embargo) {
+            (true, true, _) => SpendEmbargo::NotRequired,
+            (true, false, Some(e)) if Self::embargo_ok(&e) => e,
             _ => SpendEmbargo::AwaitingBase,
         };
         s.sole_copy_asserted = complete && s.spend_embargo != SpendEmbargo::NotRequired && v.get("sole_copy_asserted").and_then(|x| x.as_bool()).unwrap_or(false);
@@ -1967,14 +2056,23 @@ impl WalletState {
         }
         self.tree.check()?;
         let unspent = self.notes.iter().filter(|n| !n.spent).count();
-        let spent_bound = MAX_SPENT_RETAINED + 2 * (MAX_PENDING + MAX_LEGACY_LOCKS);
+        // a pending entry holds at most four stored notes: two by its nullifiers (a nullifier
+        // belongs to one `rho`, and no two stored notes share one — checked below) and two by
+        // its input commitments or, for an entry migrated without them, its positions
+        let spent_bound = MAX_SPENT_RETAINED + 4 * (MAX_PENDING + MAX_LEGACY_LOCKS);
         if unspent > MAX_UNSPENT_NOTES_LIMIT + OWN_OUTPUT_SLACK || self.notes.len() - unspent > spent_bound || self.tree.tracked.len() > self.notes.len() {
             return bad("the state stores more notes than it can hold");
         }
         let mut seen = BTreeSet::new();
+        let mut rhos = BTreeSet::new();
         for n in &self.notes {
             if n.position >= self.tree.note_count || !seen.insert(n.position) || n.output_index > 1 || n.value == 0 {
                 return bad("a stored note is inconsistent with the tree");
+            }
+            // REVIEW_WALLET_5 RW5-1 (b): one `rho`, one note. `scan` refuses the page that
+            // would store a second one, so this holds for every state a call returns.
+            if !rhos.insert(n.rho) {
+                return bad("two stored notes have one rho (a transaction listed twice)");
             }
             if n.height >= self.next_height || n.spent != n.spent_height.is_some() || n.spent_height.is_some_and(|h| h >= self.next_height || h < n.height) {
                 return bad("a stored note's heights are inconsistent");
@@ -2215,12 +2313,16 @@ impl WalletState {
     /// the wallet can pay twice.
     ///
     /// Accepted only before the state has its embargo base (before the first confirmed state
-    /// check) — afterwards the call is refused. It is honoured when the base is established,
-    /// **and only if that call shows no configured node ahead of the height being confirmed**:
-    /// a quorum that forms below a tip some configured node reports is the shape of RW4-1 (an
-    /// honest node behind, and a liar replaying an old true state), and then the core does not
-    /// take the user's word — the ordinary embargo applies. Make the first state check with
-    /// reports that agree on the tip.
+    /// check) — afterwards the call is refused. **Once recorded, it stands**: the first
+    /// confirmed state check establishes the state without an embargo, whatever the reports of
+    /// that call show (REVIEW_WALLET_5 RW5-5 — the rule of the previous revision, which
+    /// disregarded the statement when a configured node reported a tip above the height being
+    /// confirmed, cost an honest user 129 blocks for a one-block race between three answers and
+    /// stopped no liar, who only had to wait for a call in which the leading node was slow).
+    /// The statement is therefore exactly as strong as it is true: **a client calls this without
+    /// asking only for a phrase that was generated on this device in this installation, and for
+    /// an imported or restored phrase only after the user confirmed it explicitly**
+    /// (`UI_CONTRACT.md`, obligation 1).
     pub fn assert_no_other_copy_has_a_pending_payment(&mut self) -> Result<(), WalletError> {
         if self.spend_embargo != SpendEmbargo::AwaitingBase {
             return Err(WalletError::Request("the statement that no other copy has a pending payment is accepted only before the first confirmed state check".into()));
@@ -2792,8 +2894,11 @@ impl WalletState {
                 let quorum_tip = out.quorum_tip.unwrap_or(h).max(h);
                 let highest = out.highest_reported.unwrap_or(h).max(quorum_tip);
                 let ceiling = quorum_tip.saturating_add(RESTORE_LAG_BOUND_BLOCKS);
-                // the user's statement is honoured only if no configured node is ahead of `h`
-                let waived = self.sole_copy_asserted && highest <= h;
+                // the user's statement, recorded before the base existed, stands (REVIEW_WALLET_5
+                // RW5-5: the earlier rule voided it when a configured node reported above `h` —
+                // an honest user lost a true statement to a one-block race, and a liar only had
+                // to wait for a call in which the leading node was slow)
+                let waived = self.sole_copy_asserted;
                 let base = if waived {
                     h
                 } else if out.all_reported {
@@ -2907,9 +3012,18 @@ impl WalletState {
     /// the nodes'. The page is validated and trial-decrypted completely before the state is
     /// changed, in place: the whole page is applied or nothing.
     ///
+    /// **A page that cannot be applied consistently is a `listing:` error** (REVIEW_WALLET_5
+    /// RW5-1), found before the state is touched: a page that lists a note of this wallet with
+    /// the `rho` of a note the state already holds (a transaction shown twice — twins, or
+    /// several notes under one nullifier), and any page for a state whose blind log (above)
+    /// holds a nullifier listed BELOW the height of the note it would spend. Neither is the
+    /// listing of a chain; the answer is the one to every `listing:` error — the node lies:
+    /// rescan against another one.
+    ///
     /// **The state this call leaves is one `from_json` reads** (REVIEW_WALLET_4 RW4-5): the
-    /// result is validated before it replaces the caller's state; a page that would lead to
-    /// anything else is refused ([`WalletError::StateInvariant`]) and the state is unchanged.
+    /// result is validated before it replaces the caller's state. That validation failing is
+    /// an implementation fault and nothing a page can cause: [`WalletError::StateInvariant`],
+    /// the state unchanged — stop and report it (`NOTES.md` §6).
     /// Whatever a listing does to leaf positions, the pending entries are untouched by it: they
     /// hold their notes by commitment and nullifier.
     pub fn scan(&mut self, page: &ListingPage, key: &ScanKey) -> Result<ScanReport, WalletError> {
@@ -2955,6 +3069,21 @@ impl WalletState {
             if !fill.is_empty() && self.blind.overflow {
                 return Err(WalletError::RescanRequired);
             }
+            // REVIEW_WALLET_5 RW5-1 (a). The pages this state was read from WITHOUT `nk` showed
+            // a nullifier at a height BELOW the block that created the note it belongs to. On a
+            // chain a note is spent in a later block than the one that created it (the spend
+            // proves against an anchor that already holds the note), so those pages were not a
+            // chain's listing — an order of transactions no quorum will confirm. Applying the
+            // sighting would write a note spent before it existed; the scan refuses instead,
+            // as for any page that does not continue a consistent listing: `listing:`, the
+            // state unchanged, and the answer is the one to every `listing:` error — rescan
+            // against another node (`fresh_for_rescan` drops what was remembered).
+            for &(i, nf) in &fill {
+                let n = &self.notes[i];
+                if n.spent_height.is_none() && self.blind.seen.iter().any(|seen| seen.nf.0 == nf && seen.height < n.height) {
+                    return Err(listing("the listing this state was read from shows a nullifier before the note it spends: rescan against another node"));
+                }
+            }
         }
         let room = (1u64 << TREE_DEPTH) - self.tree.note_count;
         if 2 * page.txs.len() as u64 > room {
@@ -2969,6 +3098,14 @@ impl WalletState {
             // … and the notes of the wallet's own shields (RW4-11)
             .chain(self.own_shields.iter().map(|s| (s.cm.0, (s.value, s.r.0))))
             .collect();
+        // REVIEW_WALLET_5 RW5-1 (b): the `rho` of every note this state holds, and of the notes
+        // of this wallet met so far in this page. `rho = H_rho(nf1, nf2, j)` names the output
+        // slot `j` of the ONE transaction with the nullifiers `(nf1, nf2)`, and no two
+        // transactions of a chain share a nullifier (spec §2.4): two notes with one `rho` exist
+        // in no chain's listing — only in one that shows a transaction twice (the same outputs:
+        // twins with one commitment; or other outputs under the same nullifiers: different
+        // notes with ONE nullifier, since a note's nullifier is `H(nk, rho)`).
+        let mut seen_rho: BTreeSet<[u8; 32]> = self.notes.iter().map(|n| n.rho.0).collect();
         let mut prepared: Vec<PreparedTx> = Vec::with_capacity(page.txs.len());
         let mut last: Option<(u64, u64)> = None;
         // The leaf numbers of a listing are the LISTING NODE's count; a note's position is where
@@ -3035,6 +3172,16 @@ impl WalletState {
                     Some(note) => Some(note),
                     None => decrypt_note(&dk, &kem, &note_ct, &cm_b).and_then(|(value, r_b)| opens(value, r_b)),
                 };
+                // RW5-1 (b): a note of this wallet with the `rho` of a note the state already
+                // holds, or of one this page already listed. Such a page is refused whole,
+                // before the state is touched: the second note could never be confirmed, it
+                // shares its nullifier — and so its lock and its spend — with the first, and,
+                // repeated often enough, it is how a listing made this call leave a state with
+                // more spent notes than a state may hold (every note with the nullifier of a
+                // pending entry's input is "an input of a pending entry", and none is dropped).
+                if mine.as_ref().is_some_and(|(_, _, rho)| !seen_rho.insert(field::bytes(rho))) {
+                    return Err(listing("the listing shows a transaction that pays this wallet a second time (two notes with one rho): it is not a chain's listing; rescan against another node"));
+                }
                 outs[j] = Some(PreparedOutput { cm: cm_b, kem_ct: Box::new(kem), note_ct, mine, own: own.is_some() });
             }
             let [Some(o0), Some(o1)] = outs else { return Err(WalletError::Internal("outputs")) };

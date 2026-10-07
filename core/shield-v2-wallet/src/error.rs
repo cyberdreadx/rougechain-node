@@ -39,8 +39,10 @@ pub enum WalletError {
     StaleState,
     /// A call would have left a state that `from_json` does not read back (an implementation
     /// fault, caught before the state was handed out): the call did nothing and the caller's
-    /// state is unchanged (REVIEW_WALLET_4 RW4-5). For a STORED state that no longer reads, use
-    /// `WalletState::recover_locks`, never a new state.
+    /// state is unchanged (REVIEW_WALLET_4 RW4-5). **Nothing a node serves can cause it**
+    /// (REVIEW_WALLET_5 RW5-1: a page that cannot be applied consistently is a `Listing` error);
+    /// a client stops and reports it, and keeps its stored state. For a STORED state that no
+    /// longer reads, use `WalletState::recover_locks`, never a new state.
     StateInvariant,
     /// The state was made from the phrase and has no lock history: an earlier copy of the wallet
     /// may have a payment in flight. No spend is built before the confirmed height reaches
@@ -70,7 +72,11 @@ pub enum WalletError {
     AnchorMismatch,
     /// A 32-byte value that must be a digest of spec §2.8 has a word ≥ p.
     NonCanonical(&'static str),
-    /// The note listing is malformed, out of order, or does not continue the wallet's state.
+    /// The note listing is malformed, out of order, does not continue the wallet's state — or
+    /// is not the listing of any chain (a transaction that pays the wallet shown twice; a spend
+    /// listed below the height of the note it spends: REVIEW_WALLET_5 RW5-1). The state is
+    /// unchanged. The node that served it lies: ban it for the session, rescan
+    /// (`fresh_for_rescan`), list from another node (`NOTES.md` §6).
     Listing(String),
     /// Stored wallet state does not parse or is inconsistent.
     State(String),
