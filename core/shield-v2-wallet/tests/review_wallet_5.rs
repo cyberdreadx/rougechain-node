@@ -1,13 +1,26 @@
 //! REVIEW_WALLET_5 — fifth independent review, of `fix/shield-v2-wallet-settlement-3` @ `43166fb`
 //! (see `REVIEW_WALLET_5.md`). Nothing was fixed by the review.
 //!
-//! * `rw5_fN_…` — a confirmed defect; **fails on purpose** and asserts the safe behaviour, so that
-//!   a fix turns it green without editing it;
-//! * `rw5_demo_…` — a limit that is real (passes; the assertions STATE the limit). The limits of
-//!   the client loop of `NOTES.md` §6 are demonstrated with a literal transcription of that loop
-//!   ([`LoopClient`]): the loop is prose and the property test's client is private to its file,
-//!   so no test here can turn green by a change of either;
+//! * `rw5_fN_…` — a confirmed defect; it failed on purpose and asserts the safe behaviour, so
+//!   that a fix turns it green without editing what it asserts;
+//! * `rw5_demo_…` — a limit that is real (passes; the assertions STATE the limit);
 //! * `rw5_sound_…` — something that was attacked and holds (passes).
+//!
+//! **After the Resolution** (`REVIEW_WALLET_5.md`, "Resolution"; branch
+//! `fix/shield-v2-wallet-settlement-4`). What was edited here, and why:
+//!
+//! * `common::configure` no longer makes the user's statement (condition 3, section A.3). The
+//!   NEW wallets of these tests that have to spend say so with `configure_as_sole_copy` — one
+//!   line of SET-UP in `rw5_f1` and in `rw5_f1b` (the device that builds the payment), in
+//!   `stale_quorum` (the lost device) and in two `rw5_sound_…` tests. No assertion of an
+//!   `rw5_fN_…` test was touched.
+//! * the two loop tests asserted that the loop of `NOTES.md` §6 as it was did NOT terminate.
+//!   The loop was restated (condition 1) and is code now (`common::client_loop`, the one the
+//!   property test's client runs): the tests assert that it ends with the tip confirmed.
+//! * `rw5_demo_the_override_…` asserted the voiding rule of RW5-5, which is removed: it asserts
+//!   that the statement stands.
+//! * `rw5_sound_twin_notes_…`: twin notes no longer exist in a state — the page that would
+//!   create one is refused (RW5-1 b); the test asserts that.
 //!
 //! Needs the `test-vectors` feature (proof-less deterministic assembly), like the earlier reviews.
 #![cfg(feature = "test-vectors")]
@@ -16,8 +29,11 @@ mod common;
 
 use std::collections::BTreeSet;
 
+use common::client_loop::{LoopClient, Stop, FIRST_CHECK_ROUNDS, PAGE_BLOCKS, STRIKES};
 use common::*;
-use quantum_vault_shield_v2_wallet::store::ListedTx;
+use quantum_vault_shield_v2::reference::{derive_rho, digest_from_bytes, digest_to_bytes, Note};
+use quantum_vault_shield_v2_wallet::note_enc::encrypt_note_with_kem_randomness;
+use quantum_vault_shield_v2_wallet::store::{ListedOutput, ListedTx};
 use quantum_vault_shield_v2_wallet::tx::{deterministic, UnprovenTx};
 use quantum_vault_shield_v2_wallet::*;
 
@@ -115,6 +131,7 @@ fn rw5_f1_a_lying_listing_read_with_the_viewing_key_leaves_a_state_no_scan_with_
     let b2 = shield_body(&chain, &alice.address(), 10 * Q, "rw5-f1-n2");
     chain.block(&[&b2]).unwrap();
     let mut main = WalletState::new(alice.address().pk);
+    configure_as_sole_copy(&mut main, &[NODE_A, NODE_B]); // (set-up, added with the Resolution: the main device is a NEW wallet)
     main.scan(&chain.page(0), &alice.scan_key()).unwrap();
     confirm(&chain, &mut main);
     let p_in = position_of(&main, 10 * Q);
@@ -174,7 +191,7 @@ fn rw5_f1b_a_listing_that_repeats_the_note_of_a_pending_payment_makes_the_full_k
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // (set-up, changed with the Resolution: a NEW wallet; was `configure`, which made the statement then)
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let p_in = position_of(&w, 10 * Q);
@@ -291,7 +308,7 @@ fn stale_quorum(n: usize, lag: u64, leading_answer: bool, expiry_offset: u64, ta
     // the lost device: a new wallet (the statement is true for it), confirmed at the tip by the
     // leading honest nodes and the liars, which tell the truth here
     let mut d1 = WalletState::new(alice.address().pk);
-    configure(&mut d1, &ids);
+    configure_as_sole_copy(&mut d1, &ids);
     d1.scan(&chain.page(0), &alice.scan_key()).unwrap();
     let at_tip: Vec<StateReport> = liars.iter().chain(leading).map(|id| chain.report(id)).collect();
     assert_eq!(d1.confirm_state(&at_tip).unwrap().matched_height, Some(chain.height));
@@ -367,38 +384,44 @@ fn rw5_demo_the_restore_embargo_holds_up_to_exactly_256_blocks_of_honest_lag_for
 // A (2) — the override: what its "voiding" rule does and does not do.
 // ---------------------------------------------------------------------------------------------------
 
-/// The user's statement is honoured only if the establishing call shows no configured node above
-/// the height being confirmed. Two consequences, both stated here as they are:
+/// **As reviewed (RW5-5)** the user's statement was honoured only if the establishing call showed
+/// no configured node above the height being confirmed, and this test stated the two
+/// consequences: (a) an honest user lost a TRUE statement to an ordinary one-block race, for
+/// good, and was embargoed for 129 blocks; (b) the rule protected nobody from a liar, who only
+/// had to wait for a call in which the leading node was silent.
 ///
-/// (a) **An honest user loses it to an ordinary race, for good.** A NEW wallet (the statement is
-/// true), three honest nodes, one of them one block ahead when they are asked: the statement is
-/// disregarded, the state is under the embargo for 129 blocks, and the statement cannot be made
-/// again ("accepted only before the first confirmed state check").
+/// **Resolved: the voiding rule is removed — the statement, once recorded before the base
+/// exists, stands.** (The test was edited with the rule it asserted.)
 ///
-/// (b) **It protects nobody from a liar.** The attack of RW4-1 with the statement made (falsely:
-/// the lost device has a payment in flight) and the honest node at the tip not answering in
-/// that one call: nothing is "ahead", the statement is honoured, and one block of honest lag is
-/// a double payment. A false statement is the user's — the point is that the conditional rule
-/// buys nothing for it: the liar only has to wait for a call in which the leading node is slow.
+/// (a) A NEW wallet (the statement is true), three honest nodes, one of them one block ahead
+/// when they are asked: the statement is honoured, there is no embargo, the wallet pays.
+///
+/// (b) The statement is the user's word and exactly as strong as it is true. Made FALSELY on a
+/// restored device — the lost device has a payment in flight — it is honoured whatever the
+/// reports show (here every node answers, the honest leader included), and one block of honest
+/// lag is a double payment. No rule of the core stands between a false statement and that:
+/// which is why a client makes it without asking only for a phrase generated on the device
+/// (`UI_CONTRACT.md`, obligation 1). The same device WITHOUT the statement is the embargo of
+/// `rw5_demo_the_restore_embargo_holds_up_to_exactly_256_blocks_…`.
 #[test]
-fn rw5_demo_the_override_is_lost_to_a_one_block_race_and_honoured_when_the_leading_node_is_silent() {
+fn rw5_demo_the_override_stands_through_a_one_block_race_and_is_exactly_as_strong_as_it_is_true() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     // (a)
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
     chain.advance_to(40);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]); // nodes + the statement, as a UI does for a new wallet
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a new wallet on a phrase generated on this device
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     let (r1, r2) = (chain.report(N1), chain.report(N2));
     chain.advance_to(41); // a block arrives while the three answers are collected
     let c = w.confirm_state(&[r1, r2, chain.report(N3)]).unwrap();
-    assert_eq!((c.matched_height, c.embargo_base_set), (Some(40), true));
-    assert_eq!(w.spend_embargo(), SpendEmbargo::Until { first_confirmed: 40, base: 41, until: 41 + 128, waived: false });
-    assert!(matches!(w.spend_gate(), Err(WalletError::RestoredRecently { until: Some(169) })));
-    assert!(w.assert_no_other_copy_has_a_pending_payment().is_err(), "and the statement cannot be made again");
-    let left = w.spend_status(Some(41)).embargo_blocks_left;
-    println!("rw5-override (a): a new wallet with a true statement, one honest node one block ahead in the first state check: embargo, {left:?} blocks of confirmed height to go; the statement is refused from now on");
+    assert_eq!((c.matched_height, c.embargo_base_set, c.highest_reported), (Some(40), true, Some(41)));
+    assert_eq!(w.spend_embargo(), SpendEmbargo::Until { first_confirmed: 40, base: 40, until: 40, waived: true });
+    assert!(w.spend_gate().is_ok() && w.spend_status(Some(41)).can_spend_now);
+    let p_in = position_of(&w, 10 * Q);
+    pay_with(&mut w, &alice, &[p_in], &bob.address(), 4 * Q, None, false, "rw5-override-new").expect("a new wallet with a true statement pays, whatever the race");
+    println!("rw5-override (a): a new wallet with a true statement, one honest node one block ahead in the first state check: no embargo; it pays");
 
     // (b)
     let mut chain = Chain::new();
@@ -407,22 +430,22 @@ fn rw5_demo_the_override_is_lost_to_a_one_block_race_and_honoured_when_the_leadi
     let (old_n2, old_n3, old_page) = (chain.report(N2), chain.report(N3), chain.page_value(0, 40));
     chain.advance_to(41); // honest node 2 is ONE block behind
     let mut d1 = WalletState::new(alice.address().pk);
-    configure(&mut d1, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut d1, &[N1, N2, N3]);
     d1.scan(&chain.page(0), &alice.scan_key()).unwrap();
     d1.confirm_state(&[chain.report(N1), chain.report(N3)]).unwrap();
     let p_in = position_of(&d1, 10 * Q);
     let t1 = pay_with(&mut d1, &alice, &[p_in], &bob.address(), 4 * Q, None, false, "rw5-override-t1").unwrap();
     let mut d2 = WalletState::new(alice.address().pk);
-    configure(&mut d2, &[N1, N2, N3]); // the statement — false here
+    configure_as_sole_copy(&mut d2, &[N1, N2, N3]); // the statement — FALSE here: the lost device has t1 in flight
     d2.scan(&parse(&old_page), &alice.scan_key()).unwrap();
-    let c = d2.confirm_state(&[old_n2, old_n3]).unwrap(); // node 1 did not answer in this call
-    assert_eq!(c.matched_height, Some(40));
+    let c = d2.confirm_state(&[chain.report(N1), old_n2, old_n3]).unwrap(); // every node answers; the honest leader is ahead
+    assert_eq!((c.matched_height, c.highest_reported), (Some(40), Some(41)));
     assert_eq!(d2.spend_embargo(), SpendEmbargo::Until { first_confirmed: 40, base: 40, until: 40, waived: true });
     let sel = select_inputs(&d2, 4 * Q, Q).unwrap();
     let t2 = pay_with(&mut d2, &alice, &sel.positions, &bob.address(), 4 * Q, None, false, "rw5-override-t2").expect("no embargo: the statement was honoured");
     chain.block(&[&t2.body, &t1.body]).unwrap();
     assert_eq!(balance_of(&chain, &bob), 8 * Q as u128, "the payee is paid twice");
-    println!("rw5-override (b): the statement made on a restored device, the leading honest node silent in the first state check, the other ONE block behind: honoured; the payee holds {} quanta for one payment of {}", balance_of(&chain, &bob), 4 * Q);
+    println!("rw5-override (b): the statement made FALSELY on a restored device: honoured; the payee holds {} quanta for one payment of {}", balance_of(&chain, &bob), 4 * Q);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -471,182 +494,119 @@ fn rw5_demo_on_an_idle_chain_the_restore_embargo_does_not_end() {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The client loop of NOTES.md §6, transcribed.
+// The client loop of NOTES.md §6 — as restated after this review, and as code:
+// `common::client_loop` (the loop the property test's client runs, decision for decision).
 // ---------------------------------------------------------------------------------------------------
 
-/// `NOTES.md` §6, "The client loop (normative)", steps 1 to 4, line for line. `page(node, since)`
-/// is what the node listed from answers; `reports()` what the nodes answer to step 2.
-struct LoopClient {
-    s: WalletState,
-    /// `L`
-    l: usize,
-    bad: BTreeSet<usize>,
-    ahead: u32,
-    behind: u32,
-    /// `R`: (round, report)
-    r: Vec<(u64, StateReport)>,
-    round: u64,
-    nodes: usize,
-    /// "Every node in bad → stop and tell the user"
-    stopped: bool,
-    rescans: u32,
+/// A page of `PAGE_BLOCKS` empty heights from `from`, by a node that claims a tip far away: the
+/// size of an honest answer, and never the node's tip.
+fn full_empty_page(from: u64) -> ListingPage {
+    empty_page(from, from + PAGE_BLOCKS, 1_000_000)
 }
 
-impl LoopClient {
-    fn new(s: WalletState, l: usize) -> Self {
-        let nodes = s.nodes().len();
-        Self { s, l, bad: BTreeSet::new(), ahead: 0, behind: 0, r: Vec::new(), round: 0, nodes, stopped: false, rescans: 0 }
-    }
-
-    /// `L := next node not in bad`
-    fn next_listing(&mut self) {
-        if self.bad.len() >= self.nodes {
-            self.stopped = true;
-            return;
-        }
-        for k in 1..=self.nodes {
-            let next = (self.l + k) % self.nodes;
-            if !self.bad.contains(&next) {
-                self.l = next;
-                break;
-            }
-        }
-    }
-
-    /// `RESCAN(L): bad += L; S := rescan_state(S); L := next node not in bad`
-    fn rescan(&mut self) {
-        self.bad.insert(self.l);
-        self.s = self.s.fresh_for_rescan();
-        self.rescans += 1;
-        self.next_listing();
-        (self.ahead, self.behind) = (0, 0);
-    }
-
-    fn round(&mut self, key: &ScanKey, page: &mut dyn FnMut(usize, u64) -> ListingPage, reports: &mut dyn FnMut() -> Vec<StateReport>) {
-        if self.stopped {
-            return;
-        }
-        self.round += 1;
-        // 1. pages from L until at_tip or a page budget
-        let mut at_tip = false;
-        for _ in 0..4 {
-            match self.s.scan(&page(self.l, self.s.next_height()), key) {
-                Ok(r) if r.leaf_mismatch => return self.rescan(),
-                Ok(r) if r.at_tip => {
-                    at_tip = true;
-                    break;
-                }
-                Ok(_) => {}
-                Err(WalletError::Listing(_)) | Err(WalletError::RescanRequired) => return self.rescan(),
-                Err(e) => panic!("the loop has no rule for this error of scan: {e}"),
-            }
-        }
-        // 2. every node is asked; the reports of the last three rounds
-        let now = self.round;
-        self.r.retain(|(round, _)| round + 2 >= now);
-        self.r.extend(reports().into_iter().map(|r| (now, r)));
-        let handed_in: Vec<StateReport> = self.r.iter().map(|(_, r)| r.clone()).collect();
-        // 3. confirm_state and its rules
-        let c = self.s.confirm_state(&handed_in).unwrap();
-        if c.listing_refuted {
-            return self.rescan();
-        }
-        if c.listing_ahead {
-            self.ahead += 1;
-            if self.ahead >= 3 {
-                self.rescan();
-            }
-            return;
-        }
-        self.ahead = 0;
-        if at_tip && c.quorum_tip.is_some_and(|t| self.s.confirmed_height().is_none_or(|h| h < t)) {
-            self.behind += 1;
-            if self.behind >= 2 {
-                self.next_listing();
-                self.behind = 0;
-            }
-        } else {
-            self.behind = 0;
-        }
-        // 4. resolve_pending
-        self.s.resolve();
-    }
-}
-
-/// **RW5-2.** The loop changes the listing node on three signals: a refuted listing, a listing
-/// that stays ahead, and — `at_tip` — a confirmed height that stays below the quorum's tip. A
-/// listing node that never lets the client reach ITS tip triggers none of them:
+/// **RW5-2, resolved.** As reviewed, the loop left a listing node on three signals, and a node
+/// that never let the client reach ITS tip triggered none of them: 40 rounds, 160 revisions
+/// written, nothing confirmed, never left. The restated loop (`NOTES.md` §6) leaves it within a
+/// bounded number of rounds, whichever way the node goes about it — and ends with the tip
+/// confirmed, listing from an honest node:
 ///
-/// (a) pages that make no progress and claim a tip far away (`next_height = from_height`,
-/// `tip_height` = a million): accepted by `scan` (each one a new revision to persist), never
-/// `at_tip`; nothing is ever comparable, nothing is confirmed, and "no match and none of the
-/// above → wait and repeat: NOTHING else". Two honest nodes answer every round; the wallet
-/// shows nothing, and settles nothing, for as long as the session lasts — and the next session
-/// starts with the same first node.
+/// (a) pages that make no progress (`next_height = from_height`, a far `tip_height`): not the
+/// node's tip and not the 64 heights that were asked for — **a short page: banned at once**;
+/// (a2) pages of the right size, to nowhere (the truth, then 64 empty heights at a time, never
+/// the tip): what was scanned a round ago stays unconfirmed — **left after `STRIKES` rounds**;
+/// (b) the truth to the tip, then one empty height per page: a short page again — banned;
+/// (b2) the truth to the tip and 64 empty heights above it, claimed as its tip: `scanned` stays
+/// above `confirmed` — left after `STRIKES` rounds.
 ///
-/// (b) the TRUE listing to the tip, then empty heights above it: the state check matches at the
-/// true tip, the core says a spend can be built — and the loop's own condition for a payment
-/// ("confirmed_height = scanned_height") is never met. It ends when somebody else's pool
-/// transaction is mined (the liar's empty heights are then refuted) — on a chain that makes a
-/// block only when somebody transacts.
+/// Two honest nodes answer every round; the liar (node 1, the first in the list) answers no
+/// report. The wallet of (a) to (b2) is a new one (it made the statement); the last case is a
+/// RESTORED one, whose first state check waits `FIRST_CHECK_ROUNDS` rounds for the silent node
+/// (`UI_CONTRACT.md`, obligation 2) and then goes on.
 #[test]
-fn rw5_demo_a_listing_node_that_never_reaches_its_tip_is_never_left_by_the_documented_loop() {
+fn rw5_demo_a_listing_node_that_never_reaches_its_tip_is_left_and_the_tip_is_confirmed() {
     let alice = keys(PHRASE_1);
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
     chain.advance_to(20);
     let honest_reports = |chain: &Chain| vec![chain.report(N2), chain.report(N3)]; // node 1 is the liar; it is silent
-    let new_wallet = || {
+    let wallet = |new: bool| {
         let mut s = WalletState::new(alice.address().pk);
-        configure(&mut s, &[N1, N2, N3]);
+        if new {
+            configure_as_sole_copy(&mut s, &[N1, N2, N3]);
+        } else {
+            configure(&mut s, &[N1, N2, N3]);
+        }
         s
     };
-    // (a)
-    let mut c = LoopClient::new(new_wallet(), 0);
-    let revision = c.s.revision();
-    for _ in 0..40 {
-        c.round(&alice.scan_key(), &mut |node, since| if node == 0 { empty_page(since.max(A), since.max(A), 1_000_000) } else { chain.page(since) }, &mut || honest_reports(&chain));
+    let truth_then = |since: u64, then: &dyn Fn(u64) -> ListingPage| if since > 20 { then(since) } else { chain.page(since) };
+    type Liar<'a> = (&'a str, Box<dyn Fn(u64) -> ListingPage + 'a>, bool);
+    let liars: Vec<Liar> = vec![
+        ("(a) no progress", Box::new(|since| empty_page(since.max(A), since.max(A), 1_000_000)), true),
+        ("(a2) the truth, then full pages to nowhere", Box::new(|since| if since > 20 { full_empty_page(since) } else { parse(&{ let mut p = chain.page_value(since, 20); p["tip_height"] = serde_json::json!(1_000_000); p["next_height"] = serde_json::json!(since.max(A) + PAGE_BLOCKS); p }) }), false),
+        ("(b) the truth, then one empty height per page", Box::new(|since| truth_then(since, &|s| empty_page(s, s + 1, 1_000_000))), true),
+        ("(b2) the truth and 64 empty heights above it, as its tip", Box::new(|since| if since > 20 { empty_page(since, since, since - 1) } else { parse(&{ let mut p = chain.page_value(since, 20); p["tip_height"] = serde_json::json!(20 + PAGE_BLOCKS); p["next_height"] = serde_json::json!(21 + PAGE_BLOCKS); p }) }), false),
+    ];
+    // every tenure of a node ends within this many rounds (the chain is short: no catching up)
+    let per_node = STRIKES as u64 + 2;
+    for (what, liar, banned) in &liars {
+        for new in [true, false] {
+            let mut c = LoopClient::new(wallet(new), 0);
+            let revision = c.s.revision();
+            // (a liar that tells the truth up to the tip is at the tip with everybody else for
+            // one round; what counts is where the loop IS after the bound, and that it stays)
+            let bound = per_node + 1 + if new { 0 } else { FIRST_CHECK_ROUNDS as u64 };
+            let mut rounds = 0;
+            for round in 1..=bound {
+                c.round(&alice.scan_key(), &mut |node, since| if node == 0 { liar(since) } else { chain.page(since) }, &mut || honest_reports(&chain));
+                if c.session.listing == 0 || c.s.confirmed_height() != Some(20) || c.s.scanned_height() != Some(20) {
+                    rounds = round + 1;
+                }
+            }
+            assert!(rounds <= bound && c.s.confirmed_height() == Some(20) && c.s.scanned_height() == Some(20), "{what} (new wallet: {new}): not at the tip, listing from an honest node, after {bound} rounds — L is node {}, bad {:?}, confirmed {:?}, scanned {:?}", c.session.listing + 1, c.session.bad, c.s.confirmed_height(), c.s.scanned_height());
+            println!(
+                "rw5-loop {what}, {}: the tip is confirmed after {rounds} rounds (bound {bound}); the liar was {} ({:?}); L is node {}, {} rescan(s), {} state revisions written",
+                if new { "a new wallet" } else { "a restored wallet" }, if *banned { "banned" } else { "left" }, c.left, c.session.listing + 1, c.rescans, c.s.revision() - revision
+            );
+            assert!(c.session.stopped.is_none() && c.session.listing != 0, "the loop lists from an honest node");
+            assert_eq!(c.session.bad.contains(&0), *banned, "{what}: banned on evidence only — a short page is evidence, an unconfirmed tail is not");
+            assert!(c.session.bad.iter().all(|n| *n == 0), "no honest node is ever banned");
+            assert_eq!((c.left.len(), c.left[0].1), (1, 0), "{what}: one LEAVE, of the liar");
+            assert_eq!(c.s.balances().confirmed, 16 * Q as u128);
+            assert_eq!(c.s.spend_status(Some(20)).can_spend_now, new, "a restored wallet is under the embargo; a new one pays");
+            // and it stays there: forty more rounds change nothing
+            for _ in 0..40 {
+                c.round(&alice.scan_key(), &mut |node, since| if node == 0 { liar(since) } else { chain.page(since) }, &mut || honest_reports(&chain));
+            }
+            assert!(c.session.listing != 0 && c.left.len() == 1 && c.s.confirmed_height() == Some(20) && c.s.scanned_height() == Some(20));
+        }
     }
-    println!(
-        "rw5-loop (a): 40 rounds listing from a node whose pages make no progress: L is node {}, bad {:?}, confirmed {:?}, scanned {:?}, {} state revisions written, stopped: {}",
-        c.l + 1, c.bad, c.s.confirmed_height(), c.s.scanned_height(), c.s.revision() - revision, c.stopped
-    );
-    assert!(c.l == 0 && c.bad.is_empty() && !c.stopped && c.s.confirmed_height().is_none(), "the loop never leaves the stalling node");
-    assert!(c.s.revision() - revision >= 160, "and every page is a new revision to persist");
-    // the same wallet, listing from an honest node: one round
-    let mut h = LoopClient::new(new_wallet(), 1);
-    h.round(&alice.scan_key(), &mut |_, since| chain.page(since), &mut || honest_reports(&chain));
-    assert_eq!(h.s.confirmed_height(), Some(20));
-
-    // (b)
-    let mut c = LoopClient::new(new_wallet(), 0);
-    for _ in 0..40 {
-        let truth = |since: u64| chain.page(since);
-        c.round(&alice.scan_key(), &mut |node, since| if node == 0 && since > 20 { empty_page(since, since + 1, 1_000_000) } else { truth(since) }, &mut || honest_reports(&chain));
+    // every node lies in a way that is evidence: the loop STOPS, says so, and keeps `bad`
+    let mut c = LoopClient::new(wallet(true), 0);
+    for _ in 0..10 {
+        c.round(&alice.scan_key(), &mut |_, since| empty_page(since.max(A), since.max(A), 1_000_000), &mut || honest_reports(&chain));
     }
-    let st = c.s.spend_status(Some(20));
-    println!(
-        "rw5-loop (b): 40 rounds listing from a node that serves the truth and then empty heights: L is node {}, confirmed {:?}, scanned {:?}; the core says can_spend_now = {}; \
-         the loop's condition for a payment (confirmed = scanned) holds: {}",
-        c.l + 1, c.s.confirmed_height(), c.s.scanned_height(), st.can_spend_now, c.s.confirmed_height() == c.s.scanned_height()
-    );
-    assert!(c.l == 0 && c.bad.is_empty() && c.s.confirmed_height() == Some(20) && c.s.scanned_height() > Some(100));
-    assert!(st.can_spend_now && c.s.confirmed_height() != c.s.scanned_height(), "the core would build; the loop never offers the payment");
+    assert_eq!((c.session.stopped.clone(), c.session.bad.len(), c.session.round), (Some(Stop::NoHonestListingNode), 3, 3), "three nodes, three short pages, three rounds: no honest listing node reachable — and the ban set is not cleared");
+    assert!(c.s.scanned_height().is_none() && c.s.confirmed_height().is_none(), "the state holds nothing of a banned node");
 }
 
-/// **RW5-3.** `RESCAN(L)` blames the node the client is listing from at the moment a lie is
-/// DETECTED. After "L := next node (NO rescan)" that is not the node that told it: the state
-/// still holds the liar's pages, the honest node's page disagrees with them (`leaf_mismatch` —
-/// deviation B — or, without a pool transaction in the page, `listing_refuted`), and the HONEST
-/// node goes into `bad`. The liar never does: a forged listing that claims a tip below the
-/// honest nodes' is never comparable, so it is never refuted and never "ahead".
+/// **RW5-3, resolved.** As reviewed, `RESCAN(L)` blamed the node the client was listing from at
+/// the moment a lie was DETECTED — after "L := next node (NO rescan)" an honest one, whose true
+/// page disagreed with the liar's pages still in the state. One liar of three got both honest
+/// nodes into `bad` and kept the session.
 ///
-/// Three nodes, ONE liar, and nothing else than what the model allows (the two honest nodes one
-/// or two blocks apart for two rounds): both honest nodes end in `bad`, the client lists from
-/// the liar for the rest of the session, and "every node in bad → stop and tell the user" never
-/// fires, because the liar is not in it. The honest nodes answered truthfully in every round.
+/// The restated loop **rescans whenever the listing node changes, unless everything the state
+/// holds is confirmed** — so every unconfirmed page of a state is its current listing node's,
+/// and the node that is banned is the node that lied. It bans on evidence only (a `listing:`
+/// error, `leaf_mismatch`, a short page, `listing_refuted`); a node that merely does not get
+/// the wallet to where the quorum is — an honest node that is behind, a liar with a true but
+/// short listing — is LEFT, not banned.
+///
+/// The scenario is the review's, phase for phase (node 1 lies; the two honest nodes answer
+/// truthfully in every round and are at most three blocks apart): no honest node is ever in
+/// `bad`, the loop never stops, and every phase ends with the tip confirmed and the true
+/// balance — the forged 50 XRGE payments are gone with the rescans.
 #[test]
-fn rw5_demo_one_lying_listing_node_gets_both_honest_nodes_blamed_and_keeps_the_session() {
+fn rw5_demo_one_lying_listing_node_gets_no_honest_node_blamed_and_the_tip_is_confirmed() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
@@ -674,58 +634,90 @@ fn rw5_demo_one_lying_listing_node_gets_both_honest_nodes_blamed_and_keeps_the_s
         parse(&serde_json::json!({ "active": true, "tip_height": 9, "from_height": A, "next_height": 10, "txs": txs }))
     };
     let mut s = WalletState::new(alice.address().pk);
-    configure(&mut s, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut s, &[N1, N2, N3]);
     let mut c = LoopClient::new(s, 0); // node 1, the liar, is the first node of the list
     let key = alice.scan_key();
+    let honest_only = |c: &LoopClient| c.session.bad.iter().all(|n| *n == 0) && c.session.stopped.is_none();
+    let at_true_tip = |c: &LoopClient, chain: &Chain| c.s.confirmed_height() == Some(chain.height) && c.s.balances().confirmed == balance_of(chain, &alice) && c.s.balances().unverified == 0;
 
-    // ---- phase 1: the liar's short forged listing; then the loop moves on, WITHOUT a rescan
-    for _ in 0..2 {
+    // ---- phase 1: the liar's short forged listing. Its tip stays below the quorum's: after
+    // STRIKES rounds it is left — WITH a rescan, because the state holds its unconfirmed pages.
+    for _ in 0..STRIKES {
+        assert_eq!(c.session.listing, 0);
         c.round(&key, &mut |_, since| short_forged(since), &mut || vec![chain.report(N2), chain.report(N3)]);
     }
-    assert!(c.l == 1 && c.bad.is_empty() && c.rescans == 0, "two rounds behind the quorum's tip: list from the next node, no rescan");
-    // node 2 (honest) is listed from; its page is true; the state it is applied to is not
+    assert_eq!((c.session.listing, c.rescans, c.left.clone()), (1, 1, vec![(STRIKES as u64, 0, false, "behind the quorum's tip")]), "left, not banned: a short listing is no evidence");
+    assert!(c.s.scanned_height().is_none() && c.s.balance() == 0, "nothing of the liar's listing is in the state the honest node is asked to continue");
+    // node 2 (honest): one round, the tip is confirmed — its true page is applied to an EMPTY state
     c.round(&key, &mut |_, since| chain.page(since), &mut || vec![chain.report(N2), chain.report(N3)]);
-    assert_eq!((c.bad.iter().copied().collect::<Vec<_>>(), c.l, c.rescans), (vec![1], 2, 1), "the listing is refuted while the client lists from HONEST node 2: node 2 is blamed");
-    c.round(&key, &mut |_, since| chain.page(since), &mut || vec![chain.report(N2), chain.report(N3)]);
-    assert_eq!(c.s.confirmed_height(), Some(20), "node 3 (honest): rescanned, confirmed at the tip");
+    assert!(honest_only(&c) && at_true_tip(&c, &chain) && c.session.listing == 1, "phase 1 ends at the tip, listing from honest node 2; nobody is blamed");
 
-    // ---- phase 2: the chain moves (somebody's pool transaction in block 22); node 3 is behind
-    // for two rounds. The liar tells the truth about the tip — it may.
-    let stale_n3 = chain.report(N3);
+    // ---- phase 2: the chain moves (somebody's pool transaction in block 22); honest node 2,
+    // the listing node, is behind for STRIKES rounds. The liar tells the truth about the tip.
+    let stale = chain.page_value(0, 20);
+    let stale_n2 = chain.report(N2);
     chain.advance_to(21);
     let traffic = shield_body(&chain, &bob.address(), 3 * Q, "rw5-loop-traffic");
     chain.block(&[&traffic]).unwrap();
     chain.advance_to(23);
-    for _ in 0..2 {
-        c.round(&key, &mut |_, since| parse(&chain.page_value(since, 20)), &mut || vec![chain.report(N1), chain.report(N2), stale_n3.clone()]);
+    for _ in 0..STRIKES {
+        assert_eq!(c.session.listing, 1);
+        c.round(&key, &mut |_, since| parse(&{ let mut p = stale.clone(); p["from_height"] = serde_json::json!(since); p["next_height"] = serde_json::json!(since.max(21)); p["txs"] = serde_json::json!([]); p }), &mut || vec![chain.report(N1), stale_n2.clone(), chain.report(N3)]);
     }
-    assert!(c.l == 0 && c.rescans == 1, "node 3 was two rounds behind the quorum's tip: the next node NOT IN BAD is the liar");
+    assert_eq!((c.session.listing, c.rescans, c.left.len()), (2, 1, 2), "honest node 2 is LEFT (not banned), and WITHOUT a rescan: everything the state holds is confirmed");
+    c.round(&key, &mut |_, since| chain.page(since), &mut || vec![chain.report(N1), chain.report(N2), chain.report(N3)]);
+    assert!(honest_only(&c) && at_true_tip(&c, &chain) && c.session.bad.is_empty(), "phase 2 ends at the tip, listing from honest node 3");
 
-    // ---- phase 3: the liar adds a forged payment in block 21 and stops at its "tip"; the loop
-    // moves on to node 3 again — which has caught up, and whose true page (block 22 at the
-    // chain's leaf numbers) is numbered below the wallet's tree
-    let lie = |since: u64| -> ListingPage {
-        if since > 21 {
+    // ---- phase 3: node 3 falls behind in turn; the next node in the order is the liar, and the
+    // state it is handed is confirmed to its last height. It adds a forged payment in block 24
+    // and claims that as its tip: pool transactions in a block no quorum has.
+    let stale_n3 = chain.report(N3);
+    chain.advance_to(24);
+    for _ in 0..STRIKES {
+        c.round(&key, &mut |_, since| empty_page(since, since, 23), &mut || vec![chain.report(N1), chain.report(N2), stale_n3.clone()]);
+    }
+    assert_eq!((c.session.listing, c.rescans, c.left.len()), (0, 1, 3), "node 3 was behind: the next node is the liar; no rescan (nothing unconfirmed)");
+    let leaves = c_leaves(&chain);
+    let lie = move |since: u64| -> ListingPage {
+        if since > 25 {
             return empty_page(since, since, since - 1);
         }
-        parse(&serde_json::json!({ "active": true, "tip_height": 21, "from_height": 21, "next_height": 22, "txs": [listing_entry(&forged2, 21, 0, 4)] }))
+        parse(&serde_json::json!({ "active": true, "tip_height": 25, "from_height": since, "next_height": 26, "txs": [listing_entry(&forged2, 25, 0, leaves)] }))
     };
-    for _ in 0..2 {
+    for _ in 0..STRIKES {
+        assert_eq!(c.session.listing, 0);
         c.round(&key, &mut |_, since| lie(since), &mut || vec![chain.report(N1), chain.report(N2), chain.report(N3)]);
     }
-    assert!(c.l == 2 && c.rescans == 1, "behind again: on to node 3");
+    assert_eq!((c.session.listing, c.rescans, c.left.last().copied().map(|l| (l.1, l.2, l.3))), (1, 2, Some((0, false, "listing_ahead"))), "the liar is left — with a rescan: its forged block was in the state");
     c.round(&key, &mut |_, since| chain.page(since), &mut || vec![chain.report(N1), chain.report(N2), chain.report(N3)]);
-    assert_eq!((c.bad.iter().copied().collect::<Vec<_>>(), c.l, c.rescans, c.stopped), (vec![1, 2], 0, 2, false), "leaf_mismatch on HONEST node 3's page: node 3 is blamed; the only node not in bad is the liar");
+    assert!(honest_only(&c) && at_true_tip(&c, &chain), "phase 3 ends at the tip: the forged payment is gone with the rescan");
 
-    // ---- phase 4: the rest of the session
+    // ---- phase 4: the chain reaches block 25 — with another transaction than the one the liar
+    // listed there. Had the client still held the liar's block, the state check would now
+    // REFUTE it; listing from the liar again, that is what happens, and it is the liar that is
+    // banned: every unconfirmed page of the state is its own.
+    let other = shield_body(&chain, &bob.address(), 2 * Q, "rw5-loop-traffic-2");
+    chain.block(&[&other]).unwrap();
+    let mut d = LoopClient::new(c.s.clone(), 0); // a new session that starts at the liar
+    d.round(&key, &mut |_, since| lie(since), &mut || vec![chain.report(N1), chain.report(N2), chain.report(N3)]);
+    assert_eq!((d.session.bad.iter().copied().collect::<Vec<_>>(), d.session.listing, d.left.clone()), (vec![0], 1, vec![(1, 0, true, "listing_refuted")]), "refuted while listing from the liar: the LIAR is banned");
+    d.round(&key, &mut |_, since| chain.page(since), &mut || vec![chain.report(N1), chain.report(N2), chain.report(N3)]);
+    assert!(at_true_tip(&d, &chain) && d.session.stopped.is_none());
+
+    // ---- the rest of the session: sixty more rounds, the liar lying whenever it is asked
     for _ in 0..60 {
-        c.round(&key, &mut |_, since| short_forged(since), &mut || vec![chain.report(N1), chain.report(N2), chain.report(N3)]);
+        c.round(&key, &mut |node, since| if node == 0 { short_forged(since) } else { chain.page(since) }, &mut || vec![chain.report(N1), chain.report(N2), chain.report(N3)]);
     }
     println!(
-        "rw5-loop: one liar of three, honest nodes at most three blocks apart: bad = nodes {:?} (both honest), L = node {} (the liar), stopped: {}, confirmed {:?}, unverified balance {} quanta (the chain holds {})",
-        c.bad.iter().map(|i| i + 1).collect::<Vec<_>>(), c.l + 1, c.stopped, c.s.confirmed_height(), c.s.balances().unverified, balance_of(&chain, &alice)
+        "rw5-loop: one liar of three, honest nodes at most three blocks apart: bad = nodes {:?}, L = node {} (honest), stopped: {:?}, confirmed {:?} (the tip is {}), confirmed balance {} quanta (the chain holds {}), {} rescans, left: {:?}",
+        c.session.bad.iter().map(|i| i + 1).collect::<Vec<_>>(), c.session.listing + 1, c.session.stopped, c.s.confirmed_height(), chain.height, c.s.balances().confirmed, balance_of(&chain, &alice), c.rescans, c.left
     );
-    assert!(c.l == 0 && !c.stopped && c.bad.len() == 2 && c.s.confirmed_height().is_none(), "sixty more rounds: the client lists from the liar and nothing is confirmed");
+    assert!(c.session.listing != 0 && honest_only(&c) && at_true_tip(&c, &chain), "sixty more rounds: the client lists from an honest node and the tip is confirmed");
+}
+
+/// The number of leaves of the chain's tree: where the next listed output is numbered.
+fn c_leaves(chain: &Chain) -> u64 {
+    chain.state().note_count
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -745,7 +737,7 @@ fn rw5_sound_an_accepted_page_after_a_lying_one_plants_nothing_that_can_be_confi
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let confirmed_before = w.confirmed_height();
@@ -788,54 +780,81 @@ fn rw5_sound_an_accepted_page_after_a_lying_one_plants_nothing_that_can_be_confi
     assert_eq!(t.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap().matched_height, Some(chain.height), "the state is the chain's whatever the page called its leaves");
 }
 
-/// **Twin notes.** Two notes with one commitment cannot be on the chain: a commitment contains
-/// `rho = H_rho(nf1, nf2, j)` of the creating transaction, and no two transactions share a
-/// nullifier (spec §2.4). They exist only in a LISTING that shows one transaction twice. Then:
-/// both are stored, the second one unverified for ever (no quorum has that tree); one nullifier,
-/// so one spend marks both; a lock on one is a lock on both; coin selection offers the confirmed
-/// one only; a transaction from both is refused (it would publish one nullifier twice). After
-/// the rescan there is one note. Nothing is double-counted in a confirmed figure, nothing lost.
+/// **Twin notes — as reviewed:** two notes with one commitment cannot be on the chain (a
+/// commitment contains `rho = H_rho(nf1, nf2, j)` of the creating transaction, and no two
+/// transactions share a nullifier, spec §2.4); they existed only in a LISTING that shows one
+/// transaction twice, were stored, "one note to every rule" — and their one bad effect was
+/// RW5-1 (b).
+///
+/// **Resolved: they do not exist in a state any more.** A page that lists a note of this wallet
+/// with the `rho` of a note the state holds (or of one earlier in the page) is refused whole —
+/// `listing:`, the state unchanged — whether it repeats the transaction as it is (a twin: one
+/// commitment) or shows OTHER outputs under the same two nullifiers (another commitment, the
+/// same nullifier: a hostile sender can make as many of those as it likes, and each would have
+/// been "an input of the pending entry" that spends the real note). The test was edited: it
+/// asserts the refusal, that the lock and the balances are what they were, and that a state
+/// TEXT with two notes of one `rho` is refused on read and gives up its locks to
+/// `recover_locks`.
 #[test]
-fn rw5_sound_twin_notes_exist_only_in_a_lying_listing_and_are_one_note_to_every_rule() {
+fn rw5_sound_twin_notes_a_listing_that_shows_a_transaction_twice_is_refused() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
-    // the liar lists the transaction that created the 10 XRGE note once more, in block 5
-    let mut again = chain.page_value(0, chain.height)["txs"][0].clone();
+    let real = position_of(&w, 10 * Q);
+    pay_with(&mut w, &alice, &[real], &bob.address(), 4 * Q, None, false, "rw5-twin-t1").unwrap();
+    let before = w.clone();
+    let creating = chain.page_value(0, chain.height)["txs"][0].clone();
+    // (1) the liar lists the transaction that created the 10 XRGE note once more, in block 5
+    let mut again = creating.clone();
     again["height"] = serde_json::json!(5);
     for j in 0..2 {
         again["outputs"][j]["leaf"] = serde_json::json!(4 + j);
     }
-    w.scan(&parse(&serde_json::json!({ "active": true, "tip_height": 5, "from_height": 5, "next_height": 6, "txs": [again] })), &alice.scan_key()).unwrap();
-    let twins: Vec<(u64, bool)> = w.unspent().filter(|n| n.value == 10 * Q).map(|n| (n.position, n.confirmed)).collect();
-    assert_eq!(twins.len(), 2);
-    let (real, twin) = (twins.iter().find(|t| t.1).unwrap().0, twins.iter().find(|t| !t.1).unwrap().0);
-    assert_eq!(w.note_at(real).unwrap().cm, w.note_at(twin).unwrap().cm);
-    assert_eq!(w.note_at(real).unwrap().nullifier, w.note_at(twin).unwrap().nullifier);
+    // (2) … or another transaction with the SAME two nullifiers that pays the wallet 7 XRGE: a
+    // different commitment, the same rho, so the same nullifier as the real note
+    let nf = [hex::decode(creating["nf1"].as_str().unwrap()).unwrap(), hex::decode(creating["nf2"].as_str().unwrap()).unwrap()];
+    let nfd = [digest_from_bytes(nf[0].as_slice().try_into().unwrap()).unwrap(), digest_from_bytes(nf[1].as_slice().try_into().unwrap()).unwrap()];
+    let slot = (0..2).find(|j| creating["outputs"][*j]["cm_out"].as_str() == Some(hex::encode(w.note_at(real).unwrap().cm.0).as_str())).unwrap();
+    let r = [7u8, 0, 0, 0].repeat(8);
+    let r: [u8; 32] = r.try_into().unwrap();
+    let pk = digest_from_bytes(&alice.address().pk).unwrap();
+    let cm = digest_to_bytes(&Note { value: 7 * Q, pk, rho: derive_rho(&nfd, slot), r: digest_from_bytes(&r).unwrap() }.commitment());
+    let (kem_ct, note_ct, _) = encrypt_note_with_kem_randomness(&alice.address().ek, &cm, 7 * Q, &r, [9u8, 0, 0, 0].repeat(8).try_into().unwrap()).unwrap();
+    let mut other: ListedTx = parse(&serde_json::json!({ "active": true, "tip_height": 5, "from_height": 5, "next_height": 6, "txs": [again.clone()] })).txs[0].clone();
+    other.outputs[slot] = ListedOutput { cm_out: hex::encode(cm), leaf: Some(4 + slot as u64), kem_ct: hex::encode(kem_ct), note_ct: hex::encode(note_ct) };
+    let twin_page = parse(&serde_json::json!({ "active": true, "tip_height": 5, "from_height": 5, "next_height": 6, "txs": [again] }));
+    let other_page = ListingPage { active: true, tip_height: 5, from_height: 5, next_height: 6, txs: vec![other] };
+    for (what, page) in [("the same transaction again", &twin_page), ("other outputs under the same nullifiers", &other_page)] {
+        for key in [alice.scan_key(), alice.incoming_viewing_key()] {
+            let r = w.scan(page, &key);
+            assert!(matches!(r, Err(WalletError::Listing(_))), "{what}: {:?}", r.map(|_| ()).map_err(|e| e.to_string()));
+            assert!(w == before, "{what}: a refused page leaves the state as it was");
+        }
+    }
+    // the lock, the balances and the stored text are what they were
     let b = w.balances();
-    assert_eq!((b.confirmed, b.unverified, b.spendable), (16 * Q as u128, 10 * Q as u128, 16 * Q as u128), "G2: the twin is in no confirmed figure");
-    assert_eq!(select_inputs(&w, 12 * Q, Q).unwrap().positions.len(), 2, "selection uses the two CONFIRMED notes (10 + 6), never the twin");
-    assert!(select_inputs(&w, 17 * Q, Q).is_err());
-    // a transaction from both twins: refused
-    let mut both = w.clone();
-    assert!(pay_with(&mut both, &alice, &[real, twin], &bob.address(), 15 * Q, None, true, "rw5-twin-both").is_err());
-    // a payment from the real one (on the unconfirmed root: the caller's explicit decision)
-    pay_with(&mut w, &alice, &[real], &bob.address(), 4 * Q, None, true, "rw5-twin-t1").unwrap();
-    assert!(w.is_locked(real) && w.is_locked(twin), "G1: a lock on the note is a lock on its twin");
-    let mut other = w.clone();
-    assert!(matches!(pay_with(&mut other, &alice, &[twin], &bob.address(), 4 * Q, None, true, "rw5-twin-t2").err(), Some(WalletError::NoteLocked)));
-    WalletState::from_json(&w.to_json().unwrap()).unwrap();
-    // no quorum confirms the listing with the repeated transaction; the rescan has one note
+    assert_eq!((b.confirmed, b.unverified, b.locked, b.spendable), (16 * Q as u128, 0, 10 * Q as u128, 6 * Q as u128));
+    assert!(w.is_locked(real) && w.unspent().filter(|n| n.value == 10 * Q).count() == 1);
+    // a state TEXT that holds two notes of one rho (written by an earlier revision of the core
+    // from such a listing, or damaged) is refused on read — and gives up its locks
+    let mut text: serde_json::Value = serde_json::from_str(&w.to_json().unwrap()).unwrap();
+    let positions: Vec<u64> = text["notes"].as_array().unwrap().iter().map(|n| n[3].as_u64().unwrap()).collect();
+    let free = (0..text["tree"]["note_count"].as_u64().unwrap()).find(|p| !positions.contains(p)).expect("four leaves, two notes");
+    let mut copy = text["notes"][0].clone();
+    copy[3] = serde_json::json!(free); // the same note at another position of the tree
+    text["notes"].as_array_mut().unwrap().push(copy);
+    assert!(matches!(WalletState::from_json(&text.to_string()), Err(WalletError::State(_))));
+    let recovered = WalletState::recover_locks(&text.to_string()).unwrap();
+    assert_eq!((recovered.entries_kept, recovered.entries_unreadable, recovered.state.pending().len()), (1, 0, 1));
+    // the chain goes on; an honest listing confirms, the lock holds until it settles
     chain.advance_to(5);
-    assert!(w.confirm_state(&[chain.report(N1), chain.report(N2), chain.report(N3)]).unwrap().matched_height.is_none());
-    let mut s = w.fresh_for_rescan();
-    s.scan(&chain.page(0), &alice.scan_key()).unwrap();
-    s.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
-    assert_eq!((s.unspent().filter(|n| n.value == 10 * Q).count(), s.balances().confirmed, s.balances().locked), (1, 16 * Q as u128, 10 * Q as u128));
+    w.scan(&chain.page(w.next_height()), &alice.scan_key()).unwrap();
+    assert_eq!(w.confirm_state(&[chain.report(N1), chain.report(N2), chain.report(N3)]).unwrap().matched_height, Some(5));
+    assert_eq!((w.resolve().still_pending, w.balances().locked), (1, 10 * Q as u128));
 }
 
 /// **C — the longest expiry (128) against the embargo (128): no gap in any configuration the
@@ -853,7 +872,7 @@ fn rw5_sound_the_longest_expiry_and_the_embargo_meet_without_a_gap() {
     chain.advance_to(40);
     let all = |chain: &Chain| vec![chain.report(N1), chain.report(N2), chain.report(N3)];
     let mut d1 = WalletState::new(alice.address().pk);
-    configure(&mut d1, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut d1, &[N1, N2, N3]);
     d1.scan(&chain.page(0), &alice.scan_key()).unwrap();
     d1.confirm_state(&all(&chain)).unwrap();
     let p_in = position_of(&d1, 10 * Q);

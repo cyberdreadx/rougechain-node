@@ -99,7 +99,7 @@ fn rw4r_f5_fuzz_rescans_with_forged_entries_and_random_page_cuts_never_leave_a_s
         let values: Vec<u64> = (0..6 + rng.below(4)).map(|i| (3 + i) * Q).collect();
         fund(&mut chain, &alice.address(), &values);
         let mut w = WalletState::new(alice.address().pk);
-        configure(&mut w, &[N1, N2, N3]);
+        configure_as_sole_copy(&mut w, &[N1, N2, N3]);
         w.scan(&chain.page(0), &alice.scan_key()).unwrap();
         w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
         // two or three payments pending, most of them with two inputs
@@ -225,7 +225,7 @@ fn rw4r_f5_a_format_4_state_that_rw4_5_had_poisoned_is_read_again_with_its_locks
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[3 * Q, 4 * Q, 5 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let (p3, p4) = (position_of(&w, 3 * Q), position_of(&w, 4 * Q));
@@ -254,7 +254,7 @@ fn rw4r_f5_recover_locks_reads_every_lock_out_of_a_state_that_does_not_validate(
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[3 * Q, 4 * Q, 5 * Q, 6 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let (p3, p4, p5) = (position_of(&w, 3 * Q), position_of(&w, 4 * Q), position_of(&w, 5 * Q));
@@ -386,7 +386,7 @@ fn rw4r_f1_a_restored_state_builds_nothing_while_an_earlier_transaction_can_stil
                 chain.advance_to(behind + lag);
                 // device 1: in sync, a NEW wallet (the statement is true for it)
                 let mut d1 = WalletState::new(alice.address().pk);
-                configure(&mut d1, &[N1, N2, N3]);
+                configure_as_sole_copy(&mut d1, &[N1, N2, N3]);
                 d1.scan(&chain.page(0), &alice.scan_key()).unwrap();
                 d1.confirm_state(&[chain.report(N1), chain.report(N3)]).unwrap();
                 let built_at = chain.height;
@@ -440,10 +440,12 @@ fn rw4r_f1_a_restored_state_builds_nothing_while_an_earlier_transaction_can_stil
 }
 
 /// What a lying or silent minority can do to the embargo: push its base up — by at most 256
-/// blocks. And what the user's statement is worth: it is accepted before the first state check
-/// only, and honoured only if that check shows no configured node ahead of the confirmed height.
+/// blocks. And what the user's statement is: accepted before the first state check only, and —
+/// once recorded — it STANDS, whatever the reports of that check show (REVIEW_WALLET_5 RW5-5:
+/// the rule that voided it when a configured node reported a higher tip is removed; this test
+/// asserted that rule and was edited with it).
 #[test]
-fn rw4r_f1_the_embargo_base_is_bounded_and_the_users_statement_is_recorded_and_conditional() {
+fn rw4r_f1_the_embargo_base_is_bounded_and_the_users_statement_is_recorded_and_stands() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q]);
@@ -485,15 +487,27 @@ fn rw4r_f1_the_embargo_base_is_bounded_and_the_users_statement_is_recorded_and_c
     assert_eq!(base_of(&s), (tip, tip, true));
     assert!(pay_with(&mut s.clone(), &alice, &[position_of(&s, 10 * Q)], &bob.address(), 4 * Q, None, "rw4r-statement").is_ok());
     assert!(WalletState::from_json(&s.to_json().unwrap()).unwrap().sole_copy_asserted(), "the statement is part of the stored state");
-    // … NOT honoured when a configured node is ahead of the height being confirmed
-    let mut s = restored(true);
+    // … and it stands when a configured node reports a tip above the height being confirmed
+    // (RW5-5: a block that arrives while three answers are collected), whatever that tip is
+    for claim in [tip + 1, tip + 300, u64::MAX] {
+        let mut s = restored(true);
+        let mut ahead = chain.report(N3);
+        ahead.height = claim;
+        s.confirm_state(&[chain.report(N1), chain.report(N2), ahead]).unwrap();
+        assert_eq!(base_of(&s), (tip, tip, true), "a claim of {claim}");
+        assert!(pay_with(&mut s.clone(), &alice, &[position_of(&s, 10 * Q)], &bob.address(), 4 * Q, None, "rw4r-stands").is_ok());
+        // made once, it is not asked for again (the call is refused: the base exists)
+        assert!(matches!(s.assert_no_other_copy_has_a_pending_payment(), Err(WalletError::Request(_))));
+    }
+    // … and it is not accepted once the base exists: a state that was established WITHOUT it
+    // stays under its embargo
+    let mut s = restored(false);
     let mut ahead = chain.report(N3);
     ahead.height = tip + 1;
     s.confirm_state(&[chain.report(N1), chain.report(N2), ahead]).unwrap();
     assert_eq!(base_of(&s), (tip + 1, tip + 129, false));
-    assert!(matches!(pay_with(&mut s.clone(), &alice, &[position_of(&s, 10 * Q)], &bob.address(), 4 * Q, None, "rw4r-void"), Err(WalletError::RestoredRecently { until: Some(_) })));
-    // … and not accepted once the base exists
     assert!(matches!(s.assert_no_other_copy_has_a_pending_payment(), Err(WalletError::Request(_))));
+    assert!(matches!(pay_with(&mut s.clone(), &alice, &[position_of(&s, 10 * Q)], &bob.address(), 4 * Q, None, "rw4r-late"), Err(WalletError::RestoredRecently { until: Some(_) })));
     // a rescan keeps the embargo and its base: it is the device's history, not the listing's
     let again = s.fresh_for_rescan();
     assert_eq!(again.spend_embargo(), s.spend_embargo());
@@ -513,7 +527,7 @@ fn rw4r_f3_a_view_only_state_is_marked_offers_nothing_and_builds_nothing_until_t
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
     let mut watch = WalletState::new(alice.address().pk);
-    configure(&mut watch, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut watch, &[N1, N2, N3]); // a NEW wallet: it pays below, at once
     watch.scan(&chain.page(0), &alice.incoming_viewing_key()).unwrap();
     watch.confirm_state(&[chain.report(N1), chain.report(N2), chain.report(N3)]).unwrap();
     let b = watch.balances();
@@ -549,7 +563,7 @@ fn rw4r_f4_payment_to_self_is_the_whole_address() {
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 7 * Q, 5 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let crafted = ShieldedAddress { pk: alice.address().pk, ek: bob.address().ek };
@@ -585,7 +599,7 @@ fn rw4r_i10_two_states_with_one_counter_have_two_revision_identities() {
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
     let mut stored = WalletState::new(alice.address().pk);
     let empty_id = stored.revision_id();
-    configure(&mut stored, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut stored, &[N1, N2, N3]);
     assert_ne!(stored.revision_id(), empty_id);
     stored.scan(&chain.page(0), &alice.scan_key()).unwrap();
     stored.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();

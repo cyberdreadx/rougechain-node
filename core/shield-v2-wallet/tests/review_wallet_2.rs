@@ -122,6 +122,7 @@ fn rw2_f1_a_listing_that_shows_the_pending_tx_mined_never_unlocks_and_bob_is_pai
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let honest0 = base(&alice.address(), &[10 * Q]);
     let mut a = synced(&honest0, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     confirm(&honest0, &mut a);
     let t1 = transfer(&a, &alice, &[position_of(&a, 10 * Q)], &bob.address(), 4 * Q, "rw2-f1-t1");
     let record = t1.pending().unwrap();
@@ -236,6 +237,7 @@ fn rw2_f2_swapped_nullifiers_are_not_confirmed_and_a_mined_tx_is_never_called_ex
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     let confirmed_before = a.confirmed_height();
     let t1 = transfer(&a, &alice, &[position_of(&a, 10 * Q)], &bob.address(), 4 * Q, "rw2-f2-t1");
@@ -294,6 +296,7 @@ fn rw2_f2_a_hidden_spend_cannot_be_confirmed() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q]);
     let mut here = synced(&chain, &alice);
+    configure_as_sole_copy(&mut here, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut here);
     let mut elsewhere = here.clone();
     let t = transfer(&elsewhere, &alice, &[position_of(&elsewhere, 10 * Q)], &bob.address(), 9 * Q, "rw2-f2-hidden");
@@ -331,10 +334,19 @@ fn rw2_f2_a_hidden_spend_cannot_be_confirmed() {
 fn rw2_f3_another_transaction_spending_one_input_supersedes_the_pending_tx_and_frees_the_other_input() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[3 * Q, 4 * Q]);
-    let mut device_a = synced(&chain, &alice);
+    // device B is a SECOND device on the phrase: it makes no statement, and its restore
+    // embargo has run out before the story begins (REVIEW_WALLET_5: a second device is under
+    // the embargo like a restore; two LIVE devices still share no lock — the limit this test
+    // is about)
     let mut device_b = synced(&chain, &alice);
-    confirm(&chain, &mut device_a);
     confirm(&chain, &mut device_b);
+    chain.advance_to(device_b.spend_embargo_until().expect("the first state check fixed the base"));
+    device_b.scan(&chain.page(device_b.next_height()), &alice.scan_key()).unwrap();
+    confirm(&chain, &mut device_b);
+    assert!(device_b.spend_gate().is_ok());
+    let mut device_a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut device_a, &[NODE_A, NODE_B, "the-node"]); // the first device: a new wallet then
+    confirm(&chain, &mut device_a);
     let (pos3, pos4) = (position_of(&device_a, 3 * Q), position_of(&device_a, 4 * Q));
 
     let t1 = transfer(&device_a, &alice, &[pos3, pos4], &bob.address(), 5 * Q, "rw2-f3-a");
@@ -382,6 +394,7 @@ fn rw2_f3_the_same_two_inputs_on_two_devices_are_told_apart_by_the_outputs() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[3 * Q, 4 * Q]);
     let mut device_a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut device_a, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut device_a);
     let mut device_b = device_a.clone();
     let (pos3, pos4) = (position_of(&device_a, 3 * Q), position_of(&device_a, 4 * Q));
@@ -496,6 +509,7 @@ fn rw2_f5_one_empty_page_that_lies_about_the_height_releases_nothing() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let chain = base(&alice.address(), &[10 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     let pos = position_of(&a, 10 * Q);
     let t1 = transfer(&a, &alice, &[pos], &bob.address(), 4 * Q, "rw2-demo-scanned");
@@ -545,6 +559,7 @@ fn rw2_sound_the_release_height_is_exactly_the_first_height_at_which_the_node_re
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     let pos = position_of(&a, 10 * Q);
     let t1 = transfer(&a, &alice, &[pos], &bob.address(), 4 * Q, "rw2-sound-expiry");
@@ -686,6 +701,7 @@ fn rw2_f7_pruning_spent_notes_keeps_every_balance_exact() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[2 * Q, 3 * Q, 4 * Q, 5 * Q, 6 * Q, 7 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     // two payments: 2+3 (change 0, not stored) and 4 (change 1)
     for (i, (positions, amount)) in [(vec![position_of(&a, 2 * Q), position_of(&a, 3 * Q)], 4 * Q), (vec![position_of(&a, 4 * Q)], 2 * Q)].into_iter().enumerate() {
@@ -747,6 +763,7 @@ fn rw2_i3_a_stale_copy_is_refused_by_its_revision() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let chain = base(&alice.address(), &[3 * Q, 4 * Q]);
     let mut stored = synced(&chain, &alice);
+    configure_as_sole_copy(&mut stored, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     let r0 = stored.revision();
     confirm(&chain, &mut stored);
     assert_eq!(stored.revision(), r0 + 1);
@@ -785,6 +802,7 @@ fn rw2_i4_i5_unverified_inputs_need_the_flag_and_locks_follow_the_note() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let chain = base(&alice.address(), &[3 * Q, 4 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B, "the-node"]); // a NEW wallet: the user says so, and it spends at once
     let pos3 = position_of(&a, 3 * Q);
     assert!(matches!(a.spend_input(pos3), Err(WalletError::NoteUnverified)));
     assert!(a.spend_input_with(pos3, true).is_ok(), "the caller's explicit decision");

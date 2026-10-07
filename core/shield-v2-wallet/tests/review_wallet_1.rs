@@ -234,6 +234,7 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     let pay = |a: &WalletState, chain: &Chain, label: &str| {
         let sel = select_inputs(a, 4 * Q, Q)?;
@@ -317,6 +318,7 @@ fn rw1_f7_a_claimed_rejection_does_not_release_the_inputs_and_funds_are_intact_e
 
     // ---- what mark_pending refuses ---------------------------------------------------------------
     let mut fresh = synced(&chain, &alice);
+    configure_as_sole_copy(&mut fresh, &[NODE_A, NODE_B]); // a NEW wallet, so that what is refused below is refused for the reason given
     confirm(&chain, &mut fresh);
     let mut far = record.clone();
     far.expiry_height = chain.height + 129;
@@ -667,6 +669,7 @@ fn rw1_sound_every_byte_of_the_body_is_bound_by_the_proof() {
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[9 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     let positions = [a.notes()[0].position];
     let spend = SpendOptions { chain_id: CHAIN, inputs: &positions, expiry_height: None, allow_unverified: false, max_fee: None };
@@ -840,6 +843,7 @@ fn rw1_sound_a_tampered_state_blob_never_panics() {
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[5 * Q, 3 * Q, 2 * Q]);
     let mut good = synced(&chain, &alice);
+    configure_as_sole_copy(&mut good, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut good);
     // one note locked by a pending transaction, so that the pending list is mutated too
     let p_in = [good.spend_input(good.notes()[0].position).unwrap()];

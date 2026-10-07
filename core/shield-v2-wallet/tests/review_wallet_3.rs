@@ -120,6 +120,7 @@ fn rw3_f1_one_lying_node_of_three_freezes_confirmation_and_every_lock() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q]);
     let mut w = synced(&chain, &alice);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     let three = |c: &Chain| vec![c.report(N1), c.report(N2), lying_report(c, N3)];
 
     assert_eq!(w.confirm_state(&three(&chain)).unwrap().matched_height, Some(chain.height));
@@ -348,6 +349,7 @@ fn rw3_f2_a_blanked_change_ciphertext_settles_as_mined_and_the_change_is_silentl
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q]);
     let mut w = synced(&chain, &alice);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut w);
     let t1 = pay_note(&mut w, &alice, 10 * Q, &bob.address(), 4 * Q, "rw3-f2-t1");
     let record = t1.pending().unwrap();
@@ -478,6 +480,7 @@ fn rw3_f3_own_change_below_the_minimum_note_value_leaves_the_wallets_view() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q, 3 * Q]);
     let mut w = synced(&chain, &alice);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut w);
     let sel = select_inputs(&w, 8 * Q + Q / 2, Q).unwrap();
     assert_eq!((sel.positions.len(), sel.total, sel.change, sel.change_below_minimum), (2, 13 * Q, 3 * Q + Q / 2, false), "a clean change is preferred");
@@ -627,6 +630,7 @@ fn rw3_f4b_the_cap_counts_unspent_notes_only_and_a_rescan_with_a_higher_cap_reco
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[2 * Q, 3 * Q, 4 * Q, 5 * Q, 6 * Q]);
     let mut w = WalletState::with_limits(alice.address().pk, Q, 3).unwrap();
+    configure_as_sole_copy(&mut w, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     assert_eq!(w.max_unspent_notes(), 3);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     assert_eq!((w.unspent().count(), w.balance(), w.over_capacity()), (3, 9 * Q as u128, Tally { count: 2, total: 11 * Q as u128 }));
@@ -666,6 +670,7 @@ fn rw3_f7_one_lying_page_inflates_the_expiry_and_the_lock_never_ends() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q, 6 * Q]);
     let mut w = synced(&chain, &alice);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut w);
     let s = chain.height;
     // the lie: one empty page
@@ -722,6 +727,7 @@ fn rw3_f7b_a_spend_is_built_on_the_confirmed_checkpoint_and_nothing_else() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q, 6 * Q]);
     let mut w = synced(&chain, &alice);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     let build = |w: &WalletState, inputs: &[u64], expiry: Option<u64>, allow_unverified: bool, label: &str| {
         let spend = SpendOptions { chain_id: CHAIN, inputs, expiry_height: expiry, allow_unverified, max_fee: None };
         deterministic::transfer_locked(w, w.revision(), &alice, &TransferParams { spend, recipient: &bob.address(), amount: 4 * Q, fee: Q }, label)
@@ -797,16 +803,23 @@ fn rw3_f7c_every_pending_transaction_settles_by_the_time_the_confirmed_height_re
     for fate in ["withheld", "mined at once", "mined at the expiry", "superseded"] {
         for lie in ["honest listing", "inflated tip before the build", "false fate in the listing", "forged payment in the listing"] {
             let mut chain = base(&alice.address(), &[10 * Q, 6 * Q]);
+            // device B, the same phrase: a SECOND device. It makes no statement, and its
+            // restore embargo has run out before the story begins (REVIEW_WALLET_5)
+            let mut device_b = synced(&chain, &alice);
+            confirm(&chain, &mut device_b);
+            chain.advance_to(device_b.spend_embargo_until().expect("the first state check fixed the base"));
             let mut w = synced(&chain, &alice);
+            configure_as_sole_copy(&mut w, &[N1, N2, N3]); // the first device: a new wallet then
             confirm(&chain, &mut w);
             let built_at = chain.height;
             if lie == "inflated tip before the build" {
                 let page = serde_json::json!({ "active": true, "tip_height": built_at + 5_000, "from_height": built_at + 1, "next_height": built_at + 5_001, "txs": [] });
                 w.scan(&parse(&page), &alice.scan_key()).unwrap();
             }
-            // device B, the same phrase, in sync with the chain and unaware of A
-            let mut device_b = synced(&chain, &alice);
+            // device B is in sync with the chain and unaware of A
+            device_b.scan(&chain.page(device_b.next_height()), &alice.scan_key()).unwrap();
             confirm(&chain, &mut device_b);
+            assert!(device_b.spend_gate().is_ok());
             let ten = position_of(&w, 10 * Q);
             let t1 = pay(&mut w, &alice, &[ten], &bob.address(), 4 * Q, &format!("rw3-f7c-{fate}-{lie}"));
             let record = t1.pending().unwrap();
@@ -911,6 +924,7 @@ fn rw3_f7d_a_listing_that_runs_ahead_of_the_quorum_is_reported() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q, 6 * Q]);
     let mut w = synced(&chain, &alice);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut w);
     let s = chain.height;
     let t1 = pay_note(&mut w, &alice, 10 * Q, &bob.address(), 4 * Q, "rw3-f7d-t1"); // withheld
@@ -968,6 +982,7 @@ fn rw3_f5_building_locks_the_inputs_in_the_same_operation_and_abandoning_release
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q, 6 * Q]);
     let mut stored = synced(&chain, &alice); // what the client has in its storage
+    configure_as_sole_copy(&mut stored, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut stored);
     let ten = position_of(&stored, 10 * Q);
     let spend = SpendOptions { chain_id: CHAIN, inputs: &[ten], expiry_height: None, allow_unverified: false, max_fee: None };
@@ -1045,6 +1060,7 @@ fn rw3_a_format_3_state_is_migrated_with_every_pending_entry_locked() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[3 * Q, 4 * Q]);
     let mut now = WalletState::with_min_note_value(alice.address().pk, Q / 4).unwrap();
+    configure_as_sole_copy(&mut now, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     now.scan(&chain.page(0), &alice.scan_key()).unwrap();
     confirm(&chain, &mut now);
     let (pos3, pos4) = (position_of(&now, 3 * Q), position_of(&now, 4 * Q));
@@ -1053,7 +1069,9 @@ fn rw3_a_format_3_state_is_migrated_with_every_pending_entry_locked() {
     // the same state as format 3 wrote it: no nodes, no cap, no ciphertext hash, no `r`
     let mut v3: serde_json::Value = serde_json::from_str(&now.to_json().unwrap()).unwrap();
     v3["version"] = serde_json::json!(3);
-    for k in ["nodes", "max_unspent_notes", "ciphertext_acc"] {
+    // (… and none of the fields format 5 added: a text that names an older format and carries
+    // `spend_embargo` is refused as damaged — REVIEW_WALLET_5 RW5-9)
+    for k in ["nodes", "max_unspent_notes", "ciphertext_acc", "revision_id", "spend_embargo", "sole_copy_asserted", "view_only_since", "own_shields"] {
         v3.as_object_mut().unwrap().remove(k);
     }
     for c in v3["checkpoints"].as_array_mut().unwrap() {
@@ -1104,6 +1122,7 @@ fn rw3_sound_shifting_a_mined_transaction_to_another_height_cannot_make_it_expir
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = base(&alice.address(), &[10 * Q]);
     let mut w = synced(&chain, &alice);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut w);
     let t1 = pay_note(&mut w, &alice, 10 * Q, &bob.address(), 4 * Q, "rw3-shift-t1");
     let record = t1.pending().unwrap();
@@ -1142,6 +1161,7 @@ fn rw3_sound_idle_heights_and_stale_reports_do_not_raise_the_confirmed_height() 
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let chain = base(&alice.address(), &[10 * Q]);
     let mut w = synced(&chain, &alice);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut w);
     let s = chain.height;
     let _t1 = pay_note(&mut w, &alice, 10 * Q, &bob.address(), 4 * Q, "rw3-idle-t1");
@@ -1165,27 +1185,66 @@ fn rw3_sound_idle_heights_and_stale_reports_do_not_raise_the_confirmed_height() 
     }
 }
 
-/// RW3-10 (Info) — outside what any wallet core can do, stated so that the UI is designed for it:
-/// a device restored from the phrase knows nothing of a transaction another device (or the same
-/// device before it lost its state) has pending. **Locks are per device.** Its notes are
-/// unlocked. If the user pays again from ANOTHER note while the first transaction is withheld,
-/// both are mined. What the user interface must do is in spec §5.5 and `NOTES.md`.
+/// RW3-10 (Info) — a device restored from the phrase knows nothing of a transaction another
+/// device (or the same device before it lost its state) has pending. **Locks are per device.**
+/// Its notes are unlocked. If the user pays again from ANOTHER note while the first transaction
+/// is withheld, both are mined.
+///
+/// As reviewed this was a limit "outside what any wallet core can do". Since REVIEW_WALLET_4 the
+/// core enforces the restore embargo, and since REVIEW_WALLET_5 the shared test helper no longer
+/// switches it off: the restored device of this test makes no statement (**the test was edited
+/// for that**; it used to pay twice only because `common::configure` made the statement for it).
+/// The first half shows the default — the restored device builds nothing until the earlier
+/// transaction is dead, and the payee is paid once; the second half shows what is left of the
+/// limit: the user's explicit, FALSE statement on the restored device (`UI_CONTRACT.md`,
+/// obligation 1) — and then the payee is paid twice.
 #[test]
 fn rw3_demo_a_restored_device_has_no_locks_and_a_second_payment_from_another_note_pays_twice() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
-    let mut chain = base(&alice.address(), &[10 * Q, 6 * Q]);
-    let mut a = synced(&chain, &alice);
-    confirm(&chain, &mut a);
-    let t1 = pay_note(&mut a, &alice, 10 * Q, &bob.address(), 4 * Q, "rw3-restore-t1"); // device A holds the lock; the node withholds t1
-    // device B: restored from the phrase
-    let mut b = synced(&chain, &alice);
-    confirm(&chain, &mut b);
-    assert!(b.pending().is_empty() && b.balances().spendable == 16 * Q as u128, "LIMIT: no lock on the restored device");
-    let t2 = pay_note(&mut b, &alice, 6 * Q, &bob.address(), 4 * Q, "rw3-restore-t2");
-    chain.block(&[&t2.body]).unwrap();
-    chain.block(&[&t1.body]).unwrap(); // released inside its validity
-    let mut bobs = WalletState::new(bob.address().pk);
-    bobs.scan(&chain.page(0), &bob.scan_key()).unwrap();
-    assert_eq!(bobs.balance(), 8 * Q as u128, "LIMIT: Bob is paid twice; a restored wallet must not offer payments for 128 confirmed blocks, or warn");
+    let bob_holds = |chain: &Chain| {
+        let mut bobs = WalletState::new(bob.address().pk);
+        bobs.scan(&chain.page(0), &bob.scan_key()).unwrap();
+        bobs.balance()
+    };
+    for false_statement in [false, true] {
+        let mut chain = base(&alice.address(), &[10 * Q, 6 * Q]);
+        let mut a = synced(&chain, &alice);
+        configure_as_sole_copy(&mut a, &[N1, N2, N3]); // a NEW wallet: the statement is true for device A
+        confirm(&chain, &mut a);
+        let t1 = pay_note(&mut a, &alice, 10 * Q, &bob.address(), 4 * Q, "rw3-restore-t1"); // device A holds the lock; the node withholds t1
+        let t1_expiry = t1.pending().unwrap().expiry_height;
+        // device B: restored from the phrase
+        let mut b = synced(&chain, &alice);
+        if false_statement {
+            configure_as_sole_copy(&mut b, &[N1, N2, N3]); // the user says "no other copy has a payment in flight" — and device A has one
+        }
+        confirm(&chain, &mut b);
+        assert!(b.pending().is_empty() && b.balances().confirmed == 16 * Q as u128, "LIMIT: no lock on the restored device");
+        if false_statement {
+            let t2 = pay_note(&mut b, &alice, 6 * Q, &bob.address(), 4 * Q, "rw3-restore-t2");
+            chain.block(&[&t2.body]).unwrap();
+            chain.block(&[&t1.body]).unwrap(); // released inside its validity
+            assert_eq!(bob_holds(&chain), 8 * Q as u128, "LIMIT: with the user's false statement Bob is paid twice");
+            continue;
+        }
+        // the default: the core refuses, for 128 blocks above the embargo base
+        let until = b.spend_embargo_until().unwrap();
+        let p6 = position_of(&b, 6 * Q);
+        let build = |b: &WalletState, label: &str| {
+            let spend = SpendOptions { chain_id: CHAIN, inputs: &[p6], expiry_height: None, allow_unverified: false, max_fee: None };
+            deterministic::transfer_locked(b, b.revision(), &alice, &TransferParams { spend, recipient: &bob.address(), amount: 4 * Q, fee: Q }, label)
+        };
+        assert!(matches!(build(&b, "rw3-restore-refused").err(), Some(WalletError::RestoredRecently { until: Some(u) }) if u == until));
+        assert!(until >= t1_expiry, "the embargo covers the earlier transaction's whole life");
+        chain.advance_to(until);
+        b.scan(&chain.page(b.next_height()), &alice.scan_key()).unwrap();
+        confirm(&chain, &mut b);
+        let (t2, _) = build(&b, "rw3-restore-t2").expect("the embargo has ended");
+        chain.block(&[&t2.body]).unwrap();
+        // the node refuses a body whose expiry is below the block's height (spec §3.6 check 7; a
+        // stateless rule of the node — the stand-in chain here has only the pool rules)
+        assert!(u64::from_le_bytes(t1.body[34..42].try_into().unwrap()) < chain.height, "the earlier transaction is past its expiry: it can never be mined");
+        assert_eq!(bob_holds(&chain), 4 * Q as u128, "Bob is paid once");
+    }
     // had B chosen the SAME note, one of the two would have been superseded: safe
 }

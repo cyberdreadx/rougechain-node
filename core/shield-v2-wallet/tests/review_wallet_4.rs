@@ -97,7 +97,7 @@ fn rw4_f5_one_shifted_listing_page_makes_a_state_with_a_two_input_payment_pendin
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[3 * Q, 4 * Q, 5 * Q, 6 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     // two of the wallet's notes an even number of leaves apart (a transaction is two leaves)
@@ -190,7 +190,7 @@ fn restore_embargo_scenario(lag: u64, expiry_offset: Option<u64>, tag: &str) -> 
 
     // ---- device 1: in sync, confirmed by honest node 1 and the liar (which tells the truth here)
     let mut d1 = WalletState::new(alice.address().pk);
-    configure(&mut d1, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut d1, &[N1, N2, N3]);
     d1.scan(&chain.page(0), &alice.scan_key()).unwrap();
     let c = d1.confirm_state(&[chain.report(N1), chain.report(N3)]).unwrap();
     assert_eq!(c.matched_height, Some(chain.height));
@@ -293,7 +293,7 @@ fn rw4_demo_the_restore_embargo_is_documentation_only() {
     assert!(matches!(pay_with(&mut restored, &alice, &[p], &bob.address(), 4 * Q, None, "rw4-demo-embargo"), Err(WalletError::RestoredRecently { until: Some(h) }) if h == chain.height + MAX_EXPIRY_OFFSET), "the core knows that this state has no lock history");
     // with the user's statement (a NEW wallet): at once
     let mut new_wallet = WalletState::new(alice.address().pk);
-    configure(&mut new_wallet, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut new_wallet, &[N1, N2, N3]);
     new_wallet.scan(&chain.page(0), &alice.scan_key()).unwrap();
     new_wallet.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     assert!(new_wallet.sole_copy_asserted() && pay_with(&mut new_wallet, &alice, &[p], &bob.address(), 4 * Q, None, "rw4-demo-embargo").is_ok());
@@ -406,6 +406,7 @@ fn rw4_f3_a_viewing_key_state_reports_a_spent_note_as_confirmed_and_spendable() 
     watch.scan(&chain.page(0), &alice.incoming_viewing_key()).unwrap();
     // the same phrase on another device spends the 10 XRGE note; mined
     let mut other = WalletState::new(alice.address().pk);
+    configure_as_sole_copy(&mut other, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     other.scan(&chain.page(0), &alice.scan_key()).unwrap();
     confirm(&chain, &mut other);
     let p10 = position_of(&other, 10 * Q);
@@ -443,7 +444,7 @@ fn rw4_sound_a_spend_built_on_a_stale_confirmed_height_is_dead_on_arrival_and_ex
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let c0 = w.confirmed_height().unwrap();
@@ -477,7 +478,7 @@ fn rw4_sound_usable_window_of_a_spend_when_the_confirmed_height_lags_the_tip() {
         let mut chain = Chain::new();
         fund(&mut chain, &alice.address(), &[10 * Q]);
         let mut w = WalletState::new(alice.address().pk);
-        configure(&mut w, &[N1, N2, N3]);
+        configure_as_sole_copy(&mut w, &[N1, N2, N3]);
         w.scan(&chain.page(0), &alice.scan_key()).unwrap();
         w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
         let c = w.confirmed_height().unwrap();
@@ -624,7 +625,7 @@ fn rw4_sound_reports_for_heights_whose_state_was_evicted_confirm_nothing_and_ref
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let c0 = w.confirmed_height().unwrap();
@@ -676,7 +677,7 @@ fn rw4_f4_a_payee_address_with_the_payers_pk_strands_the_payment_at_the_next_res
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]); // a NEW wallet, so that the refusal below is the one the test is about
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let crafted = ShieldedAddress { pk: alice.address().pk, ek: mallory.address().ek };
@@ -716,7 +717,7 @@ fn rw4_sound_own_outputs_from_the_record_are_credited_once_and_only_on_confirmed
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q]);
     let mut w = WalletState::new(alice.address().pk);
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let p = position_of(&w, 10 * Q);
@@ -733,7 +734,9 @@ fn rw4_sound_own_outputs_from_the_record_are_credited_once_and_only_on_confirmed
     assert_eq!((r.own_outputs_from_record, blanked.balances().unverified), (1, 5 * Q as u128));
     let c = blanked.confirm_state(&[chain.report(N1), chain.report(N2), chain.report(N3)]).unwrap();
     assert!(c.matched_height.is_none() && c.listing_refuted && blanked.balances().confirmed == 0, "… and no quorum confirms that listing");
-    // (b) the transaction listed twice: two unverified notes, nothing confirmed
+    // (b) the transaction listed twice. As reviewed: two unverified notes, nothing confirmed.
+    // Since REVIEW_WALLET_5 (RW5-1 b) such a page is refused whole — a second note with the rho
+    // of the first is in no chain's listing — and the state is left as it was (edited for that)
     let mut twice = chain.page_value(0, chain.height);
     let dup = twice["txs"].as_array().unwrap().last().unwrap().clone();
     let mut dup2 = dup.clone();
@@ -743,9 +746,10 @@ fn rw4_sound_own_outputs_from_the_record_are_credited_once_and_only_on_confirmed
     }
     twice["txs"].as_array_mut().unwrap().push(dup2);
     let mut doubled = w.fresh_for_rescan();
-    doubled.scan(&parse(&twice), &alice.scan_key()).unwrap();
+    let untouched = doubled.clone();
+    assert!(matches!(doubled.scan(&parse(&twice), &alice.scan_key()), Err(WalletError::Listing(_))));
     let c = doubled.confirm_state(&[chain.report(N1), chain.report(N2), chain.report(N3)]).unwrap();
-    assert!(c.matched_height.is_none() && doubled.balances().confirmed == 0);
+    assert!(doubled == untouched && c.matched_height.is_none() && doubled.balance() == 0);
     // (c) the true listing: once, at its value
     let mut honest = w.fresh_for_rescan();
     honest.scan(&chain.page(0), &alice.scan_key()).unwrap();
@@ -765,7 +769,7 @@ fn rw4_sound_a_hostile_sender_cannot_ride_the_own_output_rule_past_the_dust_mini
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 5 * Q]);
     let mut w = WalletState::with_limits(alice.address().pk, Q, 3).unwrap();
-    configure(&mut w, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut w, &[N1, N2, N3]);
     w.scan(&chain.page(0), &alice.scan_key()).unwrap();
     w.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     // the wallet pays 8.5 of 10: its own change is 0.5 XRGE (below the minimum)
@@ -841,7 +845,7 @@ fn rw4_demo_two_different_states_carry_the_same_revision() {
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
     let mut stored = WalletState::new(alice.address().pk);
-    configure(&mut stored, &[N1, N2, N3]);
+    configure_as_sole_copy(&mut stored, &[N1, N2, N3]);
     stored.scan(&chain.page(0), &alice.scan_key()).unwrap();
     stored.confirm_state(&[chain.report(N1), chain.report(N2)]).unwrap();
     let loaded = stored.revision();

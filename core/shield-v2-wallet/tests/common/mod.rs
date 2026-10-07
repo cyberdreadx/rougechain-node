@@ -12,6 +12,8 @@ use quantum_vault_shield_v2_wallet::{
 };
 use sha2::{Digest as _, Sha256};
 
+pub mod client_loop;
+
 pub const Q: u64 = 1_000_000_000;
 pub const CHAIN: &str = "rougechain-devnet-1";
 /// Activation height of the stand-in chain.
@@ -34,18 +36,33 @@ pub fn node(id: &str) -> String {
 pub const NODE_A: &str = "node-a";
 pub const NODE_B: &str = "node-b";
 
-/// Configures `state` with these test nodes (bare names, see [`node`]).
+/// Configures `state` with these test nodes (bare names, see [`node`]) — **and nothing else**.
 ///
-/// **And it records the user's statement that no other copy of the wallet has a payment in
-/// flight** (`assert_no_other_copy_has_a_pending_payment`, REVIEW_WALLET_4 RW4-1): the wallets of
-/// these tests are new wallets, and a state made by `WalletState::new` is otherwise under the
-/// restore embargo for 128 blocks. A test about the embargo itself configures its state with
-/// `set_nodes` and does not make the statement. (The statement is accepted only before the first
-/// confirmed state check; on a state that already has its embargo base the call is a no-op.)
+/// A state made by `WalletState::new` is under the restore embargo: it builds no spend until its
+/// confirmed height is 128 blocks above its embargo base. That is the DEFAULT of every test, as
+/// it is the default of every client (REVIEW_WALLET_5, condition 3 and section A.3): a restored
+/// device, a second device and a device whose history is unknown are configured with this
+/// helper, and a test that needs such a state to spend lets the embargo run out.
+///
+/// A test whose wallet is a NEW wallet on a new phrase, and which has to spend from it, says so
+/// with [`configure_as_sole_copy`].
 pub fn configure(state: &mut WalletState, ids: &[&str]) {
     let ids: Vec<String> = ids.iter().map(|id| node(id)).collect();
     state.set_nodes(&ids).unwrap();
-    let _ = state.assert_no_other_copy_has_a_pending_payment();
+}
+
+/// [`configure`], **and the user's statement that no other copy of the wallet has a payment in
+/// flight** (`assert_no_other_copy_has_a_pending_payment`): the state is then under no embargo
+/// once its first state check has confirmed a height.
+///
+/// Only for a state that stands for a NEW wallet on a phrase generated on that device (or for a
+/// test that is ABOUT a user making the statement, truthfully or not). Never for a state that
+/// models a restore or a second device — and not a shape to copy into a client: a client makes
+/// this statement from "create new phrase", or from an explicit confirmation dialog, never from
+/// a helper that initialises a state (`UI_CONTRACT.md`, obligation 1).
+pub fn configure_as_sole_copy(state: &mut WalletState, ids: &[&str]) {
+    configure(state, ids);
+    state.assert_no_other_copy_has_a_pending_payment().expect("the statement is made before the first confirmed state check");
 }
 
 pub fn keys(phrase: &str) -> ShieldedKeys {
@@ -191,7 +208,9 @@ impl Chain {
 
 /// The state check of a wallet that has scanned to the tip against its two configured nodes,
 /// which agree (`WalletState::confirm_state`): every note of the state becomes confirmed. A state
-/// that is configured with no node yet is configured with `NODE_A` and `NODE_B`.
+/// that is configured with no node yet is configured with `NODE_A` and `NODE_B` — by
+/// [`configure`], that is, WITHOUT the user's statement: such a state is under the restore
+/// embargo. A test that spends from a new wallet calls [`configure_as_sole_copy`] first.
 pub fn confirm(chain: &Chain, state: &mut WalletState) {
     assert_eq!(state.next_height(), chain.height + 1, "confirm() is for a state scanned to the tip");
     if state.nodes().is_empty() {

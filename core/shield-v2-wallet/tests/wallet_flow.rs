@@ -66,6 +66,7 @@ fn shield_transfer_unshield_with_real_proofs() {
     fund(&mut chain, &alice.address(), &[3 * Q]);
 
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     assert_eq!(a.balance(), 12 * Q as u128);
     assert_eq!(a.notes().len(), 2);
     // one node's listing is not a confirmation: nothing is selected until two nodes agree on the root
@@ -130,6 +131,7 @@ fn shield_transfer_unshield_with_real_proofs() {
     assert_eq!(a.balance(), Q as u128);
     assert_eq!(a.anchor(), chain.state().tree_root);
     let mut b = synced(&chain, &bob);
+    configure_as_sole_copy(&mut b, &[NODE_A, NODE_B]); // Bob's wallet is a new wallet too
     assert_eq!(b.balance(), 10 * Q as u128);
     // the sender's own record names the slot; the recipient found it by trying both
     let pay = t.outputs.iter().find(|o| o.role == OutputRole::Payment).unwrap();
@@ -310,6 +312,7 @@ fn selection_and_merge() {
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[5 * Q, 3 * Q, 2 * Q, 8 * Q]);
     let mut a = synced(&chain, &alice);
+    configure_as_sole_copy(&mut a, &[NODE_A, NODE_B]); // a NEW wallet: the user says so, and it spends at once
     confirm(&chain, &mut a);
     let value_of = |s: &WalletState, p: u64| s.note_at(p).unwrap().value;
 
