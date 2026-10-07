@@ -179,21 +179,25 @@ fn rw6b_sound_a_minority_of_the_configured_nodes_never_refutes_however_many_repo
     }
 }
 
-/// **The consequence the Resolution states, measured — and it is wider than stated.** "If the
-/// liar is still the listing node when a confirmed height is contradicted, it is banned one round
-/// later (after the rescan); if the rescan outlasts the three rounds reports are kept, it escapes
-/// that ban." It escapes it whenever it likes: after the rescan that blamed nobody it lists the
-/// TRUTH into the empty state. Nothing is left to refute, it is neither banned nor left, and it
-/// is still the listing node when the next opportunity comes.
+/// **The consequence the Resolution of REVIEW_WALLET_6 stated, measured — restated after
+/// REVIEW_WALLET_6C** (section 5: "that test demonstrates a limit that no longer exists in that
+/// form; restate it (assert 'left, not banned, at the cap')"). The scenario is the review's,
+/// unchanged; the asserted outcome is the new one.
 ///
-/// One opportunity is: a block with a pool transaction and one more block between two rounds
-/// (anybody can make both, at one fee each), and ONE honest node one block behind in one round.
-/// Per opportunity the client throws its state away and reads the chain again (`D + 1` rounds).
-/// Five opportunities here: five rescans, no ban, no LEAVE, the liar the listing node
-/// throughout; between them the tip IS confirmed (so this is repeated work, not a wallet that
-/// never settles — on a chain that is read in one round).
+/// After the rescan that blamed nobody the liar lists the TRUTH into the empty state: nothing is
+/// left to refute, and it is never banned for it. One opportunity is: a block with a pool
+/// transaction and one more block between two rounds (anybody can make both, at one fee each),
+/// and ONE honest node one block behind in one round. Per opportunity the client throws its
+/// state away and reads the chain again (`D + 1` rounds); between two of them the tip IS
+/// confirmed.
+///
+/// As first written this asserted the limit: five opportunities, five rescans, no ban, no
+/// LEAVE, the liar the listing node throughout. With the cap per tenure (`K` = 3 rescans that
+/// blamed nobody on one listing node) the liar is **left, not banned, at its third** — in round
+/// 9 — and the next node lists. (The scenario's listing does not depend on who is asked, so
+/// the opportunities that follow fall on the next node and are counted for it, from zero.)
 #[test]
-fn rw6b_demo_a_liar_that_lists_the_truth_after_the_blameless_rescan_is_never_banned_and_can_do_it_again() {
+fn rw6b_demo_a_liar_that_lists_the_truth_after_the_blameless_rescan_is_left_not_banned_at_the_cap() {
     let (alice, bob) = (keys(PHRASE_1), keys(PHRASE_2));
     let mut chain = Chain::new();
     fund(&mut chain, &alice.address(), &[10 * Q, 6 * Q]);
@@ -219,9 +223,15 @@ fn rw6b_demo_a_liar_that_lists_the_truth_after_the_blameless_rescan_is_never_ban
         // round C: the liar lists the truth
         c.round_with(&key, &mut |_, since| Some(chain.page(since)), &mut || stats((0..3).map(|i| report(&chain, i)).collect()));
         assert_eq!((c.s.confirmed_height(), c.s.scanned_height()), (Some(h + 1), Some(h + 1)), "cycle {cycle}: the tip is confirmed again");
-        assert!(c.session.bad.is_empty() && c.left.is_empty() && c.session.listing == 0 && c.session.stopped.is_none(), "cycle {cycle}: the liar is not banned, not left, and lists: {:?}", c.left);
+        assert!(c.session.bad.is_empty() && c.session.stopped.is_none(), "cycle {cycle}: nobody is banned for it: {:?}", c.left);
+        if cycle < STRIKES {
+            assert!(c.left.is_empty() && c.session.listing == 0, "cycle {cycle}: below the cap the liar is not left, and lists: {:?}", c.left);
+        } else {
+            // the cap: left — not banned — at the K-th rescan that blamed nobody, in round 3·K
+            assert_eq!((c.left.clone(), c.session.listing), (vec![(3 * STRIKES as u64, 0, false, "rescans that blamed nobody")], 1), "cycle {cycle}: left, not banned, at the cap");
+        }
     }
-    println!("rw6b-again: 5 opportunities, {} rescans that blamed nobody, banned {:?}, LEAVEs {:?}, the listing node is node {} (the liar)", c.rescans, c.session.bad, c.left, c.session.listing + 1);
+    println!("rw6b-again: 5 opportunities, {} rescans that blamed nobody, banned {:?}, LEAVEs {:?}, the listing node is node {}", c.rescans, c.session.bad, c.left, c.session.listing + 1);
 }
 
 // ---------------------------------------------------------------------------------------------------

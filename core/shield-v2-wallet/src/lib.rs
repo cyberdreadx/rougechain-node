@@ -25,6 +25,7 @@
 //! to sign. See `NOTES.md` for every ambiguity of the specification and what was done, and for
 //! what the UI layers still have to decide.
 
+pub mod batch;
 pub mod bech32m;
 pub mod body;
 mod entropy;

@@ -163,7 +163,7 @@ fn is_lower_hex(s: &str) -> bool {
     s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn hex32(s: &str) -> Option<[u8; 32]> {
+pub(crate) fn hex32(s: &str) -> Option<[u8; 32]> {
     if s.len() != 64 || !is_lower_hex(s) {
         return None;
     }
@@ -249,9 +249,14 @@ impl ListingPage {
             return Err(WalletError::Listing("the page is larger than 32 MiB".into()));
         }
         let page: Self = serde_json::from_str(json).map_err(|e| {
-            let what = json_error("notes listing", &e);
-            // REVIEW_WALLET_6B RW6B-2: is the body a listing page at all?
-            WalletError::Listing(if Self::is_page(json) { what } else { format!("{NOT_A_LISTING_PAGE}: {what}") })
+            // REVIEW_WALLET_6B RW6B-2: is the body a listing page at all? (For one that is not,
+            // the text is the same whatever the body was and however it was handed in —
+            // alone, or as an element of a batch in either of its forms: REVIEW_WALLET_6C.)
+            WalletError::Listing(if Self::is_page(json) {
+                json_error("notes listing", &e)
+            } else {
+                format!("{NOT_A_LISTING_PAGE}: the body is not JSON this library reads with an object at its top level that has a member of a listing page")
+            })
         })?;
         if page.txs.len() > MAX_PAGE_TXS {
             return Err(WalletError::Listing("the page lists more than 4,096 transactions".into()));
@@ -260,7 +265,9 @@ impl ListingPage {
     }
 
     /// **Is this body a listing page at all?** (REVIEW_WALLET_6B RW6B-2.) The discriminator, and
-    /// the only one: the body is JSON, its top level is an OBJECT, and that object has at least
+    /// the only one: the body is JSON **as this library reads it** (REVIEW_WALLET_6C: no lone
+    /// surrogate escape, nothing nested deeper than 128 — a body with either is unreadable,
+    /// which is no answer, like silence), its top level is an OBJECT, and that object has at least
     /// one of the five members that make a page — [`PAGE_MEMBERS`]: `active`, `tip_height`,
     /// `from_height`, `next_height`, `txs`.
     ///

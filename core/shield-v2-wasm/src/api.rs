@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use wallet::{
     account_from_address, json_error, plan_merge_with, select_inputs_with, BuiltTx, ListingPage, ScanKey, ShieldRequest,
-    ShieldedAddress, ShieldedKeys, SpendOptions, StateReport, Tally, TransferParams, TxContext, TxKind, UnshieldParams,
+    ShieldedAddress, ShieldedKeys, SpendOptions, Tally, TransferParams, TxContext, TxKind, UnshieldParams,
     WalletError, WalletState,
 };
 use zeroize::{Zeroize, Zeroizing};
@@ -377,8 +377,13 @@ pub fn scan(state_json: &str, page_json: &str, scan_key_json: &str, expected_rev
 ///
 /// **The classes are those of [`scan`]** (REVIEW_WALLET_6B RW6B-1):
 ///
-/// * the OUTER argument is the caller's: text that is not a JSON array, or more than 64 MiB of
-///   it, is `request:` (the client builds the array; it never comes from a node as a whole);
+/// * the OUTER argument is the caller's: text that is not an array at its top level, or more
+///   than 64 MiB of it, is `request:` (the client builds the array; it never comes from a node
+///   as a whole). **The array is only split, never read as one document** (REVIEW_WALLET_6C
+///   RW6C-1: `wallet::batch::json_array_elements`): nothing an element holds — a lone surrogate
+///   escape, any depth of nesting — can make the call answer `request:`;
+/// * **an element is a JSON string holding the body the node answered with** (recommended:
+///   the client never parses a node's answer), or the page as an object written back;
 /// * every ELEMENT is a node's answer and is judged as `scan` judges it: an element that is
 ///   `null`, not an object, lacks a member, has a member of the wrong type or out of range, or
 ///   that `scan` refuses is `listing: page <i>: …` — `<i>` the element's index, from 0. An
@@ -391,10 +396,10 @@ pub fn scan_pages(state_json: &str, pages_json: &str, scan_key_json: &str, expec
     if pages_json.len() > 64 << 20 {
         return Err(bad("pages must be at most 64 MiB"));
     }
-    let pages: Vec<Value> = serde_json::from_str(pages_json).map_err(|e| bad_json("pages", &e))?;
-    let key = scan_key(scan_key_json)?;
+    // REVIEW_WALLET_6C RW6C-1: the array is only SPLIT (it is never read as one document), and
     // each element goes to the core as the text of one answer, like the argument of `scan`
-    let texts: Vec<String> = pages.iter().map(Value::to_string).collect();
+    let texts = wallet::batch::page_bodies(pages_json).ok_or_else(|| bad("pages: not a JSON array"))?;
+    let key = scan_key(scan_key_json)?;
     let reports = st.scan_pages(&texts, &key).map_err(|e| format!("{}: page {}: {}", code(&e.error), e.index, e.error))?;
     scan_result(&st, json!(reports))
 }
@@ -778,17 +783,6 @@ pub fn resolve_pending(state_json: &str, expected_revision: f64) -> ApiResult {
 
 // ---- state confirmation (REVIEW_WALLET_1 F-1, REVIEW_WALLET_2 RW2-2/4, REVIEW_WALLET_3 RW3-1/2) ----
 
-#[derive(Deserialize)]
-struct StateReportJson {
-    node_id: String,
-    height: u64,
-    tree_root: String,
-    nullifier_acc: String,
-    note_count: u64,
-    nullifier_count: u64,
-    ciphertext_acc: String,
-}
-
 /// Compares the wallet's own pool state — tree root, nullifier hash AND ciphertext hash, with
 /// both counts — with what its CONFIGURED nodes report, and moves the confirmed height.
 /// `reports_json`: `[{ "node_id", "height", "tree_root", "nullifier_acc", "note_count",
@@ -825,49 +819,20 @@ struct StateReportJson {
 ///
 /// `{ state, revision, revision_id, report, malformed, outdated_nodes, spend }`.
 pub fn confirm_state(state_json: &str, reports_json: &str, expected_revision: f64) -> ApiResult {
+    // (REVIEW_WALLET_6C RW6C-1 — the elements of `reports_json`, each read on its own: a JSON
+    // string holding the text of one of the following; `{ "node_id", "stats": "<the body the
+    // node answered /api/shield-v2/stats with>" }` (recommended: the client labels the answer
+    // and never parses it; a body without a report is "no report", not malformed); or the
+    // labelled report as an object. An element NO reader can read is counted in `malformed`.
+    // Only an argument that is not an array, or is larger than 1 MiB, is `request:`.)
     let mut st = state_for_update(state_json, expected_revision)?;
     if reports_json.len() > 1 << 20 {
         return Err(bad("reports must be at most 1 MiB"));
     }
-    let raw: Vec<Value> = serde_json::from_str(reports_json).map_err(|e| bad_json("state reports", &e))?;
-    let mut reports = Vec::with_capacity(raw.len());
-    let mut malformed = 0usize;
-    let mut outdated = std::collections::BTreeSet::new();
-    for entry in raw {
-        // everything a report needs but the ciphertext hash: an outdated node
-        let lacks_only_the_ciphertext_hash = entry.get("ciphertext_acc").is_none_or(Value::is_null) && {
-            let mut filled = entry.clone();
-            filled.as_object_mut().is_some_and(|o| {
-                o.insert("ciphertext_acc".into(), json!("00".repeat(32)));
-                true
-            }) && serde_json::from_value::<StateReportJson>(filled).is_ok_and(|r| hex32(&r.tree_root, "").is_ok() && hex32(&r.nullifier_acc, "").is_ok())
-        };
-        if lacks_only_the_ciphertext_hash {
-            let id = entry.get("node_id").and_then(Value::as_str).and_then(|id| wallet::canonical_node_id(id).ok()).filter(|id| st.nodes().contains(id));
-            match id {
-                Some(id) => {
-                    outdated.insert(id);
-                }
-                None => malformed += 1,
-            }
-            continue;
-        }
-        let parsed = serde_json::from_value::<StateReportJson>(entry).ok().and_then(|r| {
-            Some(StateReport {
-                tree_root: hex32(&r.tree_root, "").ok()?,
-                nullifier_acc: hex32(&r.nullifier_acc, "").ok()?,
-                ciphertext_acc: hex32(&r.ciphertext_acc, "").ok()?,
-                node_id: r.node_id,
-                height: r.height,
-                note_count: r.note_count,
-                nullifier_count: r.nullifier_count,
-            })
-        });
-        match parsed {
-            Some(r) => reports.push(r),
-            None => malformed += 1,
-        }
-    }
+    // REVIEW_WALLET_6C RW6C-1: the array is the caller's and is only SPLIT; every element is one
+    // node's and is read on its own — whatever it holds, the call does not fail for it
+    let wallet::batch::ReadReports { reports, malformed, outdated } =
+        wallet::batch::read_state_reports(reports_json, st.nodes()).ok_or_else(|| bad("state reports: not a JSON array"))?;
     let report = st.confirm_state(&reports).map_err(err)?;
     let spend = json!(st.spend_status(report.quorum_tip));
     out_with_state(&st, json!({ "report": report, "malformed": malformed, "outdated_nodes": outdated, "spend": spend }))

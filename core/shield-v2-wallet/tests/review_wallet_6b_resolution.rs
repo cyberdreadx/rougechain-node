@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::client_loop::{Decision, LoopClient, Session, Stats, BLAMELESS_IN_A_ROW, BLAMELESS_IN_A_SESSION, STRIKES};
+use common::client_loop::{Decision, LoopClient, Session, Stats, BLAMELESS_IN_A_ROW, BLAMELESS_PER_TENURE, STRIKES};
 use common::*;
 use quantum_vault_shield_v2_wallet::tx::deterministic;
 use quantum_vault_shield_v2_wallet::*;
@@ -288,7 +288,7 @@ fn rw6br_f3_a_page_that_does_not_continue_the_state_bans_only_the_node_whose_tai
 /// that blames nobody — and lists the TRUTH into the empty state: never banned, nothing left
 /// to refute, and ready for the next occasion. Between two occasions the tip is confirmed, so
 /// these are not rescans "in a row"; they are counted per listing node and session
-/// (`BLAMELESS_IN_A_SESSION` = 6): **at the sixth the liar is LEFT** — not banned: the model of
+/// (`BLAMELESS_PER_TENURE` = 3, after REVIEW_WALLET_6C): **at the third the liar is LEFT** — not banned: the model of
 /// the loop has no evidence against it — with the rescan, and the honest node that follows
 /// confirms the tip. Further occasions find an honest listing node and are none.
 #[test]
@@ -307,7 +307,7 @@ fn rw6br_cap_the_liar_that_lists_the_truth_after_each_blameless_rescan_is_left_a
     let mut c = LoopClient::new(wallet(&alice), 0); // node 1, the liar, lists
     c.round_with(&key, &mut |_, since| Some(chain.page(since)), &mut || stats((0..3).map(|i| report(&chain, i)).collect()));
     assert_eq!(c.s.confirmed_height(), Some(20));
-    let cap = BLAMELESS_IN_A_SESSION;
+    let cap = BLAMELESS_PER_TENURE;
     let mut rounds_as_listing_node = 1;
     for cycle in 1..=cap + 3 {
         let liar_lists = c.session.listing == 0;
@@ -328,7 +328,7 @@ fn rw6br_cap_the_liar_that_lists_the_truth_after_each_blameless_rescan_is_left_a
         if cycle < cap {
             assert_eq!((c.rescans, c.session.listing, c.left.len(), c.session.blameless_on_l, c.session.blameless_in_a_row), (cycle, 0, 0, cycle, 0), "cycle {cycle}: a rescan that blamed nobody; the liar lists");
         } else {
-            // the cap: left at the sixth, with the rescan, not banned; the honest node lists
+            // the cap: left at the third, with the rescan, not banned; the honest node lists
             assert_eq!((c.rescans, c.session.listing, c.left.clone()), (cap, 1, vec![(3 * cap as u64, 0, false, "rescans that blamed nobody")]), "cycle {cycle}");
             assert_eq!((c.session.blameless_on_l, c.session.blameless_in_a_row), (0, 0));
         }
@@ -366,7 +366,7 @@ fn rw6br_cap_two_blameless_rescans_in_a_row_leave_the_listing_node() {
     assert_eq!((session.listing, session.blameless_in_a_row, session.blameless_on_l, session.bad.len()), (1, 0, 0, 0));
     // a round that ends with the tip confirmed in between: not in a row
     let mut session = Session::new(3, 0);
-    for _ in 0..BLAMELESS_IN_A_SESSION - 1 {
+    for _ in 0..BLAMELESS_PER_TENURE - 1 {
         assert_eq!(session.after_confirm(&contradicted, true, &s), Decision::Rescan);
         assert_eq!(session.after_confirm(&fine, true, &s), Decision::Go);
         assert_eq!(session.blameless_in_a_row, 0);

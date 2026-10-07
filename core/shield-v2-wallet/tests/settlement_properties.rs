@@ -212,7 +212,13 @@ enum Strategy {
 /// store cannot be read (`core/daemon/src/main.rs`, `shield_v2_notes`), what a proxy sends, and
 /// what a liar may send as well.
 fn not_a_page(k: u64) -> String {
-    match k % 8 {
+    match k % 10 {
+        // REVIEW_WALLET_6C RW6C-1: what a JavaScript client reads without complaint and this
+        // library's JSON reader refuses — a lone surrogate escape, a member nested 200 deep —
+        // inside what is otherwise a page. Unreadable: no answer.
+        // (in a member the reader reads: an odd member a page does not have is skipped unread)
+        8 => r#"{"active":true,"tip_height":"\ud800","from_height":3,"next_height":6,"txs":[]}"#.into(),
+        9 => format!(r#"{{"active":true,"tip_height":{}{},"from_height":3,"next_height":6,"txs":[]}}"#, "[".repeat(200), "]".repeat(200)),
         0 => r#"{"success":false,"error":"storage: the block could not be read"}"#.into(),
         1 => "<html><body><h1>502 Bad Gateway</h1></body></html>".into(),
         2 => String::new(),
@@ -697,6 +703,12 @@ struct Stats {
     /// after the first), nodes left for blameless rescans, the adaptive liar's scenes
     no_page_answers: usize,
     honest_error_answers: usize,
+    /// REVIEW_WALLET_6C: arrays written the way a JavaScript client writes them and read
+    /// element by element — of pages, of reports — and the elements in them that no reader
+    /// could read (each counted, none an error)
+    js_page_arrays: usize,
+    js_report_arrays: usize,
+    js_unreadable_elements: usize,
     batches: usize,
     batch_refused: usize,
     batch_refused_inside: usize,
@@ -798,6 +810,11 @@ struct World {
     /// this run's client applies the pages of a round in ONE call (`WalletState::scan_pages`,
     /// what the WebAssembly export `scan_pages` runs): all of them or none
     batching: bool,
+    /// this run's client hands pages and reports over the way a JavaScript client does
+    /// (REVIEW_WALLET_6C): as ONE JSON text, an array it wrote — strings of the raw bodies, or
+    /// the objects written back — which the library splits and reads element by element
+    /// (`batch::page_bodies`, `batch::read_state_reports`: what the wasm exports run)
+    js_arrays: bool,
     /// **The client's session — `common::client_loop::Session`, the loop of `NOTES.md` §6 as
     /// code**: `L` (also stored with the state: `listed_from`), `bad`, the strikes, the reports
     /// of the last rounds. Lost in a crash, but for `L`.
@@ -871,6 +888,7 @@ impl World {
             false_now: None,
             stats_answers: Vec::new(),
             batching: seed % 3 == 1,
+            js_arrays: seed % 2 == 0,
             session: Session::new(n, 0),
             mute_leaders: false,
             statement: false,
@@ -902,7 +920,7 @@ impl World {
                     6 | 7 => Strategy::LateThenContradicts,
                     8 | 9 => Strategy::BadFields(w.rng.below(30)),
                     10 | 11 | 14 => Strategy::SaysInactive,
-                    12 => Strategy::ErrorBodies(w.rng.below(8)),
+                    12 => Strategy::ErrorBodies(w.rng.below(10)),
                     13 => Strategy::LateAdaptive,
                     _ => Strategy::Memoryless,
                 };
@@ -1524,6 +1542,28 @@ impl World {
         self.stats.batches += 1;
         let false_pages = verdict.iter().filter(|v| v.0 && !v.1).count();
         self.stats.false_pages += false_pages;
+        // REVIEW_WALLET_6C: the batch as ONE text, as a JavaScript client writes it — each body
+        // as a string (the raw answer), or, for a body `JSON.parse` reads, as the value written
+        // back — split and read element by element. What comes out is one body per answer,
+        // and every page is the text the node sent.
+        let bodies = if self.js_arrays {
+            let elements: Vec<String> = bodies
+                .iter()
+                .map(|text| {
+                    let js_reads_it = serde_json::from_str::<serde_json::Value>(text).is_ok() || text.contains("\\ud800") || text.contains(&"[".repeat(150));
+                    if js_reads_it && self.rng.below(2) == 0 { text.clone() } else { serde_json::to_string(text).unwrap() }
+                })
+                .collect();
+            let handed = batch::page_bodies(&format!("[{}]", elements.join(","))).unwrap_or_else(|| panic!("seed {seed}: an array of {} answers is not read as an array", elements.len()));
+            assert_eq!(handed.len(), bodies.len(), "seed {seed}: one body per answer");
+            for (i, (handed, sent)) in handed.iter().zip(&bodies).enumerate() {
+                assert!(!verdict[i].0 || handed == sent, "seed {seed}: page {i} of the array is not the text the node sent");
+            }
+            self.stats.js_page_arrays += 1;
+            handed
+        } else {
+            bodies
+        };
         let mut s = base.clone();
         match s.scan_pages(&bodies, &key) {
             Err(PageError { index, error }) => {
@@ -1883,6 +1923,76 @@ impl World {
         out
     }
 
+    /// REVIEW_WALLET_6C RW6C-1. The reports of a round as a JavaScript client hands them to
+    /// `confirm_state`: ONE JSON text, an array — each report as `{ node_id, stats: "<the raw
+    /// body>" }`, as the labelled object written back, or as a string holding that object's
+    /// text. Between them the lying nodes put elements NO reader can read: a lone surrogate
+    /// escape or a member nested 200 deep inside a report, a body that is not JSON, a report
+    /// that is not an object, `null`, a number, nothing.
+    ///
+    /// The model's invariant: **the array is read, every report that was a report comes out
+    /// exactly as it went in and in order, and every element that was none is counted — the
+    /// call never fails for what one node sent.**
+    fn reports_through_a_js_array(&mut self, reports: Vec<StateReport>) -> Vec<StateReport> {
+        let seed = self.seed;
+        let object = |r: &StateReport, with_id: bool| {
+            let mut o = serde_json::json!({
+                "height": r.height, "tree_root": hex::encode(r.tree_root), "nullifier_acc": hex::encode(r.nullifier_acc),
+                "note_count": r.note_count, "nullifier_count": r.nullifier_count, "ciphertext_acc": hex::encode(r.ciphertext_acc),
+            });
+            if with_id {
+                o["node_id"] = serde_json::json!(r.node_id);
+            }
+            o
+        };
+        let mut elements: Vec<String> = Vec::new();
+        let (mut unreadable, mut hostile) = (0usize, 0usize);
+        let liars: Vec<String> = (0..self.nodes.len()).filter(|&i| self.liar[i]).map(|i| self.nodes[i].clone()).collect();
+        let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
+        let quoted = |text: &str| serde_json::to_string(text).unwrap();
+        for at in 0..=reports.len() {
+            // a lying node's element that cannot be read, in any position of the array
+            while !liars.is_empty() && self.rng.below(6) == 0 {
+                let id = quoted(&liars[self.rng.below(liars.len() as u64) as usize]);
+                let truth = reports.first().map(|r| object(r, false).to_string()).unwrap_or_else(|| "{}".into());
+                // (the text, whether it counts as malformed — "no report" is not counted)
+                let (text, counts) = match self.rng.below(16) {
+                    0 => (format!(r#"{{"node_id":{id},"height":1,"tree_root":"\ud800","nullifier_acc":"00","note_count":0,"nullifier_count":0,"ciphertext_acc":"00"}}"#), true),
+                    1 => (format!(r#"{{"node_id":{id},"extra":{deep}}}"#), true),
+                    2 => (format!(r#"{{"node_id":{id},"stats":"<html>502</html>"}}"#), true),
+                    3 => (format!(r#"{{"node_id":{id},"stats":{}}}"#, quoted(r#"{"active":true,"report":"x"}"#)), true),
+                    4 => ("null".into(), true),
+                    5 => ("7".into(), true),
+                    6 => (r#""\ud800""#.into(), true),
+                    7 => ("[]".into(), true),
+                    8 => ("{}".into(), true),
+                    9 => (format!(r#"{{"node_id":{id},"stats":{}}}"#, quoted(r#"{"report":{"height":"\ud800"}}"#)), true),
+                    10 => (format!(r#"{{"node_id":{id},"stats":{}}}"#, quoted(&format!(r#"{{"report":{deep}}}"#))), true),
+                    11 => (quoted(&format!(r#"{{"node_id":{id},"height":"\ud800"}}"#)), true),
+                    12 => (format!(r#"{{"node_id":{id},"stats":{}}}"#, quoted(r#"{"active":false,"report":null}"#)), false),
+                    13 => (format!(r#"{{"node_id":{id},"stats":{}}}"#, quoted(&format!(r#"{{"report":{}}}"#, truth.replacen("\"height\":", "\"height\":-", 1)))), true),
+                    14 => (format!(r#"{{"node_id":{id},"stats":""}}"#), true),
+                    _ => (format!(r#"{{"node_id":[{id}],"stats":{}}}"#, quoted(&format!(r#"{{"report":{truth}}}"#))), true),
+                };
+                elements.push(text);
+                unreadable += counts as usize;
+                hostile += 1;
+            }
+            let Some(r) = reports.get(at) else { break };
+            elements.push(match self.rng.below(3) {
+                0 => serde_json::json!({ "node_id": r.node_id, "stats": serde_json::json!({ "success": true, "active": true, "report": object(r, false) }).to_string() }).to_string(),
+                1 => object(r, true).to_string(),
+                _ => quoted(&object(r, true).to_string()),
+            });
+        }
+        let read = batch::read_state_reports(&format!("[{}]", elements.join(",")), &self.nodes).unwrap_or_else(|| panic!("seed {seed}: the array of {} reports ({hostile} of them unreadable) is not read as an array", elements.len()));
+        assert!(read.reports == reports, "seed {seed}: the reports that were reports do not come out as they went in ({hostile} unreadable elements among {})", elements.len());
+        assert_eq!((read.malformed, read.outdated.len()), (unreadable, 0), "seed {seed}: every element that is no report is counted, and that is all");
+        self.stats.js_report_arrays += 1;
+        self.stats.js_unreadable_elements += hostile;
+        read.reports
+    }
+
     /// NOTES §6 steps 2 and 3: every node is asked, the reports of the last rounds are kept and
     /// handed in with the new ones, and the documented rules follow the result.
     /// `Some(report)`: the check left nothing to do (the listing is neither refuted nor ahead).
@@ -1916,9 +2026,12 @@ impl World {
         if !self.apply(gate) {
             return None;
         }
+        let reports = if self.js_arrays { self.reports_through_a_js_array(reports) } else { reports };
         let before = self.stored.clone();
         let mut s = self.stored.clone();
-        let c = s.confirm_state(&reports).unwrap();
+        // (REVIEW_WALLET_6C: step 3 has a rule for an error of `confirm_state` — the client's
+        // own fault, STOP — and nothing a node sent may cause one)
+        let c = s.confirm_state(&reports).unwrap_or_else(|e| panic!("seed {seed}: confirm_state refused ({e}) — an error no report may cause"));
         self.stats.confirm_calls += 1;
         assert_eq!((c.configured, c.quorum), (self.nodes.len(), self.quorum()), "seed {seed}: the quorum is a strict majority of the configured nodes");
         if let Some(h) = c.matched_height {
@@ -2541,7 +2654,7 @@ impl World {
     /// honest node standing there contradict the confirmed height, the state is rescanned and
     /// nobody is blamed, and the liar lists the TRUTH into the empty state. It is never banned
     /// for it and nothing remains to refute. The loop must not go on like that for ever: after
-    /// `BLAMELESS_IN_A_SESSION` such rescans on one node it LEAVES the node, without a ban.
+    /// `BLAMELESS_PER_TENURE` such rescans on one node it LEAVES the node, without a ban.
     ///
     /// Nothing here asserts an outcome but that: the invariants of `leave` and `check` judge
     /// every ban, and the scene counts the leaves.
@@ -2567,7 +2680,7 @@ impl World {
             self.check("the adaptive liar: the truth, from the start");
         }
         let mut rescans_on_l = 0;
-        for _ in 0..2 * common::client_loop::BLAMELESS_IN_A_SESSION {
+        for _ in 0..2 * common::client_loop::BLAMELESS_PER_TENURE {
             if self.session.listing != l {
                 break;
             }
@@ -2588,7 +2701,7 @@ impl World {
                 }
             }
             // (the model's own count: the loop does not let one node cause more of them)
-            assert!(rescans_on_l <= common::client_loop::BLAMELESS_IN_A_SESSION as usize, "seed {}: {rescans_on_l} rescans that blamed nobody while one node was listed from, in one session", self.seed);
+            assert!(rescans_on_l <= common::client_loop::BLAMELESS_PER_TENURE as usize, "seed {}: {rescans_on_l} rescans that blamed nobody while one node was listed from, in one session", self.seed);
         }
         self.no_crash = crashes;
         true
@@ -3639,7 +3752,7 @@ fn settlement_guarantees_hold_against_an_independent_model() {
         }
         add!(lying_pages, lying_pages_accepted, pages_cut, leaf_mismatches, confirm_calls, matched, matched_with_dissent, refuted, banned, left, left_without_rescan, no_answers, first_check_waits, persistent_liars, rescans, states_lost, restores,
             false_pages, bad_field_pages, inactive_pages, late_listings, directed_late, refuted_confirmed, nobody_blamed,
-            no_page_answers, honest_error_answers, batches, batch_refused, batch_refused_inside, blameless_leaves, directed_adaptive,
+            no_page_answers, honest_error_answers, js_page_arrays, js_report_arrays, js_unreadable_elements, batches, batch_refused, batch_refused_inside, blameless_leaves, directed_adaptive,
             directed_restores, directed_payments, silent_leader_bases, boundary_looks, recoveries, recoveries_embargoed, embargo_deadlines_checked,
             embargo_bases, stale_bases, embargo_refusals, embargo_ended, payments, retries, two_input_payments, max_expiry_payments, self_payments, unreadable_payments, mixed_refused,
             locked_refused, long_expiry_refused, two_tabs, unconfirmed_root_refused, withheld, unanswered, resubmitted, released_late, released_last_block, release_refused, honest_silent, honest_stalls,
@@ -3665,6 +3778,8 @@ fn settlement_guarantees_hold_against_an_independent_model() {
     // a CONFIRMED height, answered with a rescan that blames nobody; the world without the pool
     assert!(total.false_pages > 1_000 && total.bad_field_pages > 40 && total.inactive_pages > 30 && total.late_listings > 100 && total.directed_late > 60 && total.refuted_confirmed > 30 && total.nobody_blamed > 30, "{total:?}");
     assert!(total.inactive_idles > 300 && total.inactive_activations > 100, "{total:?}");
+    // REVIEW_WALLET_6C: pages and reports handed over as a JavaScript client's arrays
+    assert!(total.js_page_arrays > 2_000 && total.js_report_arrays > 5_000 && total.js_unreadable_elements > 1_000, "{total:?}");
     // REVIEW_WALLET_6B: answers that are no page (honest nodes' too), rounds applied in one
     // call and refused ones among them (also at a page after the first), the adaptive liar's
     // scenes and the nodes left at the cap on blameless rescans

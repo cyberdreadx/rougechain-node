@@ -18,8 +18,9 @@
 //! listing page (`ListingPage::is_page`) is no answer — a strike, never a ban; a `listing:`
 //! error and `leaf_mismatch` ban only when the unconfirmed part of the state is the listing
 //! node's own ([`Session::unconfirmed_tail_is_listing_nodes`]), and otherwise rescan and blame
-//! nobody; and such rescans are capped ([`BLAMELESS_IN_A_ROW`], [`BLAMELESS_IN_A_SESSION`]):
-//! at the cap the node is left, without a ban.
+//! nobody; and such rescans are capped ([`BLAMELESS_IN_A_ROW`], [`BLAMELESS_PER_TENURE`]):
+//! at the cap the node is left, without a ban. After REVIEW_WALLET_6C: step 3 has a rule for
+//! an error of `confirm_state` ([`Session::after_confirm_error`]) and the per-tenure cap is 3.
 //!
 //! It is not a network client: a page and a set of reports are handed in by the caller. What
 //! it decides is everything the documents leave to no one's judgement — when a listing node is
@@ -45,10 +46,14 @@ pub const FIRST_CHECK_ROUNDS: u32 = 5;
 /// `R_c`: blameless rescans IN A ROW on one listing node — no round between them that ended with
 /// the tip confirmed — after which that node is left, without a ban (REVIEW_WALLET_6B).
 pub const BLAMELESS_IN_A_ROW: u32 = 2;
-/// `R_s`: blameless rescans on one listing node IN A SESSION, however many confirmed tips lie
-/// between them, after which that node is left, without a ban: a node that lists the truth
-/// after every blameless rescan and gives the next occasion for one is not listed from for ever.
-pub const BLAMELESS_IN_A_SESSION: u32 = 6;
+/// `R_t`: blameless rescans in one TENURE of a listing node (the counts start again when the
+/// listing node changes, and with a new session), however many confirmed tips lie between
+/// them, after which that node is left, without a ban: a node that lists the truth after every
+/// blameless rescan and gives the next occasion for one is not listed from for ever. Equal to
+/// `K` (REVIEW_WALLET_6C, section 5: "6 is acceptable, 3 is better").
+pub const BLAMELESS_PER_TENURE: u32 = 3;
+/// The name [`BLAMELESS_PER_TENURE`] had (`tests/review_wallet_6c.rs` uses it).
+pub const BLAMELESS_IN_A_SESSION: u32 = BLAMELESS_PER_TENURE;
 /// The reports of this many rounds are handed to `confirm_state`, at most [`MAX_REPORTS`].
 pub const REPORT_ROUNDS: u64 = 3;
 pub const MAX_REPORTS: usize = 1_024;
@@ -295,13 +300,13 @@ impl Session {
 
     /// The state is to be rescanned and nobody is blamed for it. **Capped** (REVIEW_WALLET_6B):
     /// after [`BLAMELESS_IN_A_ROW`] of them without a round that ended with the tip confirmed,
-    /// or [`BLAMELESS_IN_A_SESSION`] of them on this listing node in this session, the node is
+    /// or [`BLAMELESS_PER_TENURE`] of them in this tenure of the listing node, the node is
     /// LEFT instead — without a ban, with the rescan — so that no node can keep a client
     /// rescanning for as long as it is listed from.
     fn blameless_rescan(&mut self) -> Decision {
         self.blameless_in_a_row += 1;
         self.blameless_on_l += 1;
-        if self.blameless_in_a_row >= BLAMELESS_IN_A_ROW || self.blameless_on_l >= BLAMELESS_IN_A_SESSION {
+        if self.blameless_in_a_row >= BLAMELESS_IN_A_ROW || self.blameless_on_l >= BLAMELESS_PER_TENURE {
             self.leave_rescans = true;
             return Decision::Leave { ban: false, why: "rescans that blamed nobody" };
         }
@@ -557,6 +562,19 @@ impl Session {
         Decision::Go
     }
 
+    /// Step 3, `confirm_state` refused (REVIEW_WALLET_6C RW6C-1: the step had no rule, and the
+    /// reference unwrapped). Nothing a node sends causes it: a malformed report is "no report
+    /// from that node" and the call succeeds. What remains is the client's own — more than
+    /// 1,024 reports, an argument that is not an array (`request:`), a state that is not the
+    /// stored one (`stale_state:` → reload) — or a fault (`state_invariant:`): STOP(fault), the
+    /// state kept. The listing node is not moved on: it had no part in it.
+    pub fn after_confirm_error(&mut self, e: &WalletError) -> Decision {
+        match e {
+            WalletError::StaleState => Decision::Reload,
+            e => Decision::Stop(Stop::Fault(e.to_string())),
+        }
+    }
+
     /// Step 5: is a payment offered in this round?
     pub fn may_offer_payment(c: &ConfirmReport, at_tip: bool, state: &WalletState) -> bool {
         at_tip && c.matched_height.is_some() && state.confirmed_height() == state.scanned_height() && state.spend_status(c.quorum_tip).can_spend_now
@@ -711,7 +729,14 @@ impl LoopClient {
             return;
         }
         // 3. confirm_state and its rules
-        let c = self.s.confirm_state(&handed_in).unwrap();
+        let c = match self.s.confirm_state(&handed_in) {
+            Ok(c) => c,
+            Err(e) => {
+                let d = self.session.after_confirm_error(&e);
+                self.apply(d);
+                return;
+            }
+        };
         let d = self.session.after_confirm(&c, at_tip, &self.s);
         if !self.apply(d) {
             return;
