@@ -21,6 +21,7 @@ The binary is output to `target/release/rougechain` (or `rougechain.exe` on Wind
 |------|---------|-------------|
 | `--network` | `mainnet` | `mainnet` (`https://api.rougechain.io`) or `testnet` (`https://testnet.rougechain.io`) |
 | `--rpc` | the public node of `--network` | Node base URL, e.g. `http://127.0.0.1:5100` for your own node. Overrides `--network`. A trailing `/` or `/api` is accepted |
+| `--chain-id` | the chain id of `--network`; with `--rpc`, the node's own | The network every signature commits to (`chainId` in `/api/v2` requests, `chain_id` in `--legacy-broadcast` envelopes). The CLI compares it with the node's `/api/health` `chain_id` and refuses to sign if they differ (CLI 1.3.0+) |
 | `--wallet-dir` | `~/.rougechain` | Directory for key storage |
 | `--node-keys` | — | Sign with a node's `node-keys.json` instead of the wallet key store |
 | `--legacy-broadcast` | off | Post stake / unstake / transfer as a raw transaction to `/api/tx/broadcast` (see [Signed Requests](#signed-requests)) |

@@ -27,6 +27,35 @@ see [Status & Roadmap](status.md). _Last reviewed: 2026-10-06._
   refused, and the unauthenticated legacy read routes return `410 Gone`. Nodes before 1.6.3 do not
   enforce this.
 
+<a id="network-binding"></a>
+
+## Signatures commit to the network
+
+Mainnet (`rougechain-mainnet-1`) and testnet (`rougechain-devnet-1`) accept the same keys, and the
+web wallet uses one key on both. From node release **1.6.4** and the wallet releases listed in the
+[changelog](changelog.md), every payload a wallet signs for a node — transactions and signed requests
+(mail, messenger, names, votes) — carries the chain id of the network it is meant for (`chainId`;
+`chain_id` in a `rougechain` CLI envelope), inside the signed bytes. A signature therefore commits to
+one network.
+
+- **Node rule (release 1.6.4, no fork).** A node refuses a signed payload that names another chain id
+  (`CHAIN_ID_MISMATCH`), at the API, at mempool admission and when producing. A payload that names no
+  network is still accepted while wallets update; operators turn on
+  [`REQUIRE_SIGNED_CHAIN_ID`](running-a-node/configuration.md) to refuse those too
+  (`CHAIN_ID_REQUIRED`).
+- **Wallets** take the chain id from their network setting, compare it once per session with the
+  node's `GET /api/health` → `chain_id`, and refuse to sign if the two differ. The extension and
+  Qwalla show the network a request is for and refuse one for a network other than the selected one.
+- **Consensus rule (CHAIN_ID_BINDING, not scheduled).** From an activation height to be announced,
+  a block is invalid if any transaction's signed bytes do not commit to the chain id; node-signed
+  transactions switch to a network-bound signing format at the same height. Until then consensus is
+  unchanged. See the [upgrade schedule](running-a-node/upgrade-schedule.md#chain-id-binding).
+- **Sign-in messages** already carry a `Chain ID` line; verifiers must check it
+  ([Wallet Authentication](advanced/wallet-authentication.md#what-a-verifier-must-check)).
+- **Contracts** that verify signatures themselves can read the chain id with `host_get_chain_id` from
+  the CONTRACT_CHAIN_ID upgrade (not scheduled) — see
+  [Smart Contracts](advanced/smart-contracts.md#chain-id).
+
 ## Bridges — mixed
 
 | Path | Today |

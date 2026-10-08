@@ -4,6 +4,27 @@ All notable changes to RougeChain.
 
 ---
 
+## Signatures commit to the network — node release 1.6.4 (in the repository) — 2026-10-08
+
+- Every payload a wallet signs for a node now names the network it is for: `chainId` (the exact chain
+  id, e.g. `rougechain-mainnet-1`) inside the signed bytes of `/api/v2` transactions and of signed
+  mail, messenger, name and vote requests; `chain_id` inside a `rougechain` CLI envelope. Wallets take
+  it from their network setting, check it once per session against the node's `/api/health`
+  `chain_id`, and refuse to sign when they differ.
+- **Node 1.6.4 (no fork):** a signed payload naming another chain id is refused with
+  `CHAIN_ID_MISMATCH` at the API, mempool and producer. New operator flag `REQUIRE_SIGNED_CHAIN_ID`
+  (`--require-signed-chain-id` / `QV_REQUIRE_SIGNED_CHAIN_ID`, default **off**) also refuses payloads
+  naming none (`CHAIN_ID_REQUIRED`); it is turned on once wallets have shipped.
+- **Consensus (not scheduled):** CHAIN_ID_BINDING — from a height to be announced, every
+  transaction's signed bytes must commit to the chain id (V1-format, node-signed transactions use a
+  new network-bound signing encoding from that height). CONTRACT_CHAIN_ID — contracts can read the
+  chain id with `host_get_chain_id`. Both are `None` on every network; history replays identically.
+- Clients: site (rougechain.io), `@rougechain/sdk` 1.14.0, browser extension 1.9.0 (approval
+  screen shows the network and refuses another one), `rougechain` CLI 1.3.0 (`--chain-id`), Qwalla
+  1.3.0 (patch). Sign-in verification (`verifySignIn`) already required the chain id; the docs now
+  say verifiers must check it.
+- See [Security](security.md#network-binding).
+
 ## Wallet message signing (`signMessage`) for logins and token gating — 2026-10-06
 
 - New provider method `window.rougechain.signMessage({ message })` → `{ signature, publicKey, address }`

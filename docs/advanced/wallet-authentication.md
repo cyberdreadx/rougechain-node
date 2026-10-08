@@ -367,8 +367,9 @@ for display and cannot represent every amount exactly above 2^53 units.
    a nonce was used before.
 3. **Expiry.** Put an `Expiration Time` a few minutes ahead in the message, or pass `maxAgeMs`.
    Keep your server's clock synchronised.
-4. **Chain ID.** Pass the network you gate on as `expectedChainId`, so a testnet sign-in is not
-   accepted for mainnet holdings.
+4. **Chain ID — required.** A verifier MUST check the `Chain ID` line: pass the network you gate on
+   as `expectedChainId` (`verifySignIn` requires it and fails with `chain_id_mismatch` otherwise), so
+   a sign-in made for one network is never accepted for another.
 5. **Use the address `verifySignIn` returns.** Do not trust an address or public key sent
    alongside the message.
 6. **Holdings come from a node you choose.** The signature proves control of a key; it says
