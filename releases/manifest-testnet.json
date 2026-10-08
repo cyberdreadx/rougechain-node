@@ -2,27 +2,27 @@
   "schema": 1,
   "network": "testnet",
   "chain_id": "rougechain-devnet-1",
-  "version": "1.6.3",
-  "released": "2026-10-05",
-  "source_commit": "8eacc0d",
+  "version": "1.6.4",
+  "released": "2026-10-08",
+  "source_commit": "0be1493",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-directory-hardening-8eacc0d",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-directory-hardening-8eacc0d",
+    "name": "quantum-vault-daemon-network-binding-0be1493",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-network-binding-0be1493",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.3/quantum-vault-daemon-directory-hardening-8eacc0d"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.4/quantum-vault-daemon-network-binding-0be1493"
     ],
-    "sha256": "58c0288fc0137f35f4b986be24b010589ff4783c58239bde229f6a7014ab6171",
-    "size": 28441912
+    "sha256": "05a320122175c8c6847448f6ab358a17592365e3ab8f881b5d982788d4587573",
+    "size": 29383808
   },
   "cli": {
-    "name": "rougechain-638637f",
-    "url": "https://api.rougechain.io/releases/rougechain-638637f",
+    "name": "rougechain-0be1493",
+    "url": "https://api.rougechain.io/releases/rougechain-0be1493",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.1/rougechain-638637f"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.4/rougechain-0be1493"
     ],
-    "sha256": "35ce999d8fbe4ed972d2169dddf47c2a0a2d66b6aa27f8c7888347f13afa1d59",
-    "size": 5292512
+    "sha256": "0df5a526a120eeb12ac77a5a86b6b448bbdf80b371c63db0a4c1427ef22f6870",
+    "size": 5294304
   },
   "genesis": null,
   "installer": {
@@ -82,6 +82,6 @@
       "height": 1390
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.3.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.4.html",
   "min_installer_version": "2.0.0"
 }

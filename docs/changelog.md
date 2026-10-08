@@ -4,7 +4,7 @@ All notable changes to RougeChain.
 
 ---
 
-## Signatures commit to the network — node release 1.6.4 (in the repository) — 2026-10-08
+## Node release 1.6.4: signatures commit to the network — 2026-10-08
 
 - Every payload a wallet signs for a node now names the network it is for: `chainId` (the exact chain
   id, e.g. `rougechain-mainnet-1`) inside the signed bytes of `/api/v2` transactions and of signed
@@ -23,7 +23,14 @@ All notable changes to RougeChain.
   screen shows the network and refuses another one), `rougechain` CLI 1.3.0 (`--chain-id`), Qwalla
   1.3.0 (patch). Sign-in verification (`verifySignIn`) already required the chain id; the docs now
   say verifiers must check it.
-- See [Security](security.md#network-binding).
+- **Node 1.6.4, also:** every item of `POST /api/v2/batch-submit` gets the checks of a single
+  `/api/v2` submission (5-minute timestamp window, the shared signature replay guard, the network
+  rule, `from` = signer, signed `account_nonce`); a batch with any failing item is refused as a whole
+  and uses up no signature. `GET /api/balance/:publicKey/XRGE` returns the native balance, and both
+  balance routes return exact integer fields (`balance_raw` + `decimals`, `balance_quanta` +
+  `token_balances_raw`). The shielded pool V2 code is present and inactive.
+  `quantum-vault-daemon --version` reports `1.6.4`.
+- See [Security](security.md#network-binding) and the [release notes](running-a-node/release-1.6.4.md).
 
 ## Wallet message signing (`signMessage`) for logins and token gating — 2026-10-06
 
