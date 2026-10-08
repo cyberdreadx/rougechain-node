@@ -12,6 +12,7 @@ import {
   serializePayload,
 } from "./pqc-signer";
 import { pubkeyToAddress } from "./address";
+import { verifyNodeChainId, withChainId } from "./chain-id";
 import { verifyMessage } from "./message-signing";
 
 interface RougeChainProvider {
@@ -63,17 +64,21 @@ export async function signViaExtension(
     throw new Error("RougeChain wallet extension not available");
   }
 
-  const serialized = serializePayload(payload);
+  // Signatures commit to the network: the payload the wallet signs carries `chainId`, checked
+  // once per session against the node, and the wallet refuses a chain id other than its own.
+  const chainId = await verifyNodeChainId();
+  const bound = withChainId(payload, chainId);
+  const serialized = serializePayload(bound);
   const serializedHex = bytesToHex(serialized);
 
-  const result = await provider.signTransaction({ payload, serializedHex });
+  const result = await provider.signTransaction({ payload: bound, serializedHex });
 
   if (!result?.signature) {
     throw new Error("Extension did not return a signature");
   }
 
   return {
-    payload,
+    payload: bound,
     signature: result.signature,
     public_key: publicKey,
     payload_bytes_hex: serializedHex,

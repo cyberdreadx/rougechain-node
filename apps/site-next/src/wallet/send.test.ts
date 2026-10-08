@@ -109,5 +109,8 @@ describe("submit", () => {
     ]);
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ recipientPublicKey: "pk", amount: 10000 });
     expect(JSON.parse(String(calls[1].init?.body))).toEqual({ recipientPublicKey: "pk", token: "qUSDC" });
+    // signatures commit to the network the write goes to
+    expect(JSON.parse(String(calls[2].init?.body)).payload.chainId).toBe("rougechain-devnet-1");
+    expect(JSON.parse(String(calls[3].init?.body)).payload.chainId).toBe("rougechain-mainnet-1");
   });
 });

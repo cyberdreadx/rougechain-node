@@ -76,14 +76,16 @@ describe("signMessageViaExtension", () => {
     await expect(signMessageViaExtension("hello", aPub)).rejects.toThrow("User denied message signature request");
   });
 
-  it("signViaExtension (transactions) is unchanged: { payload, serializedHex } to signTransaction", async () => {
+  it("signViaExtension (transactions): { payload + chainId, serializedHex } to signTransaction", async () => {
     const signTransaction = vi.fn(async () => ({ signature: "ab" }));
     const sm = honest();
     install({ isRougeChain: true, signTransaction, signMessage: sm });
     const payload = { type: "transfer" as const, from: aPub, to: "x", amount: 1, timestamp: 1, nonce: "n" };
     const tx = await signViaExtension(payload, aPub);
     expect(sm).not.toHaveBeenCalled();
-    expect(signTransaction).toHaveBeenCalledWith({ payload, serializedHex: tx.payload_bytes_hex });
-    expect(tx).toMatchObject({ payload, signature: "ab", public_key: aPub });
+    // the payload sent and returned carries the network's chainId (inside serializedHex)
+    const bound = { ...payload, chainId: "rougechain-mainnet-1" };
+    expect(signTransaction).toHaveBeenCalledWith({ payload: bound, serializedHex: tx.payload_bytes_hex });
+    expect(tx).toMatchObject({ payload: bound, signature: "ab", public_key: aPub });
   });
 });
