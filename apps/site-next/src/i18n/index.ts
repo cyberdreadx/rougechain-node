@@ -25,7 +25,7 @@ export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];
 /** apps/web's key (i18next-browser-languagedetector `lookupLocalStorage`). Do not change. */
 export const LANGUAGE_STORAGE_KEY = "rougechain-lang";
 
-export const NAMESPACES = ["common", "wallet", "explorer", "swap", "bridge", "messenger", "pages", "marketing"] as const;
+export const NAMESPACES = ["common", "wallet", "explorer", "swap", "bridge", "messenger", "pages", "marketing", "shield"] as const;
 export type Namespace = (typeof NAMESPACES)[number];
 
 /** One lazy chunk per locale file. */

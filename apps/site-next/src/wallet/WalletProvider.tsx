@@ -35,7 +35,7 @@ import { deriveMessagingKeypair, migrateToDerivedMessagingKeys, withDerivedMessa
 import { getRougeChainProvider, signMessageViaExtension, signViaExtension, type SignedMessage } from "@rougechain/core/extension-bridge";
 import { pubkeyToAddress } from "@rougechain/core/address";
 import { signMessage } from "@rougechain/core/message-signing";
-import { signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
+import { signRawBytes, signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
 import { useChain } from "../explorer/chain";
 import {
   SERVER_SNAPSHOT,
@@ -48,6 +48,8 @@ import { setOnboardingActive } from "./tour";
 import { networkLabel, useExtensionProvider, useRougeAddress } from "./hooks";
 import i18n from "../i18n";
 import { toast } from "./toast";
+import { shieldV2Enabled } from "../shield/config";
+import { getActiveNetwork } from "@rougechain/core/network";
 
 export type OnboardingMode = "create" | "import";
 /** Post-create / post-import steps shown on /wallet (same order as apps/web). */
@@ -254,6 +256,14 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     // Session only until the password step encrypts it: never plaintext in localStorage.
     stageUnifiedWallet(wallet);
     notifyWalletChanged();
+    // Shielded pool V2 (flag on only): the shielded state for a phrase GENERATED here is made in
+    // this same action, without an embargo (UI_CONTRACT obligation 1 (a)). Lazy: with the flag off
+    // nothing of it is loaded. A failure leaves no state; the /shield page then makes one under the
+    // embargo, the safe default.
+    if (shieldV2Enabled()) {
+      const network = getActiveNetwork();
+      void import("../shield/host").then((m) => m.makeStateForNewlyGeneratedPhrase(mnemonic, network)).catch(() => {});
+    }
     registerWalletOnNode({
       id: wallet.id,
       displayName: wallet.displayName,
@@ -397,6 +407,12 @@ export interface Signer {
    * @rougechain/core/message-signing). A provider wallet asks its user every time.
    */
   signMessage(message: string): Promise<SignedMessage>;
+  /**
+   * ML-DSA-65 over raw bytes (hex): the account signature of a shielded pool V2 shield, whose
+   * `signing_bytes` the wallet core defines. Local keys only — the extension / Qwalla provider has
+   * no such call, so a provider wallet cannot shield (the /shield page says so).
+   */
+  signBytes?(bytesHex: string): Promise<string>;
 }
 
 /**
@@ -420,6 +436,7 @@ export function useSigner(): Signer | null {
           publicKey,
           address: await pubkeyToAddress(publicKey),
         }),
+        signBytes: async (bytesHex) => signRawBytes(bytesHex, priv),
       };
     }
     return {

@@ -1,0 +1,173 @@
+{
+  "eyebrow": "Billetera",
+  "title": "Pagos blindados",
+  "subtitle": "Mueve XRGE al fondo blindado, paga a otras direcciones blindadas y vuelve a sacarlo.",
+  "experimental": "Experimental",
+  "loading": "Iniciando la billetera blindada…",
+  "error": "Algo falló en la billetera blindada: {{message}}",
+  "statement": {
+    "label": "Qué hacen y qué no hacen los pagos blindados",
+    "hidden": "Los pagos blindados ocultan los importes y quién pagó a quién dentro del fondo.",
+    "public": "Blindar XRGE (entrar) y desblindarlo (salir) es público: cualquiera puede ver la cuenta, el importe y el momento.",
+    "cap": "El fondo tiene un límite total de 1.000.000 XRGE.",
+    "noAuditYet": "La criptografía del fondo todavía no ha pasado una auditoría externa. Usa importes pequeños."
+  },
+  "gate": {
+    "none": "Primero crea o importa una billetera. Los pagos blindados usan la frase de recuperación de la billetera.",
+    "locked": "Desbloquea tu billetera para usar pagos blindados.",
+    "provider": "Esta billetera está conectada mediante la extensión del navegador o Qwalla. Todavía no pueden derivar claves blindadas, y esta página nunca te pedirá tu frase de recuperación. Los pagos blindados no están disponibles aquí para esta billetera.",
+    "rawKey": "Esta billetera se creó a partir de una clave privada, no de una frase de recuperación. La dirección blindada se deriva de la frase de recuperación, así que esta billetera no tiene ninguna."
+  },
+  "address": {
+    "title": "Tu dirección blindada",
+    "body": "Una dirección por billetera. Compártela con código QR o copiando y pegando; es demasiado larga para escribirla.",
+    "copyLabel": "dirección blindada",
+    "qrAlt": "Código QR de tu dirección blindada",
+    "fingerprint": "Huella:",
+    "fingerprintHint": "Para comprobar una dirección con alguien, comparad los 16 caracteres de la huella, no solo algunos."
+  },
+  "stop": {
+    "inactive": "El fondo blindado no está activo en esta red (todavía).",
+    "noHonest": "No se puede alcanzar ningún nodo de listado honesto. Estos nodos sirvieron un listado que no es el de la cadena: {{nodes}}.",
+    "fault": "La billetera blindada se detuvo por un error interno. El estado guardado de tu billetera no se modificó.",
+    "tryAgain": "Reintentar"
+  },
+  "sync": {
+    "waiting": "Esperando a {{nodes}}, ronda {{round}} de {{of}}.",
+    "everyNode": "todos los nodos",
+    "waitingCost": "Continuar sin un nodo hace que la espera tras la restauración dure 256 bloques más.",
+    "rechecking": "Comprobando la billetera de nuevo.",
+    "outdated": "El nodo {{node}} debe actualizarse: sus respuestas no cuentan.",
+    "nodeInactive": "El nodo {{node}} no sirve el fondo blindado (¿desactualizado?).",
+    "disagrees": "El nodo {{node}} no coincide con los demás nodos."
+  },
+  "balances": {
+    "title": "Saldo blindado",
+    "confirmed": "Confirmado",
+    "confirmedAt": "A fecha del bloque {{height}}, informado por al menos {{quorum}} de tus {{nodes}} nodos.",
+    "confirmedNone": "Todavía no hay nada confirmado.",
+    "unverified": "Sin confirmar",
+    "unverifiedHint": "Visto solo en el listado de un nodo. No es definitivo.",
+    "locked": "Bloqueado",
+    "lockedHint": "Retenido por pagos que siguen pendientes.",
+    "spendable": "Disponible ahora",
+    "spendableHint": "Confirmado y no bloqueado.",
+    "expectedChange": "Cambio esperado de los pagos pendientes: {{amount}} XRGE (no se cuenta hasta que se minen).",
+    "belowMinimum": "{{count}} pago(s) entrante(s) por debajo del valor mínimo de nota ({{amount}} XRGE en total) no se cuentan.",
+    "overCapacity": "{{count}} pago(s) entrante(s) llegaron cuando la billetera tenía su número máximo de notas y no se cuentan.",
+    "trust": "\"Confirmado\" significa que una mayoría de los nodos que configuraste informó el mismo estado del fondo. Es su palabra, no una prueba."
+  },
+  "blocks": {
+    "only_one": "{{count}} bloque (la cadena solo crea bloques cuando hay transacciones; una cadena inactiva no crea ninguno).",
+    "only_other": "{{count}} bloques (la cadena solo crea bloques cuando hay transacciones; una cadena inactiva no crea ninguno).",
+    "withRate_one": "{{count}} bloque — al ritmo de los últimos {{period}} días, {{estimate}}; una cadena inactiva no crea bloques.",
+    "withRate_other": "{{count}} bloques — al ritmo de los últimos {{period}} días, {{estimate}}; una cadena inactiva no crea bloques.",
+    "days_one": "unos {{count}} día",
+    "days_other": "unos {{count}} días",
+    "lessThanADay": "menos de un día"
+  },
+  "restore": {
+    "title": "Esta billetera procede de una frase importada o restaurada",
+    "inFlight": "Los pagos hechos desde otra copia de esta billetera pueden seguir en curso y no se muestran aquí.",
+    "devices": "Dos dispositivos con la misma frase no ven los pagos pendientes del otro.",
+    "embargoLeft": "Las transferencias privadas y el desblindaje están en pausa hasta el bloque {{until}}:",
+    "embargoUnknown": "Las transferencias privadas y el desblindaje están en pausa hasta que los nodos hayan confirmado la billetera, y después durante {{min}} a {{max}} bloques.",
+    "shieldStillWorks": "Mientras tanto puedes seguir recibiendo y blindando XRGE desde tu cuenta.",
+    "statementLink": "Estoy seguro de que ninguna otra copia de esta billetera tiene un pago en curso",
+    "dialogTitle": "¿Saltar la espera?",
+    "sentence": "Ningún otro dispositivo, copia de seguridad antigua o dispositivo perdido tiene esta billetera con un pago que no se haya confirmado o haya caducado. Si eso no es cierto, un pago puede hacerse dos veces.",
+    "lostDevice": "Si se perdió o robaron un dispositivo con esta billetera, espera.",
+    "tick": "He leído la frase anterior y es cierta.",
+    "wait": "Esperar (recomendado)",
+    "confirm": "Confirmar y saltar la espera"
+  },
+  "form": {
+    "title": "Pagar",
+    "tabs": { "shield": "Blindar", "transfer": "Transferencia privada", "unshield": "Desblindar" },
+    "about": {
+      "shield": "Mueve XRGE de tu cuenta pública a tu dirección blindada. Público: tu cuenta, el importe y el momento.",
+      "transfer": "Paga a otra dirección blindada desde dentro del fondo. El importe y ambas partes quedan dentro del fondo.",
+      "unshield": "Saca XRGE del fondo a una dirección rouge1. Público: la dirección receptora, el importe y el momento."
+    },
+    "toShielded": "Dirección blindada del destinatario",
+    "toRouge": "Dirección rouge1 receptora",
+    "amount": "Importe (XRGE)",
+    "amountShield": "Importe que se toma de tu cuenta (XRGE)",
+    "fee": "Comisión (XRGE, al menos 1)",
+    "shieldNote": "La comisión se toma del importe: la nota blindada valdrá {{note}} XRGE (comisión {{fee}} XRGE).",
+    "poolCap": "El fondo contiene {{total}} de un máximo de {{cap}} XRGE.",
+    "unshieldTotal": "Sale del fondo en total: {{total}} XRGE (importe más comisión).",
+    "expiry": "Un pago es válido durante {{count}} bloques; quedan {{window}} tras el último bloque confirmado por los nodos.",
+    "compareFingerprint": "Compara esta huella con el destinatario:",
+    "badAmount": "Introduce un importe en XRGE (hasta 9 decimales).",
+    "feeMin": "La comisión es de al menos 1 XRGE.",
+    "shieldTooSmall": "El importe debe ser mayor que la comisión.",
+    "badShieldedAddress": "No es una dirección blindada válida.",
+    "badRougeAddress": "Introduce una dirección rouge1….",
+    "noSigner": "Blindar necesita la clave de firma propia de esta billetera, que solo tiene una billetera creada o importada en este sitio.",
+    "shieldWaiting": "Esperando a que los nodos coincidan en el último estado del fondo antes de poder crear un blindaje.",
+    "submit": { "shield": "Blindar", "transfer": "Enviar en privado", "unshield": "Desblindar" },
+    "proving": "Generando la prueba…",
+    "provingHint": "Generar una prueba tarda varios segundos (hasta unos 20 en un dispositivo lento). La página sigue funcionando."
+  },
+  "spendReason": {
+    "no_nodes": "Las transferencias privadas necesitan al menos tres nodos configurados.",
+    "view_only": "La billetera debe leer el fondo una vez más con su clave completa antes de poder pagar.",
+    "no_quorum": "Todavía no hay nada confirmado: esperando a los nodos.",
+    "embargo": "En pausa tras una restauración (ver arriba).",
+    "root_unconfirmed": "Esperando a que los nodos confirmen los últimos bloques.",
+    "window_too_short": "El estado confirmado va demasiado por detrás de la cadena; esperando a los nodos.",
+    "notAtTip": "Esperando a que la billetera esté confirmada hasta el último bloque de la cadena."
+  },
+  "result": {
+    "submitted": {
+      "accepted": "Enviado. Queda pendiente hasta que se mine y se confirme.",
+      "failed": "Un nodo lo rechazó. Sigue pendiente hasta que caduque; puedes enviar el mismo pago de nuevo.",
+      "unanswered": "Ningún nodo respondió. El mismo pago se enviará de nuevo; sigue pendiente hasta que caduque.",
+      "unsent": "Guardado, todavía no enviado."
+    },
+    "needsMerge": "Este pago necesita primero {{count}} fusión(es) de tus notas; cada fusión cuesta una comisión de {{fee}} XRGE. La fusión aún no está disponible en esta página.",
+    "insufficient": "No hay suficiente saldo disponible: {{have}} XRGE disponibles, {{need}} XRGE necesarios.",
+    "notOffered": "Ahora no es posible pagar: la billetera no está confirmada hasta el último bloque. Inténtalo de nuevo en un momento.",
+    "notWritten": "El pago no se guardó (otra pestaña modificó la billetera), así que no se envió. No salió nada de la billetera.",
+    "refused": "No se pudo crear el pago ({{code}}). No se envió nada."
+  },
+  "kind": { "shield": "Blindaje", "transfer": "Transferencia privada", "unshield": "Desblindaje" },
+  "pending": {
+    "title": "Pagos",
+    "walletOnly": "Este historial se guarda solo en este navegador, cifrado con tu billetera. La cadena no lo registra.",
+    "status": { "pending": "pendiente", "seen_mined": "visto en un bloque, aún sin confirmar", "seen_superseded": "posiblemente sustituido, aún sin confirmar" },
+    "expiresAt": "Caduca en el bloque {{height}}.",
+    "expiresIn": "Caduca en el bloque {{height}}, dentro de",
+    "rejected": "Un nodo lo rechazó; sigue pendiente hasta el bloque {{height}}.",
+    "submit": { "unsent": "todavía no enviado", "failed": "un nodo lo rechazó", "unanswered": "ningún nodo respondió" },
+    "submitAgain": "Enviar el mismo pago de nuevo"
+  },
+  "history": {
+    "title": "Liquidados",
+    "outcome": { "pending": "pendiente", "mined": "pagado", "superseded": "no pagado — una de sus notas se gastó en otro lugar", "expired": "no pagado — caducado" },
+    "retry": { "superseded": "No se pagó nada; puedes hacer el pago de nuevo.", "expired": "No se pagó nada; puedes hacer el pago de nuevo." }
+  },
+  "nodes": {
+    "title": "Nodos",
+    "body": "Tu billetera consulta varios nodos y cree lo que informa la mayoría. Deberían estar operados por operadores distintos.",
+    "needThree": "Los pagos blindados necesitan al menos tres nodos independientes. Hay {{have}} configurados, así que esta página es de solo lectura.",
+    "readOnly": "Solo lectura hasta que haya al menos {{count}} nodos independientes configurados (ver Nodos abajo).",
+    "placeholder": "(aún sin configurar)",
+    "operator": "operado por {{operator}}",
+    "listing": "listando",
+    "banned": "sirvió un listado falso",
+    "outdated": "debe actualizarse",
+    "majority": "Si una mayoría de estos nodos miente de acuerdo, lo que se muestra como confirmado es lo suyo. Un operador detrás de varias direcciones cuenta como varios nodos.",
+    "edit": "Editar nodos",
+    "editLabel": "Un nodo por línea: origen https y después quién lo opera",
+    "save": "Guardar",
+    "reset": "Usar los valores por defecto de {{network}}",
+    "problem": {
+      "not_an_origin": "{{origin}} no es un origen (https://host o https://host:puerto).",
+      "not_https": "{{origin}} debe usar https.",
+      "local_nat64": "{{origin}} es una dirección NAT64 local, que no puede ser un nodo público independiente.",
+      "operator": "Indica quién opera {{origin}} después de la dirección."
+    }
+  }
+}

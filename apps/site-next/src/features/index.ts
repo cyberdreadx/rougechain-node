@@ -2,9 +2,10 @@ import { swapArea } from "./swap";
 import { bridgeArea } from "./bridge";
 import { messengerArea } from "./messenger";
 import { pagesArea } from "./pages";
+import { shieldArea } from "./shield";
 import type { FeatureArea } from "./types";
 
-const areas: FeatureArea[] = [swapArea, bridgeArea, messengerArea, pagesArea];
+const areas: FeatureArea[] = [swapArea, bridgeArea, messengerArea, pagesArea, shieldArea];
 
 export const featureRoutes = areas.flatMap((a) => a.routes);
 

@@ -1,0 +1,173 @@
+{
+  "eyebrow": "Wallet",
+  "title": "Shielded payments",
+  "subtitle": "Move XRGE into the shielded pool, pay other shielded addresses, and move it back out.",
+  "experimental": "Experimental",
+  "loading": "Starting the shielded wallet…",
+  "error": "Something went wrong in the shielded wallet: {{message}}",
+  "statement": {
+    "label": "What shielded payments do and do not do",
+    "hidden": "Shielded payments hide the amounts and who paid whom inside the pool.",
+    "public": "Shielding XRGE in and unshielding it out are public: the account, the amount and the time can be seen by anyone.",
+    "cap": "The pool is capped at 1,000,000 XRGE in total.",
+    "noAuditYet": "The cryptography of the pool has not had an external audit yet. Use small amounts."
+  },
+  "gate": {
+    "none": "Create or import a wallet first. Shielded payments use the wallet's recovery phrase.",
+    "locked": "Unlock your wallet to use shielded payments.",
+    "provider": "This wallet is connected through the browser extension or Qwalla. They cannot derive shielded keys yet, and this page will never ask for your recovery phrase. Shielded payments are not available for this wallet here.",
+    "rawKey": "This wallet was created from a private key, not from a recovery phrase. A shielded address is derived from the recovery phrase, so this wallet has none."
+  },
+  "address": {
+    "title": "Your shielded address",
+    "body": "One address per wallet. Share it by QR code or copy and paste; it is too long to type.",
+    "copyLabel": "shielded address",
+    "qrAlt": "QR code of your shielded address",
+    "fingerprint": "Fingerprint:",
+    "fingerprintHint": "To check an address with someone, compare all 16 characters of the fingerprint, not just a few."
+  },
+  "stop": {
+    "inactive": "The shielded pool is not active on this network (yet).",
+    "noHonest": "No honest listing node reachable. These nodes served a listing that is not the chain's: {{nodes}}.",
+    "fault": "The shielded wallet stopped because of an internal error. Your stored wallet state was not changed.",
+    "tryAgain": "Try again"
+  },
+  "sync": {
+    "waiting": "Waiting for {{nodes}}, round {{round}} of {{of}}.",
+    "everyNode": "every node",
+    "waitingCost": "Going ahead without a node makes the restore wait 256 blocks longer.",
+    "rechecking": "Checking the wallet again.",
+    "outdated": "Node {{node}} must be updated: its answers do not count.",
+    "nodeInactive": "Node {{node}} does not serve the shielded pool (outdated?).",
+    "disagrees": "Node {{node}} disagrees with the other nodes."
+  },
+  "balances": {
+    "title": "Shielded balance",
+    "confirmed": "Confirmed",
+    "confirmedAt": "As of block {{height}}, reported by at least {{quorum}} of your {{nodes}} nodes.",
+    "confirmedNone": "Nothing confirmed yet.",
+    "unverified": "Unconfirmed",
+    "unverifiedHint": "Seen in one node's listing only. Not final.",
+    "locked": "Locked",
+    "lockedHint": "Held by payments that are still pending.",
+    "spendable": "Spendable now",
+    "spendableHint": "Confirmed and not locked.",
+    "expectedChange": "Expected change of pending payments: {{amount}} XRGE (not counted until they are mined).",
+    "belowMinimum": "{{count}} incoming payment(s) below the minimum note value ({{amount}} XRGE in total) are not counted.",
+    "overCapacity": "{{count}} incoming payment(s) arrived while the wallet held its maximum number of notes and are not counted.",
+    "trust": "\"Confirmed\" means a majority of the nodes you configured reported the same pool state. It is their word, not a proof."
+  },
+  "blocks": {
+    "only_one": "{{count}} block (the chain makes blocks only when there are transactions; an idle chain makes none).",
+    "only_other": "{{count}} blocks (the chain makes blocks only when there are transactions; an idle chain makes none).",
+    "withRate_one": "{{count}} block — at the rate of the last {{period}} days, {{estimate}}; an idle chain makes no blocks.",
+    "withRate_other": "{{count}} blocks — at the rate of the last {{period}} days, {{estimate}}; an idle chain makes no blocks.",
+    "days_one": "about {{count}} day",
+    "days_other": "about {{count}} days",
+    "lessThanADay": "less than a day"
+  },
+  "restore": {
+    "title": "This wallet came from an imported or restored phrase",
+    "inFlight": "Payments made from another copy of this wallet may still be in flight and are not shown here.",
+    "devices": "Two devices with the same phrase do not see each other's pending payments.",
+    "embargoLeft": "Private transfers and unshielding are paused until block {{until}}:",
+    "embargoUnknown": "Private transfers and unshielding are paused until the nodes have confirmed the wallet, then for {{min}} to {{max}} blocks.",
+    "shieldStillWorks": "You can still receive and still shield XRGE from your account meanwhile.",
+    "statementLink": "I am certain no other copy of this wallet has a payment in flight",
+    "dialogTitle": "Skip the wait?",
+    "sentence": "No other device, old backup or lost device holds this wallet with a payment that has not been confirmed or expired. If that is wrong, a payment can be made twice.",
+    "lostDevice": "If a device with this wallet was lost or stolen, wait.",
+    "tick": "I have read the sentence above and it is true.",
+    "wait": "Wait (recommended)",
+    "confirm": "Confirm and skip the wait"
+  },
+  "form": {
+    "title": "Pay",
+    "tabs": { "shield": "Shield", "transfer": "Private transfer", "unshield": "Unshield" },
+    "about": {
+      "shield": "Moves XRGE from your public account into your shielded address. Public: your account, the amount and the time.",
+      "transfer": "Pays another shielded address from inside the pool. The amount and both parties stay inside the pool.",
+      "unshield": "Moves XRGE out of the pool to a rouge1 address. Public: the receiving address, the amount and the time."
+    },
+    "toShielded": "Recipient's shielded address",
+    "toRouge": "Receiving rouge1 address",
+    "amount": "Amount (XRGE)",
+    "amountShield": "Amount taken from your account (XRGE)",
+    "fee": "Fee (XRGE, at least 1)",
+    "shieldNote": "The fee is taken from the amount: the shielded note will be worth {{note}} XRGE (fee {{fee}} XRGE).",
+    "poolCap": "The pool holds {{total}} of at most {{cap}} XRGE.",
+    "unshieldTotal": "Leaves the pool in total: {{total}} XRGE (amount plus fee).",
+    "expiry": "A payment is valid for {{count}} blocks; {{window}} of them are left after the nodes' latest confirmed block.",
+    "compareFingerprint": "Compare this fingerprint with the recipient:",
+    "badAmount": "Enter an amount in XRGE (up to 9 decimals).",
+    "feeMin": "The fee is at least 1 XRGE.",
+    "shieldTooSmall": "The amount must be larger than the fee.",
+    "badShieldedAddress": "That is not a valid shielded address.",
+    "badRougeAddress": "Enter a rouge1… address.",
+    "noSigner": "Shielding needs this wallet's own signing key, which only a wallet created or imported on this site has.",
+    "shieldWaiting": "Waiting for the nodes to agree on the pool's latest state before a shield can be built.",
+    "submit": { "shield": "Shield", "transfer": "Send privately", "unshield": "Unshield" },
+    "proving": "Building the proof…",
+    "provingHint": "Building a proof takes several seconds (up to about 20 on a slow device). The page stays usable."
+  },
+  "spendReason": {
+    "no_nodes": "Private transfers need at least three configured nodes.",
+    "view_only": "The wallet must read the pool once more with its full key before it can pay.",
+    "no_quorum": "Nothing is confirmed yet: waiting for the nodes.",
+    "embargo": "Paused after a restore (see above).",
+    "root_unconfirmed": "Waiting for the nodes to confirm the latest blocks.",
+    "window_too_short": "The confirmed state is too far behind the chain; waiting for the nodes.",
+    "notAtTip": "Waiting until the wallet is confirmed up to the chain's latest block."
+  },
+  "result": {
+    "submitted": {
+      "accepted": "Submitted. It is pending until it is mined and confirmed.",
+      "failed": "A node refused it. It stays pending until it expires; you can submit the same payment again.",
+      "unanswered": "No node answered. The same payment will be submitted again; it stays pending until it expires.",
+      "unsent": "Stored, not submitted yet."
+    },
+    "needsMerge": "This payment needs {{count}} merge(s) of your notes first; each merge costs a fee of {{fee}} XRGE. Merging is not available on this page yet.",
+    "insufficient": "Not enough spendable: {{have}} XRGE available, {{need}} XRGE needed.",
+    "notOffered": "A payment is not possible right now: the wallet is not confirmed up to the latest block. Try again in a moment.",
+    "notWritten": "The payment was not stored (another tab changed the wallet), so it was not sent. Nothing left the wallet.",
+    "refused": "The payment could not be built ({{code}}). Nothing was sent."
+  },
+  "kind": { "shield": "Shield", "transfer": "Private transfer", "unshield": "Unshield" },
+  "pending": {
+    "title": "Payments",
+    "walletOnly": "This history is kept only in this browser, encrypted with your wallet. The chain does not record it.",
+    "status": { "pending": "pending", "seen_mined": "seen in a block, not confirmed yet", "seen_superseded": "possibly replaced, not confirmed yet" },
+    "expiresAt": "Expires at block {{height}}.",
+    "expiresIn": "Expires at block {{height}}, in",
+    "rejected": "A node refused it; it is still pending until block {{height}}.",
+    "submit": { "unsent": "not submitted yet", "failed": "a node refused it", "unanswered": "no node answered" },
+    "submitAgain": "Submit the same payment again"
+  },
+  "history": {
+    "title": "Settled",
+    "outcome": { "pending": "pending", "mined": "paid", "superseded": "not paid — one of its notes was spent elsewhere", "expired": "not paid — expired" },
+    "retry": { "superseded": "Nothing was paid; you can make the payment again.", "expired": "Nothing was paid; you can make the payment again." }
+  },
+  "nodes": {
+    "title": "Nodes",
+    "body": "Your wallet asks several nodes and believes what a majority of them report. They should be run by different operators.",
+    "needThree": "Shielded payments need at least three independent nodes. {{have}} configured, so this page is read-only.",
+    "readOnly": "Read-only until at least {{count}} independent nodes are configured (see Nodes below).",
+    "placeholder": "(not configured yet)",
+    "operator": "run by {{operator}}",
+    "listing": "listing",
+    "banned": "served a false listing",
+    "outdated": "must be updated",
+    "majority": "If a majority of these nodes lie together, what is shown as confirmed is theirs. One operator behind several addresses counts as several nodes.",
+    "edit": "Edit nodes",
+    "editLabel": "One node per line: https origin, then who runs it",
+    "save": "Save",
+    "reset": "Use the {{network}} defaults",
+    "problem": {
+      "not_an_origin": "{{origin}} is not an origin (https://host or https://host:port).",
+      "not_https": "{{origin}} must use https.",
+      "local_nat64": "{{origin}} is a local NAT64 address, which cannot be an independent public node.",
+      "operator": "Name who runs {{origin}} after the address."
+    }
+  }
+}

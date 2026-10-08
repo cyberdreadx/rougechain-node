@@ -5,4 +5,6 @@ interface ImportMetaEnv {
   readonly VITE_NETWORK_LOCK?: string;
   /** "explorer" builds explorer.rougechain.io (the standalone Explorer); unset = the main site. */
   readonly VITE_APP_MODE?: string;
+  /** "true" turns on the shielded pool V2 page (/shield). Off by default; not set in netlify.toml. */
+  readonly VITE_SHIELD_V2_ENABLED?: string;
 }

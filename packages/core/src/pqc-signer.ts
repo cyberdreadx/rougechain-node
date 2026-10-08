@@ -805,3 +805,12 @@ export function createSignedUnshield(
   };
   return signTransaction(payload, privateKey, publicKey);
 }
+
+/**
+ * ML-DSA-65 over raw bytes (hex in, hex out), no payload encoding: the account signature of a
+ * shielded pool V2 `shield_v2`, whose `signing_bytes` the shielded wallet core defines
+ * (core/shield-v2-wallet NOTES §6 item 11). Not for anything the node verifies as a signed payload.
+ */
+export function signRawBytes(bytesHex: string, privateKey: string): string {
+  return bytesToHex(ml_dsa65.sign(hexToBytes(bytesHex), hexToBytes(privateKey)));
+}

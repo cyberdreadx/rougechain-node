@@ -1,0 +1,170 @@
+{
+  "eyebrow": "钱包",
+  "title": "屏蔽支付",
+  "subtitle": "将 XRGE 转入屏蔽池，向其他屏蔽地址付款，再将其转出。",
+  "experimental": "实验性",
+  "loading": "正在启动屏蔽钱包…",
+  "error": "屏蔽钱包出错：{{message}}",
+  "statement": {
+    "label": "屏蔽支付能做什么、不能做什么",
+    "hidden": "屏蔽支付会在池内隐藏金额以及谁向谁付款。",
+    "public": "将 XRGE 转入（屏蔽）和转出（解除屏蔽）是公开的：任何人都能看到账户、金额和时间。",
+    "cap": "该池的总上限为 1,000,000 XRGE。",
+    "noAuditYet": "该池的密码学尚未经过外部审计。请使用小额资金。"
+  },
+  "gate": {
+    "none": "请先创建或导入钱包。屏蔽支付使用钱包的恢复短语。",
+    "locked": "请解锁钱包以使用屏蔽支付。",
+    "provider": "此钱包通过浏览器扩展或 Qwalla 连接。它们目前还无法派生屏蔽密钥，本页面也绝不会向你索要恢复短语。此钱包在这里无法使用屏蔽支付。",
+    "rawKey": "此钱包是由私钥创建的，而不是由恢复短语创建。屏蔽地址由恢复短语派生，因此此钱包没有屏蔽地址。"
+  },
+  "address": {
+    "title": "你的屏蔽地址",
+    "body": "每个钱包一个地址。请通过二维码或复制粘贴分享；它太长，无法手动输入。",
+    "copyLabel": "屏蔽地址",
+    "qrAlt": "你的屏蔽地址的二维码",
+    "fingerprint": "指纹：",
+    "fingerprintHint": "与他人核对地址时，请比较指纹的全部 16 个字符，而不只是其中几个。"
+  },
+  "stop": {
+    "inactive": "此网络上的屏蔽池（尚）未激活。",
+    "noHonest": "无法连接到诚实的列表节点。以下节点提供的列表不是链上的列表：{{nodes}}。",
+    "fault": "屏蔽钱包因内部错误而停止。已保存的钱包状态未被修改。",
+    "tryAgain": "重试"
+  },
+  "sync": {
+    "waiting": "正在等待 {{nodes}}，第 {{round}} 轮，共 {{of}} 轮。",
+    "everyNode": "所有节点",
+    "waitingCost": "不等该节点就继续，会使恢复后的等待再延长 256 个区块。",
+    "rechecking": "正在重新检查钱包。",
+    "outdated": "节点 {{node}} 需要更新：它的回答不计入。",
+    "nodeInactive": "节点 {{node}} 不提供屏蔽池服务（版本过旧？）。",
+    "disagrees": "节点 {{node}} 与其他节点不一致。"
+  },
+  "balances": {
+    "title": "屏蔽余额",
+    "confirmed": "已确认",
+    "confirmedAt": "截至区块 {{height}}，由你的 {{nodes}} 个节点中至少 {{quorum}} 个报告。",
+    "confirmedNone": "尚无已确认的内容。",
+    "unverified": "未确认",
+    "unverifiedHint": "仅在一个节点的列表中看到。并非最终结果。",
+    "locked": "已锁定",
+    "lockedHint": "被仍在等待中的付款占用。",
+    "spendable": "当前可用",
+    "spendableHint": "已确认且未锁定。",
+    "expectedChange": "待处理付款的预期找零：{{amount}} XRGE（在被打包前不计入）。",
+    "belowMinimum": "{{count}} 笔低于最小票据金额的入账（共 {{amount}} XRGE）不计入。",
+    "overCapacity": "{{count}} 笔入账在钱包已达到票据数量上限时到达，不计入。",
+    "trust": "“已确认”表示你配置的节点中多数报告了相同的池状态。这是它们的说法，而不是证明。"
+  },
+  "blocks": {
+    "only_other": "{{count}} 个区块（链只在有交易时才出块；空闲的链不出块）。",
+    "withRate_other": "{{count}} 个区块——按最近 {{period}} 天的速度，{{estimate}}；空闲的链不出块。",
+    "days_other": "约 {{count}} 天",
+    "lessThanADay": "不到一天"
+  },
+  "restore": {
+    "title": "此钱包来自导入或恢复的短语",
+    "inFlight": "从此钱包的其他副本发出的付款可能仍在进行中，且不会在此显示。",
+    "devices": "使用相同短语的两台设备看不到彼此的待处理付款。",
+    "embargoLeft": "私密转账和解除屏蔽已暂停，直到区块 {{until}}：",
+    "embargoUnknown": "私密转账和解除屏蔽已暂停，直到节点确认钱包，之后再暂停 {{min}} 到 {{max}} 个区块。",
+    "shieldStillWorks": "在此期间你仍可接收，并仍可从你的账户屏蔽 XRGE。",
+    "statementLink": "我确定此钱包的其他副本没有正在进行的付款",
+    "dialogTitle": "跳过等待？",
+    "sentence": "没有任何其他设备、旧备份或丢失的设备持有此钱包并有尚未确认或尚未过期的付款。如果这不属实，一笔付款可能会被支付两次。",
+    "lostDevice": "如果有存有此钱包的设备丢失或被盗，请等待。",
+    "tick": "我已阅读上面这句话，且它属实。",
+    "wait": "等待（推荐）",
+    "confirm": "确认并跳过等待"
+  },
+  "form": {
+    "title": "付款",
+    "tabs": { "shield": "屏蔽", "transfer": "私密转账", "unshield": "解除屏蔽" },
+    "about": {
+      "shield": "将 XRGE 从你的公开账户转入你的屏蔽地址。公开的：你的账户、金额和时间。",
+      "transfer": "从池内向另一个屏蔽地址付款。金额和双方都留在池内。",
+      "unshield": "将 XRGE 从池中转出到一个 rouge1 地址。公开的：接收地址、金额和时间。"
+    },
+    "toShielded": "收款人的屏蔽地址",
+    "toRouge": "接收的 rouge1 地址",
+    "amount": "金额（XRGE）",
+    "amountShield": "从你的账户扣除的金额（XRGE）",
+    "fee": "手续费（XRGE，至少 1）",
+    "shieldNote": "手续费从金额中扣除：屏蔽票据的价值为 {{note}} XRGE（手续费 {{fee}} XRGE）。",
+    "poolCap": "池中现有 {{total}} XRGE，上限为 {{cap}} XRGE。",
+    "unshieldTotal": "总共离开池的金额：{{total}} XRGE（金额加手续费）。",
+    "expiry": "一笔付款在 {{count}} 个区块内有效；在节点最近确认的区块之后还剩 {{window}} 个。",
+    "compareFingerprint": "请与收款人核对此指纹：",
+    "badAmount": "请输入 XRGE 金额（最多 9 位小数）。",
+    "feeMin": "手续费至少为 1 XRGE。",
+    "shieldTooSmall": "金额必须大于手续费。",
+    "badShieldedAddress": "这不是有效的屏蔽地址。",
+    "badRougeAddress": "请输入 rouge1… 地址。",
+    "noSigner": "屏蔽需要此钱包自己的签名密钥，只有在本网站创建或导入的钱包才有。",
+    "shieldWaiting": "正在等待节点就池的最新状态达成一致，之后才能构建屏蔽交易。",
+    "submit": { "shield": "屏蔽", "transfer": "私密发送", "unshield": "解除屏蔽" },
+    "proving": "正在生成证明…",
+    "provingHint": "生成证明需要几秒钟（在较慢的设备上最多约 20 秒）。页面仍可正常使用。"
+  },
+  "spendReason": {
+    "no_nodes": "私密转账至少需要配置三个节点。",
+    "view_only": "钱包必须先用完整密钥再读取一次池，才能付款。",
+    "no_quorum": "尚无已确认的内容：正在等待节点。",
+    "embargo": "恢复后已暂停（见上文）。",
+    "root_unconfirmed": "正在等待节点确认最新区块。",
+    "window_too_short": "已确认的状态落后链太多；正在等待节点。",
+    "notAtTip": "正在等待钱包被确认到链的最新区块。"
+  },
+  "result": {
+    "submitted": {
+      "accepted": "已提交。在被打包并确认之前处于待处理状态。",
+      "failed": "有节点拒绝了它。它在过期前仍处于待处理状态；你可以再次提交同一笔付款。",
+      "unanswered": "没有节点回应。同一笔付款将被再次提交；在过期前仍处于待处理状态。",
+      "unsent": "已保存，尚未提交。"
+    },
+    "needsMerge": "此付款需要先合并你的票据 {{count}} 次；每次合并的手续费为 {{fee}} XRGE。本页面暂不支持合并。",
+    "insufficient": "可用余额不足：可用 {{have}} XRGE，需要 {{need}} XRGE。",
+    "notOffered": "目前无法付款：钱包尚未确认到最新区块。请稍后再试。",
+    "notWritten": "付款未被保存（另一个标签页修改了钱包），因此没有发送。钱包中没有任何资金流出。",
+    "refused": "无法构建付款（{{code}}）。没有发送任何内容。"
+  },
+  "kind": { "shield": "屏蔽", "transfer": "私密转账", "unshield": "解除屏蔽" },
+  "pending": {
+    "title": "付款",
+    "walletOnly": "此记录只保存在本浏览器中，并用你的钱包加密。链上不会记录它。",
+    "status": { "pending": "待处理", "seen_mined": "已在区块中看到，尚未确认", "seen_superseded": "可能已被替代，尚未确认" },
+    "expiresAt": "在区块 {{height}} 过期。",
+    "expiresIn": "在区块 {{height}} 过期，还有",
+    "rejected": "有节点拒绝了它；它在区块 {{height}} 之前仍处于待处理状态。",
+    "submit": { "unsent": "尚未提交", "failed": "有节点拒绝了它", "unanswered": "没有节点回应" },
+    "submitAgain": "再次提交同一笔付款"
+  },
+  "history": {
+    "title": "已结算",
+    "outcome": { "pending": "待处理", "mined": "已支付", "superseded": "未支付——其中一张票据已在别处花费", "expired": "未支付——已过期" },
+    "retry": { "superseded": "没有支付任何款项；你可以再次付款。", "expired": "没有支付任何款项；你可以再次付款。" }
+  },
+  "nodes": {
+    "title": "节点",
+    "body": "你的钱包会询问多个节点，并相信其中多数的报告。它们应由不同的运营者运行。",
+    "needThree": "屏蔽支付至少需要三个独立节点。目前配置了 {{have}} 个，因此本页面为只读。",
+    "readOnly": "在配置至少 {{count}} 个独立节点之前为只读（见下方“节点”）。",
+    "placeholder": "（尚未配置）",
+    "operator": "由 {{operator}} 运行",
+    "listing": "列表中",
+    "banned": "提供了虚假列表",
+    "outdated": "需要更新",
+    "majority": "如果这些节点中的多数串通说谎，显示为已确认的内容就是它们的说法。一个运营者使用多个地址会被算作多个节点。",
+    "edit": "编辑节点",
+    "editLabel": "每行一个节点：https 源地址，后面写运行者",
+    "save": "保存",
+    "reset": "使用 {{network}} 默认值",
+    "problem": {
+      "not_an_origin": "{{origin}} 不是源地址（https://host 或 https://host:port）。",
+      "not_https": "{{origin}} 必须使用 https。",
+      "local_nat64": "{{origin}} 是本地 NAT64 地址，不能作为独立的公共节点。",
+      "operator": "请在地址后写明谁运行 {{origin}}。"
+    }
+  }
+}
