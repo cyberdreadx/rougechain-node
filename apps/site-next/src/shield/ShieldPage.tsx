@@ -439,7 +439,7 @@ function NodesPanel({ network, nodes, view, onChange }: { network: string; nodes
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="actions">
             <Button type="submit">{t("nodes.save")}</Button>
-            <Button variant="outline" onClick={() => (setEditing(false), onChange(null))}>{t("nodes.reset", { network })}</Button>
+            <Button type="button" variant="outline" onClick={() => (setEditing(false), onChange(null))}>{t("nodes.reset", { network })}</Button>
           </div>
         </form>
       )}
