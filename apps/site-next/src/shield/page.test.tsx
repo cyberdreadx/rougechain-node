@@ -132,9 +132,9 @@ describe("flag", () => {
   it("off: the wallet's create() does not touch the shield code", async () => {
     vi.stubEnv("VITE_SHIELD_V2_ENABLED", "");
     const src = readFileSync(path.join(repoRoot(), "apps/site-next/src/wallet/WalletProvider.tsx"), "utf8");
-    // the only reference is a dynamic import inside `if (shieldV2Enabled())`
+    // the only reference is a dynamic import inside the build-time flag test
     expect(src.match(/import\("\.\.\/shield\/host"\)/g)).toHaveLength(1);
-    expect(src).toMatch(/if \(shieldV2Enabled\(\)\) \{\s+const network = getActiveNetwork\(\);\s+void import\("\.\.\/shield\/host"\)/);
+    expect(src).toMatch(/if \(import\.meta\.env\.VITE_SHIELD_V2_ENABLED === "true"\) \{\s+const network = getActiveNetwork\(\);\s+void import\("\.\.\/shield\/host"\)/);
   });
 });
 
@@ -295,6 +295,6 @@ describe("copy and code inspection", () => {
       .flatMap((f) => [...readFileSync(path.join(dir, f), "utf8").matchAll(/set(?:Timeout|Interval)\(/g)].map(() => f));
     expect(timers).toEqual(["useShield.ts"]);
     const src = readFileSync(path.join(dir, "useShield.ts"), "utf8");
-    expect(src.match(/setTimeout\(\(\) => void runRound\(recheckPool\), ms\)/g)).toHaveLength(1);
+    expect(src.match(/setTimeout\(\(\) => void runRef\.current\(recheckPool\), ms\)/g)).toHaveLength(1);
   });
 });

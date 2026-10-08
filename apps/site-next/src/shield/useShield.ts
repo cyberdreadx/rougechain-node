@@ -55,8 +55,7 @@ export function useShieldSession(o: { mnemonic: string | null; network: string; 
 
   const schedule = useCallback((ms: number, recheckPool = false) => {
     if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => void runRound(recheckPool), ms);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    timer.current = window.setTimeout(() => void runRef.current(recheckPool), ms);
   }, []);
 
   const runRound = useCallback(

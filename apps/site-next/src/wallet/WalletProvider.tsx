@@ -48,7 +48,6 @@ import { setOnboardingActive } from "./tour";
 import { networkLabel, useExtensionProvider, useRougeAddress } from "./hooks";
 import i18n from "../i18n";
 import { toast } from "./toast";
-import { shieldV2Enabled } from "../shield/config";
 import { getActiveNetwork } from "@rougechain/core/network";
 
 export type OnboardingMode = "create" | "import";
@@ -259,8 +258,9 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     // Shielded pool V2 (flag on only): the shielded state for a phrase GENERATED here is made in
     // this same action, without an embargo (UI_CONTRACT obligation 1 (a)). Lazy: with the flag off
     // nothing of it is loaded. A failure leaves no state; the /shield page then makes one under the
-    // embargo, the safe default.
-    if (shieldV2Enabled()) {
+    // embargo, the safe default. (The test is spelled out so that `vite build` folds it to a literal
+    // and, with the flag off, does not even emit the shield worker or the .wasm.)
+    if (import.meta.env.VITE_SHIELD_V2_ENABLED === "true") {
       const network = getActiveNetwork();
       void import("../shield/host").then((m) => m.makeStateForNewlyGeneratedPhrase(mnemonic, network)).catch(() => {});
     }

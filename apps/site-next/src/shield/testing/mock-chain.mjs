@@ -1,3 +1,4 @@
+/* global crypto */
 // A mocked RougeChain node for the shielded pool V2 — TESTS AND THE PLAYWRIGHT RUN ONLY (nothing
 // in the site imports this file). Plain JavaScript so that both vitest and the Node server of
 // scripts/shield-e2e.mjs load it as it is.
