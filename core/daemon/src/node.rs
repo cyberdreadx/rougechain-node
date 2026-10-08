@@ -395,6 +395,32 @@ pub fn contract_nft_royalty_active(height: u64) -> bool {
     matches!(crate::upgrades::current().contract_nft_royalty, Some(a) if height >= a)
 }
 
+/// CONTRACT_CHAIN_ID — one read-only host function, `host_get_chain_id(buf_ptr, buf_len) -> i32`
+/// (`quantum_vault_vm::game::register_chain_id_function`): writes the chain id string into contract
+/// memory, so a contract can bind the messages it verifies to the network. From this height every
+/// contract call links it; before it, a module importing it fails to instantiate exactly like a
+/// module importing any unknown function. No tx fields, no state-root change. `None` = not
+/// scheduled (the per-network height lives in `upgrades.rs`).
+pub const CONTRACT_CHAIN_ID_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_CONTRACT_CHAIN_ID_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_contract_chain_id(h: Option<u64>) {
+    TEST_CONTRACT_CHAIN_ID_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn contract_chain_id_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_CONTRACT_CHAIN_ID_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(crate::upgrades::current().contract_chain_id, Some(a) if height >= a)
+}
+
 /// MONETARY_INTEGRITY — from this height a block is invalid if it carries a transaction that
 /// (a) has a fee that is not a finite number ≥ 0, (b) is of type `slash`, (c) sets the faucet
 /// flag on a network whose schedule does not allow faucet mints (`upgrades::…faucet_mint`; mainnet
@@ -1556,12 +1582,23 @@ impl L1Node {
             // block if such a tx is not exactly the signer-less shape. Before activation there is
             // no exemption (R1-1: an old node has none). Evaluated once, outside the worker threads.
             let v2_signerless_exempt = shield_v2_active(block.header.height);
+            // CHAIN_ID_BINDING: from activation only formats that commit to the chain id verify
+            // (chain_binding::signature_valid_chain_bound); before it, exactly the old formats.
+            let chain_bound = crate::chain_binding::chain_id_binding_active(block.header.height);
+            let chain_id = self.opts.chain.chain_id.as_str();
             let invalid_count = block
                 .txs
                 .par_iter()
                 .filter(|tx| {
                     if v2_signerless_exempt && shield_v2::is_signerless_envelope(tx) {
                         return false; // valid (no signature to check)
+                    }
+                    if chain_bound {
+                        if crate::chain_binding::signature_valid_chain_bound(tx, chain_id, authority_keys) {
+                            return false;
+                        }
+                        eprintln!("[peer] Rejecting tx: no network-bound signature for {}", &tx.from_pub_key[..16.min(tx.from_pub_key.len())]);
+                        return true;
                     }
                     // V2 transactions carry the original signed payload
                     if let Some(ref sp) = tx.signed_payload {
@@ -1620,6 +1657,9 @@ impl L1Node {
             nft_royalty_cap_tx_rule(tx, block.header.height)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
             monetary_integrity_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
+            // CHAIN_ID_BINDING: a signed payload must carry this chain's id (from activation).
+            crate::chain_binding::consensus_tx_rule(tx, block.header.height, &self.opts.chain.chain_id)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
             // SHIELD_V2: envelope, body and lengths (spec §3.6 checks 1–12) from activation; before
             // it the rule is silent, like the previous release's (R1-1).
@@ -2583,6 +2623,8 @@ impl L1Node {
         let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
         let sig_valid = if shield_v2::skips_account_signature(&tx, next_height) {
             true
+        } else if crate::chain_binding::chain_id_binding_active(next_height) {
+            crate::chain_binding::signature_valid_chain_bound(&tx, &self.opts.chain.chain_id, &self.opts.bridge_authority_keys)
         } else if let Some(ref sp) = tx.signed_payload {
             pqc_verify(&tx.from_pub_key, sp.as_bytes(), &tx.sig).ok() == Some(true)
         } else {
@@ -2632,6 +2674,10 @@ impl L1Node {
         nft_royalty_cap_tx_rule(&tx, next_height)?;
         fee_and_type_sanity(&tx)?; // node-local, always on
         monetary_integrity_tx_rule(&tx, next_height)?;
+        // Signatures commit to the network: node rule (a signed payload naming another chain id,
+        // or none with REQUIRE_SIGNED_CHAIN_ID) and, from CHAIN_ID_BINDING, the consensus rule.
+        crate::chain_binding::local_tx_rule(&tx, &self.opts.chain.chain_id, crate::chain_binding::require_signed())?;
+        crate::chain_binding::consensus_tx_rule(&tx, next_height, &self.opts.chain.chain_id)?;
         if tx.tx_type == "mint_tokens" && token_minting_active(next_height) {
             self.check_token_mint_now(&tx)?;
         }
@@ -2704,6 +2750,13 @@ impl L1Node {
         Ok(())
     }
 
+    /// The bytes to sign for a V1-format (node-built) transaction headed for the next block: from
+    /// CHAIN_ID_BINDING activation the network-bound encoding, before it the plain one.
+    pub fn v1_signing_bytes(&self, tx: &TxV1) -> Vec<u8> {
+        let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        crate::chain_binding::v1_signing_bytes(tx, &self.opts.chain.chain_id, next_height)
+    }
+
     pub fn get_node_public_key(&self) -> String {
         self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default()
     }
@@ -2758,7 +2811,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -2823,7 +2876,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -2879,7 +2932,7 @@ impl L1Node {
                 sig: String::new(),
                 signed_payload: None,
             };
-            let bytes = encode_tx_for_signing(&tx);
+            let bytes = self.v1_signing_bytes(&tx);
             tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
             match self.accept_tx(tx.clone()) {
                 Ok(()) => return Ok(tx),
@@ -2939,7 +2992,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -3016,7 +3069,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         // Mark as pre-verified so mine_pending skips signature re-check.
         // The sig is node-signed (not user-signed), so pqc_verify(user_pubkey, sig) would fail.
@@ -3050,7 +3103,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         self.accept_tx(tx.clone())?;
         Ok(tx)
@@ -3083,7 +3136,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash);
@@ -3122,7 +3175,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash);
@@ -3169,7 +3222,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -3202,7 +3255,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -3826,13 +3879,24 @@ impl L1Node {
         let producing_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
         // SHIELD_V2: the signer-less exemption, from activation only (once, outside the workers)
         let v2_signerless_exempt = shield_v2_active(producing_height);
+        // CHAIN_ID_BINDING: from activation every transaction is re-checked for a network-bound
+        // signature (also pre-verified ones: one admitted before activation may not have it).
+        let chain_bound = crate::chain_binding::chain_id_binding_active(producing_height);
+        let chain_id = self.opts.chain.chain_id.as_str();
+        let authority_keys = &self.opts.bridge_authority_keys;
         let mut verified_set = self.verified_tx_ids.lock().map_err(|_| "verified lock")?;
         // Verify signatures in parallel; skip re-verification for pre-verified (v2 API) txs
         let verified_entries: Vec<(String, TxV1)> = {
             use rayon::prelude::*;
             tx_entries.into_par_iter()
                 .filter(|(id, tx)| {
-                    if verified_set.contains(id) || (v2_signerless_exempt && shield_v2::is_signerless_envelope(tx)) {
+                    if v2_signerless_exempt && shield_v2::is_signerless_envelope(tx) {
+                        return true;
+                    }
+                    if chain_bound {
+                        return crate::chain_binding::signature_valid_chain_bound(tx, chain_id, authority_keys);
+                    }
+                    if verified_set.contains(id) {
                         return true;
                     }
                     let bytes = encode_tx_for_signing(tx);
@@ -3853,6 +3917,9 @@ impl L1Node {
             .filter(|(_, tx)| nft_royalty_cap_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| fee_and_type_sanity(tx).is_ok() && monetary_integrity_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| crate::v2_binding::verify_v2_binding_at(tx, producing_height).is_ok())
+            // Signatures commit to the network (node rule + CHAIN_ID_BINDING from activation)
+            .filter(|(_, tx)| crate::chain_binding::local_tx_rule(tx, chain_id, crate::chain_binding::require_signed()).is_ok()
+                && crate::chain_binding::consensus_tx_rule(tx, producing_height, chain_id).is_ok())
             // SHIELD_V2 (R1-1, node-local): before activation this node produces no V2 type and
             // no transaction carrying either field; from activation an ordinary type must not
             // carry the fields (the V2 types are judged by the selection below)
@@ -4422,6 +4489,7 @@ impl L1Node {
             block_hashes: game_ready_3_active(height),
             payable: payable_calls_active(height),
             nft_royalty: contract_nft_royalty_active(height),
+            chain_id: contract_chain_id_active(height).then(|| self.opts.chain.chain_id.clone()),
             attached: attach.map(|(_, _, s, a)| (s.to_string(), a)),
         })
     }
@@ -5591,6 +5659,7 @@ impl L1Node {
                                 block_hashes: game_ready_3_active(block.header.height),
                                 payable: payable_calls_active(block.header.height),
                                 nft_royalty: contract_nft_royalty_active(block.header.height),
+                                chain_id: contract_chain_id_active(block.header.height).then(|| self.opts.chain.chain_id.clone()),
                                 attached: attach.clone(),
                             });
                             match rt.execute_contract_ext(
@@ -16631,5 +16700,214 @@ mod shield_v2_wallet_interop_tests {
             assert_eq!(shield_v2::decode_stored_pool(&node.shield_v2_store.meta().unwrap().unwrap()).unwrap().state, pool.state().unwrap(), "persisted");
         }
         set_test_shield_v2(None);
+    }
+}
+
+/// CHAIN_ID_BINDING (consensus) and the node rule on the mempool / producer path: the activation
+/// boundary on the real import path, scheduled vs unscheduled nodes below activation, and that
+/// node-signed transactions switch to the network-bound format exactly at activation.
+#[cfg(test)]
+mod chain_id_binding_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, signed, TmpDir};
+    use crate::chain_binding::{set_test_chain_id_binding, set_test_require, MISMATCH_CODE, REQUIRED_CODE};
+    use quantum_vault_crypto::pqc_keygen;
+    use quantum_vault_types::encode_tx_for_signing_chain;
+
+    const CHAIN: &str = "test"; // node_with_store's chain id
+    const OTHER: &str = "rougechain-devnet-1";
+
+    struct Net { _d: Vec<TmpDir>, x: L1Node, y: L1Node, user: PQKeypair, proposer: PQKeypair, nonce: std::cell::Cell<u64> }
+
+    fn net() -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let (dx, x, _) = node_with_store();
+        let (dy, y, _) = node_with_store();
+        let (user, proposer) = (pqc_keygen(), pqc_keygen());
+        for n in [&x, &y] { fund_xrge(n, &user.public_key_hex, 1_000.0); }
+        Net { _d: vec![dx, dy], x, y, user, proposer, nonce: std::cell::Cell::new(0) }
+    }
+
+    fn at<T>(activation: Option<u64>, f: impl FnOnce() -> T) -> T {
+        set_test_chain_id_binding(activation);
+        let out = f();
+        set_test_chain_id_binding(None);
+        out
+    }
+
+    impl Net {
+        fn next(&self) -> u64 { self.nonce.set(self.nonce.get() + 1); self.nonce.get() }
+        fn raw(&self) -> TxV1 {
+            TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: self.user.public_key_hex.clone(), nonce: self.next(),
+                payload: TxPayload { to_pub_key_hex: Some("aa".repeat(32)), amount: Some(1), ..Default::default() },
+                fee: 0.1, sig: String::new(), signed_payload: None }
+        }
+        /// V1, plain encoding (the only V1 format before activation).
+        fn v1_plain(&self) -> TxV1 { signed(self.raw(), &self.user.secret_key_hex) }
+        /// V1, network-bound encoding for `chain`.
+        fn v1_bound(&self, chain: &str) -> TxV1 {
+            let mut t = self.raw();
+            t.sig = pqc_sign(&self.user.secret_key_hex, &encode_tx_for_signing_chain(&t, chain)).unwrap();
+            t
+        }
+        /// `/api/v2` transfer whose signed JSON carries `chainId` = `chain` (or none).
+        fn v2(&self, chain: Option<&str>) -> TxV1 {
+            let n = self.next();
+            let mut p = serde_json::json!({"type": "transfer", "from": self.user.public_key_hex, "to": "aa".repeat(32),
+                "amount": 1, "token": "XRGE", "timestamp": n, "nonce": format!("nonce-{n}")});
+            if let Some(c) = chain { p["chainId"] = c.into(); }
+            let sp = serde_json::to_string(&p).unwrap();
+            let sig = pqc_sign(&self.user.secret_key_hex, sp.as_bytes()).unwrap();
+            crate::v2_binding::build_v2_tx("transfer", self.user.public_key_hex.clone(), n, &p, sig, sp).unwrap()
+        }
+        /// `rougechain` CLI envelope with an optional network field `(name, value)`.
+        fn envelope(&self, field: Option<(&str, &str)>) -> TxV1 {
+            let mut t = self.raw();
+            t.fee = 1.0;
+            let mut e = serde_json::json!({"tx_type": "transfer", "from": t.from_pub_key, "nonce": t.nonce, "fee": 1.0,
+                "payload": serde_json::to_value(&t.payload).unwrap()});
+            if let Some((k, v)) = field { e[k] = v.into(); }
+            let sp = serde_json::to_string(&e).unwrap();
+            t.sig = pqc_sign(&self.user.secret_key_hex, sp.as_bytes()).unwrap();
+            t.signed_payload = Some(sp);
+            t
+        }
+        fn block(&self, n: &L1Node, txs: Vec<TxV1>) -> BlockV1 {
+            let t = n.tip_height().unwrap() + 1;
+            let probe = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs.clone(), None, t);
+            let snap = n.capture_pre_apply_snapshot(&probe).unwrap();
+            let _ = n.apply_balance_block(&probe).unwrap();
+            let root = n.compute_state_root_for_height(probe.header.height).unwrap();
+            n.restore_pre_apply_snapshot(snap).unwrap();
+            let b = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs, Some(root), t);
+            serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()
+        }
+        fn fingerprint(n: &L1Node) -> (u64, String, String) {
+            let h = n.tip_height().unwrap();
+            (h, n.get_block(h).unwrap().unwrap().hash, n.get_state_root().unwrap())
+        }
+        /// Every format history contains, including signed payloads naming no or another network.
+        fn historical_shapes(&self) -> Vec<TxV1> {
+            vec![self.v1_plain(), self.v2(None), self.v2(Some(OTHER)), self.v2(Some(CHAIN)),
+                 self.envelope(None), self.envelope(Some(("chain_id", OTHER)))]
+        }
+    }
+
+    #[test]
+    fn unscheduled_on_every_network() {
+        assert_eq!(crate::chain_binding::CHAIN_ID_BINDING_ACTIVATION_HEIGHT, None);
+        assert_eq!((crate::upgrades::MAINNET.chain_id_binding, crate::upgrades::TESTNET.chain_id_binding), (None, None));
+        for h in [0, 1, 245, u64::MAX] { assert!(!crate::chain_binding::chain_id_binding_active(h)); }
+    }
+
+    /// Below activation a node with the rule scheduled and a node without it accept exactly the
+    /// same blocks (every historical format, including payloads naming no or another network) and
+    /// reach the same tip, block hash and state root. The network-bound V1 format is NOT accepted
+    /// before activation (an old node would refuse it), so the rule adds nothing early.
+    #[test]
+    fn scheduled_and_unscheduled_nodes_agree_below_activation() {
+        const H: u64 = 4;
+        let n = net(); // x = scheduled at H, y = not scheduled
+        for _ in 1..H {
+            let b = n.block(&n.y, n.historical_shapes());
+            at(Some(H), || n.x.import_block(b.clone())).expect("scheduled node accepts below activation");
+            at(None, || n.y.import_block(b.clone())).expect("unscheduled node accepts");
+            assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        }
+        let before = Net::fingerprint(&n.x);
+        let early = n.block(&n.y, vec![n.v1_bound(CHAIN)]);
+        assert!(at(Some(H + 1), || n.x.import_block(early.clone())).unwrap_err().contains("invalid tx signatures"));
+        assert!(at(None, || n.y.import_block(early)).unwrap_err().contains("invalid tx signatures"));
+        assert_eq!((Net::fingerprint(&n.x), Net::fingerprint(&n.y)), (before.clone(), before));
+    }
+
+    /// From activation, on the real import path, on two nodes with the same verdicts.
+    #[test]
+    fn activation_boundary_on_the_import_path() {
+        const H: u64 = 2;
+        let n = net();
+        let b1 = n.block(&n.x, n.historical_shapes());
+        for node in [&n.x, &n.y] { at(Some(H), || node.import_block(b1.clone())).expect("below activation"); }
+        let before = Net::fingerprint(&n.x);
+        let refused: Vec<(TxV1, &str)> = vec![
+            (n.v1_plain(), "invalid tx signatures"),
+            (n.v1_bound(OTHER), "invalid tx signatures"),
+            (n.v2(None), REQUIRED_CODE),
+            (n.v2(Some(OTHER)), MISMATCH_CODE),
+            (n.envelope(None), REQUIRED_CODE),
+            (n.envelope(Some(("chainId", CHAIN))), REQUIRED_CODE), // an envelope names its network as `chain_id`
+            (n.envelope(Some(("chain_id", OTHER))), MISMATCH_CODE),
+        ];
+        for (bad, why) in refused {
+            for txs in [vec![bad.clone()], vec![n.v2(Some(CHAIN)), bad.clone()]] {
+                let b = n.block(&n.x, txs);
+                let ex = at(Some(H), || n.x.import_block(b.clone())).unwrap_err();
+                let ey = at(Some(H), || n.y.import_block(b.clone())).unwrap_err();
+                assert!(ex.contains(why), "{ex}");
+                assert_eq!(ex, ey);
+                assert_eq!((Net::fingerprint(&n.x), Net::fingerprint(&n.y)), (before.clone(), before.clone()), "a refused block changes nothing");
+            }
+        }
+        let ok = n.block(&n.x, vec![n.v1_bound(CHAIN), n.v2(Some(CHAIN)), n.envelope(Some(("chain_id", CHAIN)))]);
+        for node in [&n.x, &n.y] { at(Some(H), || node.import_block(ok.clone())).expect("network-bound block at activation"); }
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        assert_eq!(n.x.tip_height().unwrap(), H);
+    }
+
+    /// Node rule on admission (no fork): another network is always refused; none is accepted
+    /// with REQUIRE_SIGNED_CHAIN_ID off and refused with it on. From activation admission also
+    /// applies the consensus rule, and the producer leaves out what the next block would refuse.
+    #[test]
+    fn mempool_and_producer() {
+        const H: u64 = 2;
+        let n = net();
+        set_test_require(Some(false));
+        at(None, || {
+            assert!(n.x.add_tx_to_mempool(n.v2(Some(OTHER))).unwrap_err().starts_with(MISMATCH_CODE));
+            assert!(n.x.add_tx_to_mempool_verified(n.v2(Some(OTHER))).unwrap_err().starts_with(MISMATCH_CODE));
+            assert!(n.x.add_tx_to_mempool(n.envelope(Some(("chain_id", OTHER)))).unwrap_err().starts_with(MISMATCH_CODE));
+            n.x.add_tx_to_mempool(n.v2(Some(CHAIN))).expect("matching");
+            n.x.add_tx_to_mempool(n.v2(None)).expect("missing, flag off");
+            n.x.add_tx_to_mempool(n.envelope(None)).expect("missing, flag off");
+            n.x.add_tx_to_mempool(n.v1_plain()).expect("V1 before activation");
+        });
+        set_test_require(Some(true));
+        at(None, || {
+            assert!(n.x.add_tx_to_mempool(n.v2(None)).unwrap_err().starts_with(REQUIRED_CODE));
+            assert!(n.x.add_tx_to_mempool(n.envelope(None)).unwrap_err().starts_with(REQUIRED_CODE));
+            n.x.add_tx_to_mempool(n.v2(Some(CHAIN))).expect("matching, flag on");
+            n.x.add_tx_to_mempool(n.envelope(Some(("chain_id", CHAIN)))).expect("matching envelope, flag on");
+            n.x.add_tx_to_mempool(n.v1_plain()).expect("V1 is bound by the consensus rule only");
+        });
+        set_test_require(None);
+        n.x.mempool.lock().unwrap().clear();
+        n.x.verified_tx_ids.lock().unwrap().clear();
+
+        // block 1 (below H): a node-signed (V1) tx uses the plain format and an old node accepts it
+        let t1 = at(Some(H), || n.x.submit_user_tx(&n.user.secret_key_hex, &n.user.public_key_hex, &"aa".repeat(32), 1.0, Some(0.1), None)).unwrap();
+        assert!(pqc_verify(&n.user.public_key_hex, &encode_tx_for_signing(&t1), &t1.sig).unwrap());
+        let b1 = at(Some(H), || n.x.mine_pending()).unwrap().expect("produced");
+        at(None, || n.y.import_block(serde_json::from_str(&serde_json::to_string(&b1).unwrap()).unwrap())).expect("old rules accept");
+        // next block = H: admission refuses what the rule refuses
+        at(Some(H), || {
+            assert!(n.x.add_tx_to_mempool(n.v1_plain()).unwrap_err().contains("invalid signature"));
+            assert!(n.x.add_tx_to_mempool(n.v2(None)).unwrap_err().starts_with(REQUIRED_CODE));
+            assert!(n.x.add_tx_to_mempool_verified(n.v2(None)).unwrap_err().starts_with(REQUIRED_CODE));
+            // a pre-verified entry admitted before activation is not produced
+            let stale = n.v1_plain();
+            let id = compute_single_tx_hash(&stale);
+            n.x.verified_tx_ids.lock().unwrap().insert(id.clone());
+            n.x.mempool.lock().unwrap().insert(id, stale);
+            assert!(n.x.mine_pending().unwrap().is_none(), "nothing valid to produce");
+            n.x.mempool.lock().unwrap().clear();
+            // node-signed txs switch to the network-bound format; the block imports on another node
+            let t2 = n.x.submit_user_tx(&n.user.secret_key_hex, &n.user.public_key_hex, &"aa".repeat(32), 1.0, Some(0.1), None).unwrap();
+            assert!(pqc_verify(&n.user.public_key_hex, &encode_tx_for_signing_chain(&t2, CHAIN), &t2.sig).unwrap());
+            n.x.add_tx_to_mempool(n.v2(Some(CHAIN))).expect("network-bound V2");
+            let b2 = n.x.mine_pending().unwrap().expect("produced at activation");
+            assert_eq!(b2.txs.len(), 2);
+            n.y.import_block(serde_json::from_str(&serde_json::to_string(&b2).unwrap()).unwrap()).expect("imported at activation");
+        });
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
     }
 }
