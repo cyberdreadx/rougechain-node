@@ -51,6 +51,11 @@ export {
   BURN_ADDRESS,
   isBurnAddress,
   signRequest,
+  MAINNET_CHAIN_ID,
+  TESTNET_CHAIN_ID,
+  ChainIdMismatchError,
+  bindWalletToChain,
+  applyChainId,
 } from "./signer.js";
 export type { TokenCreationOptions } from "./signer.js";
 

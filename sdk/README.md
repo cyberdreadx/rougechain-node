@@ -35,7 +35,9 @@ npm install @rougechain/sdk
 ```typescript
 import { RougeChain, Wallet } from "@rougechain/sdk";
 
-const rc = new RougeChain("https://testnet.rougechain.io/api");
+// `chainId` names the network you sign for; every signature commits to it, and the client
+// refuses to sign if the node reports a different chain id.
+const rc = new RougeChain("https://testnet.rougechain.io/api", { chainId: "rougechain-devnet-1" });
 const wallet = Wallet.generate();
 
 // Get testnet tokens
