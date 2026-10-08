@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { Shield, Link2, FileSignature, Send, AlertTriangle, Code2, Upload } from "lucide-react";
 import type { ContractTxDetails } from "../lib/contract-tx";
+import { MISSING_CHAIN_ID_WARNING, type NetworkReview } from "../lib/chain-binding";
 import type { SignMessageReview } from "@rougechain/core/message-signing";
 import SignMessageView, { signMessageHasDanger } from "./SignMessageView";
 
@@ -23,6 +24,8 @@ interface PendingRequest {
     favicon?: string;
     payload?: Record<string, unknown>;
     details?: ContractTxDetails;
+    /** RougeChain network the payload is signed for (sign / send), from the service worker. */
+    network?: NetworkReview;
 }
 
 const isEvm = (t: ApprovalType) => t.startsWith("evm-");
@@ -127,6 +130,33 @@ function ContractTxView({ details, sending }: { details: ContractTxDetails; send
     );
 }
 
+/** Which network this signature is valid on (the payload's `chainId`), or a warning if none. */
+function NetworkBanner({ network }: { network?: NetworkReview }) {
+    if (!network) {
+        return <p className="text-xs text-red-400 text-center">Network information is missing. Deny this request.</p>;
+    }
+    if (network.missing) {
+        return (
+            <div className="rounded-xl border-2 border-amber-500/60 bg-amber-500/10 p-3 space-y-1">
+                <div className="flex items-center gap-2 text-amber-300 text-sm font-semibold">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>No network specified</span>
+                </div>
+                <p className="text-[11px] text-amber-200/90">{MISSING_CHAIN_ID_WARNING}</p>
+                <p className="text-[11px] text-muted-foreground">Wallet network: {network.selectedName}</p>
+            </div>
+        );
+    }
+    return (
+        <div className="rounded-xl border border-border bg-card/30 px-4 py-2.5">
+            <Row label="Network" title={network.chainId ?? undefined}>
+                <span className="font-semibold">{network.name}</span>
+                <span className="block text-[10px] font-mono text-muted-foreground">{network.chainId}</span>
+            </Row>
+        </div>
+    );
+}
+
 export default function ApprovalApp() {
     const [request, setRequest] = useState<PendingRequest | null>(null);
     const [closing, setClosing] = useState(false);
@@ -148,6 +178,7 @@ export default function ApprovalApp() {
                 favicon,
                 payload: stored?.payload,
                 details: stored?.details,
+                network: stored?.network,
             });
         });
     }, []);
@@ -245,6 +276,11 @@ export default function ApprovalApp() {
                         <p className="text-xs text-muted-foreground truncate max-w-[240px]">{request.origin}</p>
                     </div>
                 </div>
+
+                {/* RougeChain network the signature is bound to */}
+                {(request.type === "sign" || request.type === "send") && (
+                    <NetworkBanner network={request.network} />
+                )}
 
                 {/* Type-specific content */}
                 {request.type === "connect" && (
@@ -397,7 +433,7 @@ export default function ApprovalApp() {
                 </button>
                 <button
                     onClick={() => respond(true)}
-                    disabled={closing || (kind === "sign-message" && !messageReview)}
+                    disabled={closing || (kind === "sign-message" && !messageReview) || ((kind === "sign" || kind === "send") && !request.network)}
                     className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 ${isSend || messageDanger
                         ? "bg-red-500 hover:bg-red-600"
                         : isSign

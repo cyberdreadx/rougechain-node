@@ -108,6 +108,7 @@
 - [MCP Server (AI Agents)](advanced/mcp-server.md)
 - [Browser Extensions](advanced/browser-extensions.md)
 - [Wallet Authentication (Sign a Message)](advanced/wallet-authentication.md)
+- [Verifying Finality](advanced/verifying-finality.md)
 - [SDK](advanced/sdk.md)
 
 ---

@@ -22,6 +22,7 @@ import {
   type TransactionPayload,
 } from "./pqc-signer";
 import { signViaExtension } from "./extension-bridge";
+import { verifyNodeChainId } from "./chain-id";
 
 /** Max gas per call (the node's `DEFAULT_FUEL_LIMIT`). */
 export const CONTRACT_MAX_GAS = 10_000_000;
@@ -246,6 +247,7 @@ async function signWithWallet(payload: Omit<TransactionPayload, "from">): Promis
   const w = loadUnifiedWallet();
   if (!w?.signingPublicKey) throw new Error("Connect or unlock a wallet to sign this call.");
   const full = { ...payload, from: w.signingPublicKey } as TransactionPayload;
+  await verifyNodeChainId(); // once per session: the node must be on the selected network
   if (w.signingPrivateKey) {
     const tx = signTransaction(full, w.signingPrivateKey, w.signingPublicKey);
     const bytes = serializePayload(tx.payload);

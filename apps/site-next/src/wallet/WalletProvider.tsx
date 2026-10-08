@@ -36,6 +36,7 @@ import { getRougeChainProvider, signMessageViaExtension, signViaExtension, type 
 import { pubkeyToAddress } from "@rougechain/core/address";
 import { signMessage } from "@rougechain/core/message-signing";
 import { signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
+import { verifyNodeChainId } from "@rougechain/core/chain-id";
 import { useChain } from "../explorer/chain";
 import {
   SERVER_SNAPSHOT,
@@ -413,7 +414,12 @@ export function useSigner(): Signer | null {
       return {
         kind: "local",
         publicKey,
-        sign: async (p) => signTransaction(p, priv, publicKey),
+        // The signed payload carries the selected network's chainId; the node must report the
+        // same chain id (checked once per session) before anything is signed.
+        sign: async (p) => {
+          await verifyNodeChainId();
+          return signTransaction(p, priv, publicKey);
+        },
         signMessage: async (message) => ({
           message,
           signature: signMessage(priv, message),

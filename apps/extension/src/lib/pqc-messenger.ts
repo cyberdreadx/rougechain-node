@@ -3,7 +3,7 @@
  * Adapted from quantum-vault/src/lib/pqc-messenger.ts
  */
 import { applyEnvelopes, type EnvelopeData, type EnvelopeReaction } from "./messenger-envelope";
-import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
+import { getCoreApiBaseUrl, getCoreApiHeaders, bindToSelectedNetwork } from "./network";
 import { cachedFetch, invalidate } from "./api-cache";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
@@ -329,12 +329,13 @@ export function buildSignedRequest(
     signingPublicKey: string,
 ): { payload: Record<string, unknown>; signature: string; public_key: string } {
     const nonce = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
-    const fullPayload: Record<string, unknown> = {
+    // Network binding: the selected network's chain id goes inside the signed bytes.
+    const fullPayload: Record<string, unknown> = bindToSelectedNetwork({
         ...payload,
         from: signingPublicKey,
         timestamp: Date.now(),
         nonce,
-    };
+    });
     const sorted = sortKeysDeep(fullPayload) as Record<string, unknown>;
     const json = JSON.stringify(sorted);
     const bytes = new TextEncoder().encode(json);

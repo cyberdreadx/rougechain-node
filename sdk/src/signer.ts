@@ -57,6 +57,49 @@ export function isBurnAddress(address: string): boolean {
   return address === BURN_ADDRESS;
 }
 
+// ===== Network binding =====
+
+/** Chain id of RougeChain mainnet. */
+export const MAINNET_CHAIN_ID = "rougechain-mainnet-1";
+/** Chain id of RougeChain testnet. */
+export const TESTNET_CHAIN_ID = "rougechain-devnet-1";
+
+/**
+ * Thrown when a signature would be made for a network other than the expected one: the node
+ * reports another chain id than the client was configured with, or a payload / wallet already
+ * names a different chain id. `code` is `"CHAIN_ID_MISMATCH"`.
+ */
+export class ChainIdMismatchError extends Error {
+  readonly code = "CHAIN_ID_MISMATCH";
+  constructor(readonly expected: string, readonly actual: string) {
+    super(`CHAIN_ID_MISMATCH: expected chain id "${expected}", got "${actual}" — refusing to sign`);
+    this.name = "ChainIdMismatchError";
+  }
+}
+
+/**
+ * Return `wallet` bound to `chainId`: every payload the SDK signers build with the result carries
+ * `chainId`, so the signature commits to that network. Throws {@link ChainIdMismatchError} if the
+ * wallet is already bound to another chain id.
+ */
+export function bindWalletToChain<W extends WalletKeys>(wallet: W, chainId: string): W & { chainId: string } {
+  if (!chainId) throw new Error("chainId is required");
+  if (wallet.chainId !== undefined && wallet.chainId !== chainId) {
+    throw new ChainIdMismatchError(chainId, wallet.chainId);
+  }
+  return Object.assign(Object.create(Object.getPrototypeOf(wallet)), wallet, { chainId });
+}
+
+/** Add the wallet's chain id (if any) to a payload about to be signed. */
+export function applyChainId<P extends Record<string, unknown>>(wallet: WalletKeys, payload: P): P {
+  if (wallet.chainId === undefined) return payload;
+  const existing = payload.chainId;
+  if (existing !== undefined && existing !== wallet.chainId) {
+    throw new ChainIdMismatchError(wallet.chainId, String(existing));
+  }
+  return { ...payload, chainId: wallet.chainId };
+}
+
 // ===== Transaction builders =====
 
 function buildAndSign(
@@ -74,7 +117,10 @@ function buildAndSign(
     // of the timestamp/replay window). Omit it and the node falls back to legacy behavior.
     ...(accountNonce !== undefined ? { account_nonce: accountNonce } : {}),
   } as TransactionPayload;
-  return signTransaction(full, wallet.privateKey, wallet.publicKey);
+  // Network binding: the wallet's chain id (set by the RougeChain client) goes inside the signed
+  // bytes, so the signature is valid for that network only.
+  const bound = applyChainId(wallet, full as unknown as Record<string, unknown>) as unknown as TransactionPayload;
+  return signTransaction(bound, wallet.privateKey, wallet.publicKey);
 }
 
 export function createSignedTransfer(

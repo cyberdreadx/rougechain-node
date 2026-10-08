@@ -152,7 +152,7 @@ describe("Mint action", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Mint (1 XRGE)" }));
     await waitFor(() => posted(calls, "/v2/token/mint"));
     const tx = posted(calls, "/v2/token/mint");
-    expect(Object.keys(tx.payload).sort()).toEqual(["amount", "fee", "from", "nonce", "timestamp", "token_symbol", "type"]);
+    expect(Object.keys(tx.payload).sort()).toEqual(["amount", "chainId", "fee", "from", "nonce", "timestamp", "token_symbol", "type"]);
     expect(tx.payload).toMatchObject({ type: "mint_tokens", token_symbol: "MNT", amount: 3000, fee: 1, from: w.signingPublicKey });
     expect(tx.public_key).toBe(w.signingPublicKey);
     expect(verifyTransaction(tx)).toBe(true);

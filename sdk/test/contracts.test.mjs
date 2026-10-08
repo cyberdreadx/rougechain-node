@@ -101,6 +101,8 @@ function mockFetch(routes) {
   const calls = [];
   const fn = async (url, init = {}) => {
     const path = url.replace("http://node/api", "");
+    // The client checks the node's chain id once before signing; not recorded.
+    if (path === "/health") return new Response(JSON.stringify({ status: "ok", chain_id: "rougechain-mainnet-1", height: 1 }), { status: 200 });
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push({ path, method: init.method || "GET", body });
     const h = routes[path];

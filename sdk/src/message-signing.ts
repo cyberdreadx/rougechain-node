@@ -17,7 +17,8 @@
  * The first signed byte is 0x19, and the signed bytes therefore are not a JSON document (RFC 8259
  * allows no raw control character below 0x20 anywhere except the whitespace 0x09 / 0x0A / 0x0D).
  * Every byte string the node verifies a transaction signature over IS a JSON document that
- * starts with `{` (0x7B), possibly after JSON whitespace:
+ * starts with `{` (0x7B), possibly after JSON whitespace — or (7) such a document behind a fixed
+ * ASCII prefix:
  *
  *  1. V1 — `encode_tx_for_signing(tx)` (core/types/src/lib.rs): `serde_json::to_vec` of a struct
  *     `{"version":…,"tx_type":…,"from_pub_key":…,"nonce":…,"payload":…,"fee":…}`. First byte `{`.
@@ -35,8 +36,13 @@
  *  5. CLI envelope — `{"tx_type","from","nonce","fee","payload":{…}}` canonical JSON posted to
  *     `/api/tx/broadcast`; it is a `signed_payload` and goes through (4). First byte `{`.
  *  6. Authority-cosigned `bridge_withdraw` — `encode_tx_for_signing(tx)` again. First byte `{`.
+ *  7. Network-bound V1 (CHAIN_ID_BINDING, from its activation height; not scheduled) —
+ *     `encode_tx_for_signing_chain(tx, chain_id)` (core/types/src/lib.rs, used through
+ *     core/daemon/src/chain_binding.rs): the bytes `rougechain/tx-v1/chain`, 0x00, a length and the
+ *     chain id, then (1). First byte `r` (0x72) — never 0x19.
  *
- * None of them is raw caller-chosen bytes. The same holds for the node's signed requests
+ * Every byte string above starts with `{`, JSON whitespace or `r`, never 0x19. None of them is
+ * raw caller-chosen bytes. The same holds for the node's signed requests
  * (mail / messenger / names: same check as 3), block headers (`serde_json::to_vec`, `{`),
  * finality votes (`ROUGECHAIN_FINALITY_VOTE_V2|…`, first byte `R`) and the validator rate-limit
  * header (a decimal timestamp).

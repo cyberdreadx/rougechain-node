@@ -17,8 +17,10 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Mintable custom tokens (TOKEN_MINTING) | 235 | 1360 |
 | Contracts read NFT royalty (CONTRACT_NFT_ROYALTY) | 235 | 1360 |
 | Monetary-integrity rule (MONETARY_INTEGRITY) | 245 | 1390 |
+| Signatures commit to the chain id (CHAIN_ID_BINDING) | not scheduled | not scheduled |
+| Contracts read the chain id (CONTRACT_CHAIN_ID) | not scheduled | not scheduled |
 
-**Every height in this table has been reached** on both networks (mainnet height 251, testnet past
+**Every height in this table has been reached** (except the two `not scheduled` rows) on both networks (mainnet height 251, testnet past
 1390, on 2026-10-06). Nothing is scheduled beyond them; the next consensus changes — restoring the
 types suspended at 245, the shielded pool V2, and the consensus redesign decided on 2026-10-06 — have
 no heights yet and will be announced in advance (see [Status & Roadmap](../status.md)).
@@ -97,3 +99,45 @@ two independent schedule fields — set **both** to the same `H`.
 Rollback before `H` is just reinstalling the previous binary. After a mintable token exists (or a
 call to a contract importing the royalty functions is included), a node without the upgrade cannot
 follow the chain.
+
+<a id="chain-id-binding"></a>
+
+## Upgrade notice: CHAIN_ID_BINDING and CONTRACT_CHAIN_ID (not scheduled)
+
+**What it is.** From node release 1.6.4 every wallet signs the chain id into its payloads, and nodes
+refuse a payload that names another network (node rule, no fork). CHAIN_ID_BINDING makes the same
+property a consensus rule; CONTRACT_CHAIN_ID gives contracts `host_get_chain_id`. Both are hard forks
+with **no height on any network** (`upgrade_schedule.chain_id_binding` / `.contract_chain_id` are
+`null`).
+
+**The rule, from height `H`.** A block is invalid if any transaction's signed bytes do not commit to
+this chain's id:
+
+| Signature format | Required from `H` |
+|---|---|
+| `/api/v2` signed payload (`signed_payload`, flat JSON) | the signature verifies over `signed_payload` **only** (no fallback to another format), and the JSON has `chainId` equal to the chain id (exact string) |
+| `rougechain` CLI envelope (`signed_payload` with `tx_type` + `payload`) | same, with `chain_id` in the envelope |
+| V1 format (no `signed_payload`; node-signed transactions: faucet, bridge mints, cosigned bridge withdrawals, legacy node routes) | signed over the network-bound encoding `"rougechain/tx-v1/chain" ‖ 0x00 ‖ u64_be(len) ‖ chain id ‖ encode_tx_for_signing(tx)`; the plain V1 and legacy full-struct encodings are refused |
+| SHIELD_V2 (`shield_v2`, signer-less `*_v2`) | unchanged — the body already carries `sha256(chain id)` and is checked by the SHIELD_V2 rule |
+
+Below `H` nothing changes: blocks are accepted, executed and stored exactly as by release 1.6.3, and
+the network-bound V1 encoding is not accepted (an older node would refuse it). Nodes start signing
+their own V1 transactions in the network-bound encoding at `H` automatically.
+
+**What must ship first, in this order.**
+
+1. Node release 1.6.4 on every node of the network (node rule; harmless to older wallets).
+2. Wallets that sign `chainId`: the site, `@rougechain/sdk` 1.15.0 (and every dApp built on it,
+   after a dependency bump), browser extension 1.9.0, Qwalla 1.3.0, `rougechain` CLI 1.3.0, the
+   MCP server. Watch the node log / API errors for payloads still arriving without the field.
+3. Operators turn on `REQUIRE_SIGNED_CHAIN_ID` (testnet first). Only then is a payload without a
+   network refused everywhere.
+4. Pick `H` (well above the tip), set `chain_id_binding: Some(H)` (and, if wanted at the same time,
+   `contract_chain_id: Some(H)`) for testnet in `core/daemon/src/upgrades.rs` — mainnet via
+   `chain_binding::CHAIN_ID_BINDING_ACTIVATION_HEIGHT` / `node::CONTRACT_CHAIN_ID_ACTIVATION_HEIGHT` —
+   update `mainnet_schedule_is_pinned` / `testnet_schedule_is_pinned` and this page, build, and install
+   on **every** node of that network before `H`. Confirm the startup line
+   `[upgrades] … chain id binding Some(H), contract chain id Some(H)` and `GET /api/stats` →
+   `upgrade_schedule.chain_id_binding == H` on each node.
+5. Any transaction still in a mempool at `H` without a network-bound signature is dropped by the
+   producer and must be signed again.

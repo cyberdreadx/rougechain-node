@@ -67,3 +67,13 @@ export function envGiphyApiKey(): string | undefined {
 export function envIsDev(): boolean {
   return Boolean(import.meta.env.DEV);
 }
+
+/** `VITE_CHAIN_ID_MAINNET` — override of mainnet's chain id (local devnets only). */
+export function envChainIdMainnet(): string | undefined {
+  return import.meta.env?.VITE_CHAIN_ID_MAINNET as string | undefined;
+}
+
+/** `VITE_CHAIN_ID_TESTNET` — override of testnet's chain id (local devnets only). */
+export function envChainIdTestnet(): string | undefined {
+  return import.meta.env?.VITE_CHAIN_ID_TESTNET as string | undefined;
+}

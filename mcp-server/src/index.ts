@@ -64,6 +64,8 @@ const attachSchema = z
 const BASE_URL = process.env.ROUGECHAIN_URL || "https://api.rougechain.io";
 const API = `${BASE_URL}/api`;
 const API_KEY = process.env.ROUGECHAIN_API_KEY || "";
+/** Network the signing wallet signs for; checked against the node before the first signature. */
+const CHAIN_ID = process.env.ROUGECHAIN_CHAIN_ID?.trim() || undefined;
 
 // ─── HTTP helpers (read side) ──────────────────────────────────────────────────
 
@@ -117,7 +119,7 @@ async function readJson(res: Response, what: string): Promise<Record<string, unk
 // The SDK owns all ML-DSA-65 signing + transaction serialization; the MCP server
 // never re-implements crypto. `rc` points at the same API base as the read helpers.
 
-const rc = new RougeChain(API, API_KEY ? { apiKey: API_KEY } : {});
+const rc = new RougeChain(API, { ...(API_KEY ? { apiKey: API_KEY } : {}), ...(CHAIN_ID ? { chainId: CHAIN_ID } : {}) });
 
 /**
  * Load a signing wallet from the environment, if one was provided.
@@ -1002,7 +1004,7 @@ if (signer) {
     },
     async ({ wasm, nonce, wait }) =>
       tx(async () => {
-        const { signed, predictedAddress, nonce: n } = createSignedContractPublish(w, wasm, nonce);
+        const { signed, predictedAddress, nonce: n } = createSignedContractPublish(await rc.bind(w), wasm, nonce);
         const r = await postJson("/v2/contract/publish", signed);
         const out: Record<string, unknown> = { ...r, predictedAddress, nonce: n };
         if (wait && r.success === true && typeof r.txId === "string") out.receipt = await waitReceipt(r.txId);
@@ -1058,7 +1060,7 @@ if (signer) {
           limit = suggestGasLimit(Number(q.gasUsed ?? 0));
           preview = { returnData: q.returnData, gasUsed: q.gasUsed, events: q.events };
         }
-        const signed = createSignedContractCall(w, address, method, a, limit, accountNonce, pay);
+        const signed = createSignedContractCall(await rc.bind(w), address, method, a, limit, accountNonce, pay);
         const r = await postJson("/v2/contract/execute", signed);
         const out: Record<string, unknown> = {
           ...r,

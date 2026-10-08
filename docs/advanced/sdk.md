@@ -378,6 +378,20 @@ In a browser the private key stays in the wallet: call `window.rougechain.signMe
 signature is never a transaction signature and `signTransaction` / `verifyTransaction` /
 `signRequest` are unchanged.
 
+### Verifying Finality (SDK 1.14.0)
+
+Check that a transaction is in a finalized block without trusting a node's "success" answer.
+Full guide, including what it cannot prove: [Verifying Finality](verifying-finality.md).
+
+```typescript
+import { verifyTxFinalized } from '@rougechain/sdk';
+
+const r = await verifyTxFinalized({ txHash, nodes: [nodeA, nodeB, nodeC], chainId: 'rougechain-mainnet-1', trustedValidatorSet });
+r.status;   // "finalized" | "included-not-finalized" | "not-found" | "invalid"
+r.checks;   // every check, pass/fail
+r.outcome;  // { source: "node receipt", verified: false, value } — success is NOT proven
+```
+
 ### Multi-Sig Wallets
 
 Multi-sig **queries** are available today:

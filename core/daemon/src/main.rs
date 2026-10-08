@@ -25,6 +25,7 @@ mod v2_binding;
 mod regen_votes;
 mod shield_v2;
 mod upgrades;
+mod chain_binding;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -177,6 +178,12 @@ struct Args {
     /// Enable the public faucet endpoints (dev/testnet only). OFF by default — mainnet must never set this.
     #[arg(long, env = "QV_FAUCET_ENABLED", default_value_t = false)]
     faucet_enabled: bool,
+    /// REQUIRE_SIGNED_CHAIN_ID: refuse signed payloads (API, CLI envelopes, mempool) that do not
+    /// name this node's chain id (`chainId`; `chain_id` in a CLI envelope). Off by default in this
+    /// release: payloads naming ANOTHER chain id are always refused; payloads naming none are
+    /// accepted until operators turn this on (after wallets have shipped the field).
+    #[arg(long, env = "QV_REQUIRE_SIGNED_CHAIN_ID", default_value_t = false)]
+    require_signed_chain_id: bool,
     /// Comma-separated list of peer URLs to connect to (e.g., "http://node1.example.com:5100,http://node2.example.com:5100")
     #[arg(long, env = "QV_PEERS")]
     peers: Option<String>,
@@ -423,10 +430,16 @@ async fn main() -> Result<(), String> {
     };
     // Protocol upgrade heights for this network (mainnet / testnet), before any block is applied.
     let schedule = upgrades::select(&chain.chain_id)?;
-    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}, token minting {:?}, contract NFT royalty {:?}, monetary integrity {:?}, shield v2 {:?}",
+    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}, token minting {:?}, contract NFT royalty {:?}, monetary integrity {:?}, shield v2 {:?}, chain id binding {:?}, contract chain id {:?}",
         schedule.network, chain.chain_id, schedule.tx_uniqueness, schedule.proposer_selection, schedule.finality_v2,
         schedule.game_ready, schedule.game_ready_2, schedule.game_ready_3, schedule.payable_calls, schedule.token_minting,
-        schedule.contract_nft_royalty, schedule.monetary_integrity, schedule.shield_v2);
+        schedule.contract_nft_royalty, schedule.monetary_integrity, schedule.shield_v2, schedule.chain_id_binding,
+        schedule.contract_chain_id);
+    // Signatures commit to the network: the API refuses a signed payload naming another chain id,
+    // and with REQUIRE_SIGNED_CHAIN_ID one naming none (node rule, no fork; see chain_binding.rs).
+    chain_binding::init(&chain.chain_id, args.require_signed_chain_id);
+    eprintln!("[chain-id] signed payloads must name '{}' when they name a network; REQUIRE_SIGNED_CHAIN_ID={}",
+        chain.chain_id, args.require_signed_chain_id);
     let data_dir_clone = data_dir.clone();
     let bridge_withdraw_store = std::sync::Arc::new(
         BridgeWithdrawStore::new(&data_dir_clone).map_err(|e| format!("bridge withdraw store: {}", e))?
@@ -3375,7 +3388,7 @@ async fn create_pool(
     Json(body): Json<CreatePoolRequest>,
 ) -> Result<Json<CreatePoolResponse>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_crypto::pqc_sign;
-    use quantum_vault_types::{TxPayload, TxV1, encode_tx_for_signing};
+    use quantum_vault_types::{TxPayload, TxV1};
     
     let node = &state.node;
     let pool_id = LiquidityPool::make_pool_id(&body.token_a, &body.token_b);
@@ -3406,7 +3419,7 @@ async fn create_pool(
         signed_payload: None,
     };
     
-    let tx_bytes = encode_tx_for_signing(&tx);
+    let tx_bytes = node.v1_signing_bytes(&tx);
     let sig = pqc_sign(&body.from_private_key, &tx_bytes)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -3439,7 +3452,7 @@ async fn add_liquidity(
     Json(body): Json<AddLiquidityRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_crypto::pqc_sign;
-    use quantum_vault_types::{TxPayload, TxV1, encode_tx_for_signing};
+    use quantum_vault_types::{TxPayload, TxV1};
     
     let node = &state.node;
     
@@ -3467,7 +3480,7 @@ async fn add_liquidity(
         signed_payload: None,
     };
     
-    let tx_bytes = encode_tx_for_signing(&tx);
+    let tx_bytes = node.v1_signing_bytes(&tx);
     let sig = pqc_sign(&body.from_private_key, &tx_bytes)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -3498,7 +3511,7 @@ async fn remove_liquidity(
     Json(body): Json<RemoveLiquidityRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_crypto::pqc_sign;
-    use quantum_vault_types::{TxPayload, TxV1, encode_tx_for_signing};
+    use quantum_vault_types::{TxPayload, TxV1};
     
     let node = &state.node;
     
@@ -3517,7 +3530,7 @@ async fn remove_liquidity(
         signed_payload: None,
     };
     
-    let tx_bytes = encode_tx_for_signing(&tx);
+    let tx_bytes = node.v1_signing_bytes(&tx);
     let sig = pqc_sign(&body.from_private_key, &tx_bytes)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -3591,7 +3604,7 @@ async fn execute_swap(
     Json(body): Json<ExecuteSwapRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_crypto::pqc_sign;
-    use quantum_vault_types::{TxPayload, TxV1, encode_tx_for_signing};
+    use quantum_vault_types::{TxPayload, TxV1};
     
     let node = &state.node;
     let swap_fee = 0.1_f64;
@@ -3641,7 +3654,7 @@ async fn execute_swap(
         signed_payload: None,
     };
     
-    let tx_bytes = encode_tx_for_signing(&tx);
+    let tx_bytes = node.v1_signing_bytes(&tx);
     let sig = pqc_sign(&body.from_private_key, &tx_bytes)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -5031,6 +5044,10 @@ async fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, Stri
         }
     }
 
+    // Signatures commit to the network: a payload naming another chain id is refused (and, with
+    // REQUIRE_SIGNED_CHAIN_ID, one naming none).
+    chain_binding::check_api_payload(&req.payload)?;
+
     // Replay protection: reject a signature already seen within its validity window. Expires
     // exactly when the timestamp check above would begin rejecting it (timestamp + 5 min).
     replay_guard(&req.signature, timestamp + 5 * 60 * 1000)?;
@@ -5088,6 +5105,9 @@ async fn verify_signed_request(
             return Err("Payload 'from' does not match signing public key".to_string());
         }
     }
+
+    // Signatures commit to the network (see verify_signed_tx).
+    chain_binding::check_api_payload(&req.payload)?;
 
     // Anti-replay: require and check a unique nonce
     let nonce = req.payload.get("nonce").and_then(|v| v.as_str())
@@ -5973,6 +5993,11 @@ async fn v2_batch_submit(
     for (i, signed_payload) in verified {
         let req = &batch[i];
         let payload = &req.payload;
+        // Signatures commit to the network (see verify_signed_tx).
+        if let Err(e) = chain_binding::check_api_payload(payload) {
+            results[i] = serde_json::json!({"success": false, "error": e});
+            continue;
+        }
         let tx_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("transfer");
 
         if tx_type != "transfer" {
@@ -11454,5 +11479,97 @@ mod nonce_account_tests {
         assert_eq!(resolve_nonce_account(&addr, |_| None).unwrap(), addr);
         // malformed rouge1
         assert!(resolve_nonce_account("rouge1notvalid", |_| Some(pk.clone())).unwrap_err().contains("invalid rouge1 address"));
+    }
+}
+
+/// Signatures commit to the network: the API rule on every signed route family.
+#[cfg(test)]
+mod chain_id_api_tests {
+    use super::*;
+    use crate::chain_binding::{set_test_api_chain_id, set_test_require, MISMATCH_CODE, REQUIRED_CODE};
+
+    const MAIN: &str = "rougechain-mainnet-1";
+    const TEST: &str = "rougechain-devnet-1";
+
+    fn signed(kp: &quantum_vault_types::PQKeypair, mut payload: serde_json::Value, chain: Option<&str>) -> SignedTransactionRequest {
+        let now = chrono::Utc::now().timestamp_millis();
+        let nonce = hex::encode(quantum_vault_crypto::sha256(format!("{}{:?}{}", now, chain, rand_suffix()).as_bytes()));
+        let o = payload.as_object_mut().unwrap();
+        o.insert("from".into(), kp.public_key_hex.clone().into());
+        o.insert("timestamp".into(), now.into());
+        o.insert("nonce".into(), nonce[..32].to_string().into());
+        if let Some(c) = chain { o.insert("chainId".into(), c.into()); }
+        let bytes = serde_json::to_string(&payload).unwrap();
+        let signature = quantum_vault_crypto::pqc_sign(&kp.secret_key_hex, bytes.as_bytes()).unwrap();
+        SignedTransactionRequest { payload, signature, public_key: kp.public_key_hex.clone(), payload_bytes_hex: None }
+    }
+
+    fn rand_suffix() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        N.fetch_add(1, Ordering::SeqCst)
+    }
+
+    #[tokio::test]
+    async fn signed_transactions_matching_mismatching_missing() {
+        let kp = quantum_vault_crypto::pqc_keygen();
+        set_test_api_chain_id(Some(MAIN));
+        set_test_require(Some(false));
+        let tx = || serde_json::json!({"type": "transfer", "to": "ab", "amount": 1, "token": "XRGE"});
+        assert!(verify_signed_tx(&signed(&kp, tx(), Some(MAIN))).await.is_ok(), "matching accepted");
+        let e = verify_signed_tx(&signed(&kp, tx(), Some(TEST))).await.err().expect("mismatching refused");
+        assert!(e.starts_with(MISMATCH_CODE), "{e}");
+        assert!(verify_signed_tx(&signed(&kp, tx(), None)).await.is_ok(), "missing accepted with the flag off");
+        set_test_require(Some(true));
+        let e = verify_signed_tx(&signed(&kp, tx(), None)).await.err().expect("missing refused with the flag on");
+        assert!(e.starts_with(REQUIRED_CODE), "{e}");
+        assert!(verify_signed_tx(&signed(&kp, tx(), Some(MAIN))).await.is_ok());
+        set_test_require(None);
+        set_test_api_chain_id(None);
+    }
+
+    #[tokio::test]
+    async fn signed_requests_matching_mismatching_missing() {
+        let kp = quantum_vault_crypto::pqc_keygen();
+        let store = RwLock::new(HashMap::new());
+        set_test_api_chain_id(Some(MAIN));
+        set_test_require(Some(false));
+        let req = || serde_json::json!({"action": "messenger_ws_subscribe"});
+        assert!(verify_signed_request(&signed(&kp, req(), Some(MAIN)), &store).await.is_ok());
+        let e = verify_signed_request(&signed(&kp, req(), Some(TEST)), &store).await.err().unwrap();
+        assert!(e.starts_with(MISMATCH_CODE), "{e}");
+        assert!(verify_signed_request(&signed(&kp, req(), None), &store).await.is_ok());
+        set_test_require(Some(true));
+        let e = verify_signed_request(&signed(&kp, req(), None), &store).await.err().unwrap();
+        assert!(e.starts_with(REQUIRED_CODE), "{e}");
+        set_test_require(None);
+        set_test_api_chain_id(None);
+    }
+
+    /// Every handler that accepts a signed request goes through one of the two verifiers (which
+    /// apply the rule), and the batch route applies it per item.
+    #[test]
+    fn every_signed_route_family_applies_the_rule() {
+        let src = include_str!("main.rs");
+        let mut handlers = 0;
+        for chunk in src.split("\nasync fn ").skip(1) {
+            let sig_end = chunk.find('{').unwrap_or(chunk.len());
+            let sig = &chunk[..sig_end];
+            let body = &chunk[..chunk.find("\n}\n").unwrap_or(chunk.len())];
+            if sig.contains("Json<SignedTransactionRequest>") {
+                handlers += 1;
+                assert!(body.contains("verify_signed_tx(") || body.contains("verify_signed_request("),
+                    "handler {} does not verify its signed request", &chunk[..chunk.find('(').unwrap_or(20)]);
+            }
+            if sig.contains("Json<Vec<SignedTransactionRequest>>") {
+                assert!(body.contains("chain_binding::check_api_payload("), "batch route must apply the rule per item");
+            }
+        }
+        assert!(handlers >= 40, "found only {handlers} signed handlers");
+        for verifier in ["async fn verify_signed_tx(", "async fn verify_signed_request("] {
+            let at = src.find(verifier).unwrap();
+            let body = &src[at..at + src[at..].find("\n}\n").unwrap()];
+            assert!(body.contains("chain_binding::check_api_payload(&req.payload)"), "{verifier}");
+        }
     }
 }

@@ -55,7 +55,7 @@ fn view() -> Arc<dyn ChainView> {
 }
 
 fn ext(v: Arc<dyn ChainView>, royalty: bool) -> GameExt {
-    GameExt { view: v, seed: [7; 32], block_hashes: true, payable: true, nft_royalty: royalty, attached: None }
+    GameExt { view: v, seed: [7; 32], block_hashes: true, payable: true, nft_royalty: royalty, chain_id: None, attached: None }
 }
 
 /// `probe`: optionally creates its own collection `ART`, then stores `bps` (i32), `n` (i32) and

@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.15.0
+
+Signatures now commit to the network. Every payload the SDK signs — transactions and signed requests (mail, messenger, names, social, push, contracts) — carries `chainId`, the exact chain id of the target network (`"rougechain-mainnet-1"` or `"rougechain-devnet-1"`), inside the signed bytes, so a signature is valid on that one network only. Nodes from the next release refuse a payload whose `chainId` is not theirs; nodes that do not know the field ignore it, so this release works against current nodes too.
+
+### Added
+- `RougeChainOptions.chainId`. Before the first signature the client checks it once against the node's `GET /api/health` `chain_id` and refuses to sign on a difference (`ChainIdMismatchError`, `code === "CHAIN_ID_MISMATCH"`; nothing is sent). Without it the client adopts the chain id the node reports — still one network per signature, but only a configured `chainId` catches a client pointed at the wrong node, so set it.
+- `rc.getChainId()` (checked chain id) and `rc.knownChainId()` (without a round trip).
+- `WalletKeys.chainId`, `bindWalletToChain(wallet, chainId)` and `applyChainId(wallet, payload)` for apps that call the `createSigned*` builders or `signRequest` directly: a wallet bound to a chain id signs it into every payload. A payload that already names a different chain id is refused.
+- Constants `MAINNET_CHAIN_ID`, `TESTNET_CHAIN_ID`; `TransactionPayload.chainId`.
+
+### Changed
+- The `RougeChain` client binds every signature to its network (one extra `GET /health` per client instance). `messenger.subscribe` resolves the chain id before connecting; the synchronous `messenger.realtimeAuth` includes it once known.
+- Builders called with an unbound wallet sign exactly as before (no `chainId`). Once node operators require the field, such payloads will be refused — bind the wallet.
+
+## 1.14.0
+
+Verify that a transaction is in a FINALIZED block without trusting a node's "success" answer. See `docs/advanced/verifying-finality.md`.
+
+### Added
+- `verifyTxFinalized({ txHash, nodes, chainId, trustedValidatorSet?, minConfirmations?, fetch?, timeoutMs? })` resolves to `{ status: "finalized" | "included-not-finalized" | "not-found" | "invalid", height, blockHash, txIndex, trust, proof, outcome, checks }`. It recomputes the transaction hash, the header `tx_hash` from the block's transaction list, and the block hash; verifies the proposer's ML-DSA-65 signature and the header `chain_id`; verifies every precommit signature of the FINALITY_V2 certificate (`ROUGECHAIN_FINALITY_VOTE_V2|chain=…|type=precommit|height=…|round=0|block=…`) and recomputes the stake quorum `floor(2T/3)+1`; and requires a strict majority of `nodes` to serve the same block. Every check is returned with pass/fail.
+- **Not proven:** the execution outcome. The receipt status is not committed in the block header, so a failed transaction is still included and finalized; it is returned as `outcome: { source: "node receipt", verified: false, value }`. Without `trustedValidatorSet` the validator set comes from a node (`trust: "node-reported validator set"`); nodes expose only the current set, not the set for a past height.
+- Building blocks: `fetchAndVerifyBlock(height, { node, chainId })`, `verifyBlock`, `verifyFinalityCertificate`, `computeSingleTxHash`, `computeTxListHash`, `computeBlockHash`, `encodeTxV1`, `encodeHeaderV1`, `encodeFinalityProof`, `voteSigningMessage`, `finalityQuorum`, `formatF64`, lossless JSON (`parseJsonLossless`, `stringifyLossless`, `JsonNumber`) and the constants `FINALITY_VOTE_DOMAIN_V2`, `FINALITY_ONLY_ROUND`, `FINALITY_MAX_PROOF_VOTES`, `MAINNET_FINALITY_V2_HEIGHT`.
+
+Nothing existing changed.
+
 ## 1.13.0
 
 Wallet message signing, for proving control of a wallet to a website (login, token gating). See `docs/advanced/wallet-authentication.md`.
