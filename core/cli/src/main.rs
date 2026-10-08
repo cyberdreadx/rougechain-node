@@ -23,6 +23,12 @@ struct Cli {
     #[arg(long, global = true, default_value = "mainnet")]
     network: String,
 
+    /// Chain id to sign for (signatures commit to the network). Default: the chain id of
+    /// --network when --rpc is not given, otherwise the node's own (`/api/health`). The CLI
+    /// refuses to sign when the node reports a different chain id.
+    #[arg(long, global = true)]
+    chain_id: Option<String>,
+
     /// Submit stake / unstake / transfer as a raw transaction to /api/tx/broadcast instead of
     /// the signed /api/v2 routes. The public nodes refuse that route; it only reaches the
     /// mempool of the node it is posted to, so use it only against your own node.
@@ -385,11 +391,19 @@ fn api_post(rpc: &str, path: &str, body: Value) -> Result<Value, String> {
     read_json(resp, &url)
 }
 
+/// The chain id to sign for, cross-checked against the node (`/api/health` → `chain_id`).
+fn resolve_chain_id(rpc: &str, expected: Option<&str>) -> Result<String, String> {
+    let reported = api_get(rpc, "/api/health").ok()
+        .and_then(|h| h.get("chain_id").and_then(|v| v.as_str()).map(String::from));
+    v2::pick_chain_id(expected, reported.as_deref())
+}
+
 /// Submit a chain transaction through its signed `/api/v2` route (the SDK / site format).
-fn submit_v2(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &str, fields: serde_json::Map<String, Value>) -> Result<(), String> {
+fn submit_v2(rpc: &str, chain: Option<&str>, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &str, fields: serde_json::Map<String, Value>) -> Result<(), String> {
     let route = v2::route_for(tx_type).ok_or_else(|| format!("no /api/v2 route for '{}'", tx_type))?;
     let key = resolve_key(dir, node_keys).ok_or("No signing key. Run: rougechain key-gen (or pass --node-keys <path>)")?;
-    let req = v2::build_signed_v2(&key.public_key_hex, &key.secret_key_hex, fields, timestamp_ms(), &generate_nonce())?;
+    let chain_id = resolve_chain_id(rpc, chain)?;
+    let req = v2::build_signed_v2(&key.public_key_hex, &key.secret_key_hex, fields, timestamp_ms(), &generate_nonce(), &chain_id)?;
     let result = api_post(rpc, route, req)?;
     let failed = result.get("success").and_then(|v| v.as_bool()) == Some(false)
         || result.get("error").map(|e| !e.is_null()).unwrap_or(false);
@@ -409,8 +423,9 @@ fn submit_v2(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &st
     Ok(())
 }
 
-fn submit_tx(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &str, payload: Value, fee: u64) -> Result<(), String> {
+fn submit_tx(rpc: &str, chain: Option<&str>, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &str, payload: Value, fee: u64) -> Result<(), String> {
     let key = resolve_key(dir, node_keys).ok_or("No signing key. Run: rougechain key-gen (or pass --node-keys <path>)")?;
+    let chain_id = resolve_chain_id(rpc, chain)?;
 
     // Get nonce
     let nonce_result = rpc_call(rpc, "eth_getTransactionCount", serde_json::json!([&key.public_key_hex]))?;
@@ -424,15 +439,9 @@ fn submit_tx(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &st
         1
     };
 
-    // Build signed payload
+    // Build signed payload (the envelope names the network: `chain_id`)
     let tx_payload = payload.as_object().cloned().unwrap_or_default();
-    let signed_data = serde_json::json!({
-        "tx_type": tx_type,
-        "from": key.public_key_hex,
-        "nonce": nonce,
-        "fee": fee,
-        "payload": tx_payload,
-    });
+    let signed_data = v2::envelope(tx_type, &key.public_key_hex, nonce, fee, tx_payload.clone(), &chain_id);
     let canonical = serde_json::to_string(&signed_data).unwrap();
     let sig = quantum_vault_crypto::pqc_sign(&key.secret_key_hex, canonical.as_bytes())
         .map_err(|e| format!("Sign error: {}", e))?;
@@ -535,6 +544,11 @@ fn main() {
         Err(e) => { eprintln!("Error: {}", e); std::process::exit(2); }
     };
     let rpc = &rpc_base;
+    // Expected chain id: --chain-id, else the --network's when its public node is used; with a
+    // custom --rpc and no --chain-id the node's own chain id is used.
+    let expected_chain: Option<String> = cli.chain_id.clone()
+        .or_else(|| if cli.rpc.is_none() { v2::chain_id_for_network(&cli.network).map(String::from) } else { None });
+    let chain = expected_chain.as_deref();
     let legacy = cli.legacy_broadcast;
 
     match cli.command {
@@ -614,12 +628,12 @@ fn main() {
                     "to_pub_key_hex": to,
                     "amount": amount,
                 });
-                submit_tx(rpc, &dir, &node_keys, "transfer", payload, fee)
+                submit_tx(rpc, chain, &dir, &node_keys, "transfer", payload, fee)
             } else {
                 if fee != v2::V2_FEE_XRGE {
                     eprintln!("Note: the node charges a fixed fee of {} XRGE for a transfer; --fee {} is ignored.", v2::V2_FEE_XRGE, fee);
                 }
-                submit_v2(rpc, &dir, &node_keys, "transfer", v2::transfer_fields(&to, amount, &token))
+                submit_v2(rpc, chain, &dir, &node_keys, "transfer", v2::transfer_fields(&to, amount, &token))
             };
             if let Err(e) = result {
                 eprintln!("Error: {}", e);
@@ -628,7 +642,7 @@ fn main() {
         }
 
         Commands::Faucet => {
-            if let Err(e) = submit_v2(rpc, &dir, &node_keys, "faucet", v2::faucet_fields()) {
+            if let Err(e) = submit_v2(rpc, chain, &dir, &node_keys, "faucet", v2::faucet_fields()) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
@@ -636,9 +650,9 @@ fn main() {
 
         Commands::Stake { amount } => {
             let result = if legacy {
-                submit_tx(rpc, &dir, &node_keys, "stake", serde_json::json!({"amount": amount}), 1)
+                submit_tx(rpc, chain, &dir, &node_keys, "stake", serde_json::json!({"amount": amount}), 1)
             } else {
-                submit_v2(rpc, &dir, &node_keys, "stake", v2::stake_fields("stake", amount))
+                submit_v2(rpc, chain, &dir, &node_keys, "stake", v2::stake_fields("stake", amount))
             };
             if let Err(e) = result {
                 eprintln!("Error: {}", e);
@@ -648,9 +662,9 @@ fn main() {
 
         Commands::Unstake { amount } => {
             let result = if legacy {
-                submit_tx(rpc, &dir, &node_keys, "unstake", serde_json::json!({"amount": amount}), 1)
+                submit_tx(rpc, chain, &dir, &node_keys, "unstake", serde_json::json!({"amount": amount}), 1)
             } else {
-                submit_v2(rpc, &dir, &node_keys, "unstake", v2::stake_fields("unstake", amount))
+                submit_v2(rpc, chain, &dir, &node_keys, "unstake", v2::stake_fields("unstake", amount))
             };
             if let Err(e) = result {
                 eprintln!("Error: {}", e);
@@ -770,14 +784,14 @@ fn main() {
                 "proposal_id": proposal_id,
                 "vote_option": option,
             });
-            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "cast_vote", payload, 1) {
+            if let Err(e) = submit_tx(rpc, chain, &dir, &node_keys, "cast_vote", payload, 1) {
                 eprintln!("Error: {}", e);
             }
         }
 
         Commands::Delegate { to } => {
             let payload = serde_json::json!({"to_pub_key_hex": to});
-            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "delegate", payload, 1) {
+            if let Err(e) = submit_tx(rpc, chain, &dir, &node_keys, "delegate", payload, 1) {
                 eprintln!("Error: {}", e);
             }
         }
