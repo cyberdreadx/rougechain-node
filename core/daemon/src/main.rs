@@ -4902,7 +4902,7 @@ async fn delete_mail(
 // ============================================
 
 /// Signed transaction payload from frontend
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct SignedTransactionRequest {
     payload: serde_json::Value,
     signature: String,
@@ -4963,20 +4963,34 @@ fn persist_replay_guard(map: &std::collections::HashMap<String, i64>) {
 /// and the set is persisted so a restart cannot reopen the window (no client-side change — it
 /// keys off the signature the client already sends).
 fn replay_guard(signature: &str, expiry_ms: i64) -> Result<(), String> {
+    replay_guard_all(&[(signature, expiry_ms)]).map_err(|(_, e)| e)
+}
+
+/// The replay guard for several signatures at once (the batch route): under ONE lock, every
+/// signature is checked — against the persisted set AND against the earlier entries of the same
+/// list — before any is recorded. Either all are recorded, or none is and the index of the first
+/// offending entry is returned, so a refused batch burns no signature.
+fn replay_guard_all(entries: &[(&str, i64)]) -> Result<(), (usize, String)> {
     let now = chrono::Utc::now().timestamp_millis();
-    let key = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(signature.as_bytes()));
+    let keys: Vec<String> = entries.iter()
+        .map(|(sig, _)| quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(sig.as_bytes())))
+        .collect();
     let cell = SEEN_SIGNATURES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    let mut map = cell.lock().map_err(|_| "replay guard unavailable".to_string())?;
+    let mut map = cell.lock().map_err(|_| (0, "replay guard unavailable".to_string()))?;
     // Bound memory/file size: purge expired entries once the map grows.
     if map.len() > 4096 {
         map.retain(|_, exp| *exp > now);
     }
-    if let Some(&exp) = map.get(&key) {
-        if exp > now {
-            return Err("Duplicate transaction rejected (replay detected)".to_string());
+    let mut in_list = std::collections::HashSet::new();
+    for (i, key) in keys.iter().enumerate() {
+        let seen = matches!(map.get(key), Some(&exp) if exp > now);
+        if seen || !in_list.insert(key.as_str()) {
+            return Err((i, "Duplicate transaction rejected (replay detected)".to_string()));
         }
     }
-    map.insert(key, expiry_ms);
+    for (key, (_, expiry_ms)) in keys.into_iter().zip(entries.iter()) {
+        map.insert(key, *expiry_ms);
+    }
     persist_replay_guard(&map);
     Ok(())
 }
@@ -4998,6 +5012,19 @@ fn check_signed_nonce(node: &L1Node, pubkey: &str, payload: &serde_json::Value) 
 }
 
 async fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
+    let (payload_json, replay_expiry_ms) = verify_signed_tx_unrecorded(req).await?;
+    // Replay protection: reject a signature already seen within its validity window.
+    replay_guard(&req.signature, replay_expiry_ms)?;
+    Ok(payload_json)
+}
+
+/// Every check of `verify_signed_tx` — signature, 5-minute timestamp window, `from` = signer,
+/// chain id — EXCEPT recording the signature in the replay guard. Returns the signed payload and
+/// the instant the replay-guard entry must last until (timestamp + 5 min, exactly when the
+/// window check begins rejecting it). Callers MUST then pass the signature through
+/// `replay_guard` / `replay_guard_all`; it is split out only so the batch route can verify every
+/// item before recording any of them.
+async fn verify_signed_tx_unrecorded(req: &SignedTransactionRequest) -> Result<(String, i64), String> {
     let payload_bytes: Vec<u8> = if let Some(hex) = &req.payload_bytes_hex {
         let raw = quantum_vault_crypto::hex_to_bytes(hex)
             .map_err(|e| format!("Invalid payload_bytes_hex: {}", e))?;
@@ -5048,13 +5075,11 @@ async fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, Stri
     // REQUIRE_SIGNED_CHAIN_ID, one naming none).
     chain_binding::check_api_payload(&req.payload)?;
 
-    // Replay protection: reject a signature already seen within its validity window. Expires
-    // exactly when the timestamp check above would begin rejecting it (timestamp + 5 min).
-    replay_guard(&req.signature, timestamp + 5 * 60 * 1000)?;
-
     let payload_json = String::from_utf8(payload_bytes)
         .map_err(|_| "payload bytes are not valid UTF-8".to_string())?;
-    Ok(payload_json)
+    // The replay-guard entry expires exactly when the timestamp check above would begin
+    // rejecting the payload (timestamp + 5 min).
+    Ok((payload_json, timestamp + 5 * 60 * 1000))
 }
 
 /// Verify a signed request for mail/messenger/names operations.
@@ -5920,144 +5945,149 @@ async fn v2_transfer(
     })))
 }
 
+/// `POST /api/v2/batch-submit` — up to `MAX_BATCH` signed transfers in one request.
+///
+/// Every item goes through exactly the checks of a single `/api/v2/*` submission
+/// (`verify_signed_tx`: signature, 5-minute timestamp window, `from` = signer, chain id, persisted
+/// signature replay guard) plus the transfer route's parameter, freeze and signed
+/// `account_nonce` checks and the V2 field derivation.
+///
+/// Semantics — verification is ALL-OR-NOTHING: if any item fails one of those checks (or two
+/// items carry the same signature), the whole batch is refused (`success: false`, `accepted: 0`,
+/// per-item `results`), nothing is queued and no signature is recorded, so the honest items can
+/// be resubmitted unchanged. Once every item is verified, all signatures are recorded together
+/// and each item is offered to the mempool; a mempool refusal (as on the single route) is
+/// reported in that item's result without affecting the others.
 async fn v2_batch_submit(
     State(state): State<AppState>,
     Json(batch): Json<Vec<SignedTransactionRequest>>,
 ) -> Json<serde_json::Value> {
-    use quantum_vault_types::TxV1;
-
-    const MAX_BATCH: usize = 50;
-    const VERIFY_CONCURRENCY: usize = 4;
-    if batch.is_empty() {
-        return Json(serde_json::json!({"success": false, "error": "empty batch"}));
-    }
-    if batch.len() > MAX_BATCH {
-        return Json(serde_json::json!({"success": false, "error": format!("batch too large, max {}", MAX_BATCH)}));
-    }
-
-    let sem = Arc::new(tokio::sync::Semaphore::new(VERIFY_CONCURRENCY));
-
-    let verify_handles: Vec<_> = batch.iter().enumerate().map(|(i, req)| {
-        let pk = req.public_key.clone();
-        let sig = req.signature.clone();
-        let payload = req.payload.clone();
-        let payload_bytes_hex = req.payload_bytes_hex.clone();
-        let permit = sem.clone();
-
-        tokio::spawn(async move {
-            let _permit = permit.acquire().await.unwrap();
-            tokio::task::spawn_blocking(move || {
-                let payload_bytes: Vec<u8> = if let Some(hex) = &payload_bytes_hex {
-                    match quantum_vault_crypto::hex_to_bytes(hex) {
-                        Ok(raw) => {
-                            match serde_json::from_slice::<serde_json::Value>(&raw) {
-                                Ok(parsed) if parsed == payload => raw,
-                                _ => return (i, Err("payload_bytes_hex mismatch".to_string())),
-                            }
-                        }
-                        Err(e) => return (i, Err(format!("bad payload_bytes_hex: {}", e))),
-                    }
-                } else {
-                    match serde_json::to_string(&payload) {
-                        Ok(s) => s.into_bytes(),
-                        Err(e) => return (i, Err(format!("serialize: {}", e))),
-                    }
-                };
-                match quantum_vault_crypto::pqc_verify(&pk, &payload_bytes, &sig) {
-                    Ok(true) => (i, Ok(String::from_utf8_lossy(&payload_bytes).to_string())),
-                    Ok(false) => (i, Err("invalid signature".to_string())),
-                    Err(e) => (i, Err(format!("verify: {}", e))),
-                }
-            }).await.unwrap_or((i, Err("verify task panicked".to_string())))
-        })
-    }).collect();
-
-    let mut verified: Vec<(usize, String)> = Vec::with_capacity(batch.len());
-    let mut results: Vec<serde_json::Value> = vec![serde_json::json!(null); batch.len()];
-
-    for handle in verify_handles {
-        match handle.await {
-            Ok((i, Ok(signed_payload))) => { verified.push((i, signed_payload)); }
-            Ok((i, Err(e))) => {
-                results[i] = serde_json::json!({"success": false, "error": e});
-            }
-            Err(e) => {
-                eprintln!("[batch] join error: {}", e);
-            }
-        }
-    }
-
-    let node = &state.node;
-    let mut broadcast_txs: Vec<TxV1> = Vec::new();
-
-    for (i, signed_payload) in verified {
-        let req = &batch[i];
-        let payload = &req.payload;
-        // Signatures commit to the network (see verify_signed_tx).
-        if let Err(e) = chain_binding::check_api_payload(payload) {
-            results[i] = serde_json::json!({"success": false, "error": e});
-            continue;
-        }
-        let tx_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("transfer");
-
-        if tx_type != "transfer" {
-            results[i] = serde_json::json!({"success": false, "error": "batch only supports transfer type"});
-            continue;
-        }
-
-        let to = payload.get("to").and_then(|v| v.as_str()).unwrap_or_default();
-        let amount = payload.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("XRGE");
-        let _fee = 1.0_f64;
-
-        if to.is_empty() || amount <= 0.0 || to == req.public_key {
-            results[i] = serde_json::json!({"success": false, "error": "invalid transfer params"});
-            continue;
-        }
-
-        if token != "XRGE" {
-            if let Ok(true) = node.is_token_frozen(token) {
-                results[i] = serde_json::json!({"success": false, "error": format!("{} is frozen", token)});
-                continue;
-            }
-        }
-
-        // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
-    let tx = match crate::v2_binding::build_v2_tx("transfer", req.public_key.clone(), node.get_next_nonce(&req.public_key), &req.payload, req.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => { results[i] = serde_json::json!({"success": false, "error": e}); continue; } };
-
-        match node.add_tx_to_mempool_verified(tx.clone()) {
-            Ok(()) => {
-                results[i] = serde_json::json!({"success": true});
-                broadcast_txs.push(tx);
-            }
-            Err(e) => {
-                results[i] = serde_json::json!({"success": false, "error": e});
-            }
-        }
-    }
+    let (response, broadcast_txs) = batch_submit_core(&state.node, &batch).await;
 
     // Broadcast accepted TXs to peers (fire-and-forget, throttled)
     if !broadcast_txs.is_empty() {
         let peers = state.peer_manager.get_peers().await;
         if !peers.is_empty() {
-            let txs = broadcast_txs.clone();
             tokio::spawn(async move {
-                for tx in &txs {
+                for tx in &broadcast_txs {
                     peer::broadcast_tx(&peers, tx);
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
             });
         }
     }
+    Json(response)
+}
 
-    let accepted = results.iter().filter(|r| r.get("success").and_then(|s| s.as_bool()).unwrap_or(false)).count();
-    Json(serde_json::json!({
+/// The batch route without the peer broadcast (see `v2_batch_submit`). Returns the response body
+/// and the transactions admitted to the mempool.
+async fn batch_submit_core(
+    node: &L1Node,
+    batch: &[SignedTransactionRequest],
+) -> (serde_json::Value, Vec<quantum_vault_types::TxV1>) {
+    use futures::StreamExt;
+
+    const MAX_BATCH: usize = 50;
+    const VERIFY_CONCURRENCY: usize = 4;
+    if batch.is_empty() {
+        return (serde_json::json!({"success": false, "error": "empty batch"}), Vec::new());
+    }
+    if batch.len() > MAX_BATCH {
+        return (serde_json::json!({"success": false, "error": format!("batch too large, max {}", MAX_BATCH)}), Vec::new());
+    }
+
+    // Stage 1 — verify every item with the single-submission verifier (signature checks run on
+    // blocking threads, at most VERIFY_CONCURRENCY at a time), then the transfer rules.
+    let verified: Vec<Result<(String, i64), String>> = futures::stream::iter(batch.iter())
+        .map(verify_signed_tx_unrecorded)
+        .buffered(VERIFY_CONCURRENCY)
+        .collect()
+        .await;
+
+    let mut errors: Vec<Option<String>> = vec![None; batch.len()];
+    let mut ready: Vec<(quantum_vault_types::TxV1, i64)> = Vec::with_capacity(batch.len());
+    for (i, (req, v)) in batch.iter().zip(verified).enumerate() {
+        let checked = v.and_then(|(signed_payload, expiry)| {
+            batch_transfer_rules(node, req)?;
+            // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+            let tx = crate::v2_binding::build_v2_tx("transfer", req.public_key.clone(), node.get_next_nonce(&req.public_key), &req.payload, req.signature.clone(), signed_payload)?;
+            Ok((tx, expiry))
+        });
+        match checked {
+            Ok(ok) => ready.push(ok),
+            Err(e) => errors[i] = Some(e),
+        }
+    }
+    if errors.iter().any(Option::is_some) {
+        return (batch_refused(errors), Vec::new());
+    }
+
+    // Stage 2 — record every signature at once (also refuses a signature repeated in the batch).
+    let entries: Vec<(&str, i64)> = batch.iter().zip(&ready).map(|(req, (_, exp))| (req.signature.as_str(), *exp)).collect();
+    if let Err((i, e)) = replay_guard_all(&entries) {
+        errors[i] = Some(e);
+        return (batch_refused(errors), Vec::new());
+    }
+
+    // Stage 3 — mempool admission, per item.
+    let mut results: Vec<serde_json::Value> = Vec::with_capacity(batch.len());
+    let mut admitted = Vec::new();
+    for (tx, _) in ready {
+        match node.add_tx_to_mempool_verified(tx.clone()) {
+            Ok(()) => { results.push(serde_json::json!({"success": true})); admitted.push(tx); }
+            Err(e) => results.push(serde_json::json!({"success": false, "error": e})),
+        }
+    }
+
+    let accepted = admitted.len();
+    (serde_json::json!({
         "success": true,
         "total": batch.len(),
         "accepted": accepted,
         "rejected": batch.len() - accepted,
         "results": results
-    }))
+    }), admitted)
+}
+
+/// The per-item transfer rules of the batch route (the single `/api/v2/transfer` route applies
+/// the same parameter, freeze and signed `account_nonce` checks).
+fn batch_transfer_rules(node: &L1Node, req: &SignedTransactionRequest) -> Result<(), String> {
+    let payload = &req.payload;
+    let tx_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("transfer");
+    if tx_type != "transfer" {
+        return Err("batch only supports transfer type".to_string());
+    }
+    let to = payload.get("to").and_then(|v| v.as_str()).unwrap_or_default();
+    let amount = payload.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("XRGE");
+    if to.is_empty() || amount <= 0.0 || to == req.public_key {
+        return Err("invalid transfer params".to_string());
+    }
+    if token != "XRGE" {
+        if let Ok(true) = node.is_token_frozen(token) {
+            return Err(format!("{} is frozen", token));
+        }
+    }
+    check_signed_nonce(node, &req.public_key, payload)
+}
+
+/// The response for a refused batch: same shape as an accepted one, nothing queued.
+fn batch_refused(errors: Vec<Option<String>>) -> serde_json::Value {
+    let total = errors.len();
+    let first = errors.iter().position(Option::is_some).unwrap_or(0);
+    let error = format!("batch refused: item {}: {}", first, errors[first].as_deref().unwrap_or(""));
+    let results: Vec<serde_json::Value> = errors.into_iter().map(|e| match e {
+        Some(e) => serde_json::json!({"success": false, "error": e}),
+        None => serde_json::json!({"success": false, "error": "not submitted: another item in the batch was refused"}),
+    }).collect();
+    serde_json::json!({
+        "success": false,
+        "error": error,
+        "total": total,
+        "accepted": 0,
+        "rejected": total,
+        "results": results
+    })
 }
 
 async fn v2_create_token(
@@ -11482,6 +11512,154 @@ mod nonce_account_tests {
     }
 }
 
+/// `/api/v2/batch-submit` applies the same freshness, chain-id and replay checks as a single
+/// `/api/v2/*` submission, all-or-nothing at verification.
+#[cfg(test)]
+mod batch_submit_tests {
+    use super::*;
+    use quantum_vault_types::{ChainConfig, PQKeypair};
+
+    struct Node { dir: std::path::PathBuf, node: L1Node }
+    impl Drop for Node { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.dir); } }
+    fn node() -> Node {
+        static CTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!("batch-submit-{}-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            CTR.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let node = L1Node::new(crate::node::NodeOptions {
+            data_dir: dir.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false, bridge_withdraw_store: None, bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
+        }).expect("node");
+        node.init().expect("init");
+        Node { dir, node }
+    }
+
+    /// A signed transfer whose timestamp is `age_ms` in the past (negative = in the future).
+    fn transfer_aged(kp: &PQKeypair, to: &str, age_ms: i64, chain: Option<&str>) -> SignedTransactionRequest {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let mut payload = serde_json::json!({
+            "type": "transfer", "from": kp.public_key_hex, "to": to,
+            "amount": N.fetch_add(1, std::sync::atomic::Ordering::SeqCst), "token": "XRGE",
+            "timestamp": chrono::Utc::now().timestamp_millis() - age_ms,
+        });
+        if let Some(c) = chain { payload["chainId"] = c.into(); }
+        let bytes = serde_json::to_string(&payload).unwrap();
+        let signature = quantum_vault_crypto::pqc_sign(&kp.secret_key_hex, bytes.as_bytes()).unwrap();
+        SignedTransactionRequest { payload, signature, public_key: kp.public_key_hex.clone(), payload_bytes_hex: None }
+    }
+    fn transfer(kp: &PQKeypair, to: &str) -> SignedTransactionRequest { transfer_aged(kp, to, 0, None) }
+
+    fn accepted(r: &serde_json::Value) -> u64 { r["accepted"].as_u64().unwrap() }
+    fn refused(r: &serde_json::Value) -> bool {
+        r["success"] == false && r["accepted"] == 0
+            && r["results"].as_array().map(|a| a.len() as u64) == r["total"].as_u64()
+    }
+    fn err(r: &serde_json::Value, i: usize) -> String { r["results"][i]["error"].as_str().unwrap_or_default().to_string() }
+
+    #[tokio::test]
+    async fn honest_batch_is_accepted() {
+        let n = node();
+        let (a, b) = (quantum_vault_crypto::pqc_keygen(), quantum_vault_crypto::pqc_keygen());
+        let batch = vec![transfer(&a, &b.public_key_hex), transfer(&b, &a.public_key_hex)];
+        let (r, txs) = batch_submit_core(&n.node, &batch).await;
+        assert_eq!(r["success"], true, "{r}");
+        assert_eq!((accepted(&r), r["rejected"].as_u64().unwrap(), r["total"].as_u64().unwrap()), (2, 0, 2), "{r}");
+        assert_eq!(txs.len(), 2);
+        assert_eq!(n.node.get_mempool_snapshot().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn replayed_batch_is_refused() {
+        let n = node();
+        let (a, b) = (quantum_vault_crypto::pqc_keygen(), quantum_vault_crypto::pqc_keygen());
+        let batch = vec![transfer(&a, &b.public_key_hex)];
+        assert_eq!(accepted(&batch_submit_core(&n.node, &batch).await.0), 1);
+        // The same item again is refused as a whole.
+        let (r, txs) = batch_submit_core(&n.node, &batch).await;
+        assert!(refused(&r) && txs.is_empty(), "{r}");
+        assert!(err(&r, 0).contains("replay"), "{r}");
+        // Next to a fresh item, the whole batch is refused...
+        let fresh = transfer(&b, &a.public_key_hex);
+        let (r, _) = batch_submit_core(&n.node, &[fresh.clone(), batch[0].clone()]).await;
+        assert!(refused(&r), "{r}");
+        assert!(r["error"].as_str().unwrap().starts_with("batch refused: item 1:"), "{r}");
+        assert!(err(&r, 0).starts_with("not submitted"), "{r}");
+        // ...and nothing of it was recorded: the honest item is still submittable.
+        assert_eq!(accepted(&batch_submit_core(&n.node, &[fresh]).await.0), 1);
+        assert_eq!(n.node.get_mempool_snapshot().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn stale_or_future_timestamp_is_refused() {
+        let n = node();
+        let (a, b) = (quantum_vault_crypto::pqc_keygen(), quantum_vault_crypto::pqc_keygen());
+        let honest = transfer(&a, &b.public_key_hex);
+        for age in [6 * 60 * 1000, -6 * 60 * 1000] {
+            let bad = transfer_aged(&a, &b.public_key_hex, age, None);
+            let (r, txs) = batch_submit_core(&n.node, &[honest.clone(), bad]).await;
+            assert!(refused(&r) && txs.is_empty(), "{r}");
+            assert!(err(&r, 1).contains("expired"), "{r}");
+            assert!(err(&r, 0).starts_with("not submitted"), "{r}");
+        }
+        assert!(n.node.get_mempool_snapshot().is_empty());
+        assert_eq!(accepted(&batch_submit_core(&n.node, &[honest]).await.0), 1, "honest item not burned");
+    }
+
+    #[tokio::test]
+    async fn same_signature_twice_in_one_batch_is_refused() {
+        let n = node();
+        let (a, b) = (quantum_vault_crypto::pqc_keygen(), quantum_vault_crypto::pqc_keygen());
+        let item = transfer(&a, &b.public_key_hex);
+        let (r, txs) = batch_submit_core(&n.node, &[item.clone(), item.clone()]).await;
+        assert!(refused(&r) && txs.is_empty(), "{r}");
+        assert!(err(&r, 1).contains("replay"), "{r}");
+        assert!(n.node.get_mempool_snapshot().is_empty());
+        // Neither copy was recorded.
+        assert_eq!(accepted(&batch_submit_core(&n.node, &[item]).await.0), 1);
+    }
+
+    #[tokio::test]
+    async fn batch_and_single_routes_share_the_replay_guard() {
+        let n = node();
+        let (a, b) = (quantum_vault_crypto::pqc_keygen(), quantum_vault_crypto::pqc_keygen());
+        // Batch first, then the single-route verifier.
+        let item = transfer(&a, &b.public_key_hex);
+        assert_eq!(accepted(&batch_submit_core(&n.node, &[item.clone()]).await.0), 1);
+        let e = verify_signed_tx(&item).await.err().expect("single route refuses a batch item");
+        assert!(e.contains("replay"), "{e}");
+        // Single route first, then the batch.
+        let item = transfer(&a, &b.public_key_hex);
+        assert!(verify_signed_tx(&item).await.is_ok());
+        let (r, _) = batch_submit_core(&n.node, &[item]).await;
+        assert!(refused(&r) && err(&r, 0).contains("replay"), "{r}");
+    }
+
+    #[tokio::test]
+    async fn other_network_item_and_impersonation_are_refused() {
+        use crate::chain_binding::{set_test_api_chain_id, MISMATCH_CODE};
+        let n = node();
+        let (a, b) = (quantum_vault_crypto::pqc_keygen(), quantum_vault_crypto::pqc_keygen());
+        set_test_api_chain_id(Some("test")); // the test node's chain id
+        let ok = transfer_aged(&a, &b.public_key_hex, 0, Some("test"));
+        let other = transfer_aged(&a, &b.public_key_hex, 0, Some("rougechain-devnet-1"));
+        let (r, _) = batch_submit_core(&n.node, &[ok.clone(), other]).await;
+        let (r_ok, _) = batch_submit_core(&n.node, &[ok]).await;
+        set_test_api_chain_id(None);
+        assert!(refused(&r) && err(&r, 1).starts_with(MISMATCH_CODE), "{r}");
+        assert_eq!(accepted(&r_ok), 1, "{r_ok}");
+        // `from` must be the signer: a payload signed by `a` claiming to come from `b`.
+        let payload = serde_json::json!({"type": "transfer", "from": b.public_key_hex, "to": a.public_key_hex,
+            "amount": 1, "token": "XRGE", "timestamp": chrono::Utc::now().timestamp_millis()});
+        let signature = quantum_vault_crypto::pqc_sign(&a.secret_key_hex, serde_json::to_string(&payload).unwrap().as_bytes()).unwrap();
+        let forged = SignedTransactionRequest { payload, signature, public_key: a.public_key_hex.clone(), payload_bytes_hex: None };
+        let (r, _) = batch_submit_core(&n.node, &[forged]).await;
+        assert!(refused(&r) && err(&r, 0).contains("from"), "{r}");
+    }
+}
+
 /// Signatures commit to the network: the API rule on every signed route family.
 #[cfg(test)]
 mod chain_id_api_tests {
@@ -11562,11 +11740,19 @@ mod chain_id_api_tests {
                     "handler {} does not verify its signed request", &chunk[..chunk.find('(').unwrap_or(20)]);
             }
             if sig.contains("Json<Vec<SignedTransactionRequest>>") {
-                assert!(body.contains("chain_binding::check_api_payload("), "batch route must apply the rule per item");
+                assert!(body.contains("batch_submit_core("), "batch route must go through batch_submit_core");
             }
         }
         assert!(handlers >= 40, "found only {handlers} signed handlers");
-        for verifier in ["async fn verify_signed_tx(", "async fn verify_signed_request("] {
+        // The batch core verifies every item with the single-submission verifier and records
+        // every signature in the replay guard.
+        let at = src.find("async fn batch_submit_core(").unwrap();
+        let body = &src[at..at + src[at..].find("\n}\n").unwrap()];
+        assert!(body.contains(".map(verify_signed_tx_unrecorded)") && body.contains("replay_guard_all("), "batch core");
+        let at = src.find("async fn verify_signed_tx(").unwrap();
+        let body = &src[at..at + src[at..].find("\n}\n").unwrap()];
+        assert!(body.contains("verify_signed_tx_unrecorded(req)") && body.contains("replay_guard("), "verify_signed_tx");
+        for verifier in ["async fn verify_signed_tx_unrecorded(", "async fn verify_signed_request("] {
             let at = src.find(verifier).unwrap();
             let body = &src[at..at + src[at..].find("\n}\n").unwrap()];
             assert!(body.contains("chain_binding::check_api_payload(&req.payload)"), "{verifier}");
