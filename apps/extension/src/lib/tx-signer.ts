@@ -9,7 +9,7 @@
 // Non-breaking today: paths the node does not gate simply ignore the extra field.
 
 import { bytesToHex, hexToBytes } from "./pqc-blockchain";
-import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
+import { getCoreApiBaseUrl, getCoreApiHeaders, ensureNodeChainId, bindToSelectedNetwork } from "./network";
 
 export function sortKeysDeep(obj: any): any {
     if (Array.isArray(obj)) return obj.map(sortKeysDeep);
@@ -59,7 +59,10 @@ export async function buildSignedV2(
     if (opts.withNonce) {
         payload.account_nonce = await fetchNextNonce(wallet.signingPublicKey, opts.baseUrl);
     }
-    const sorted = sortKeysDeep(payload);
+    // Network binding: refuse to sign if the node reports another chain id than the selected
+    // network's, then sign the chain id into the payload.
+    await ensureNodeChainId(opts.baseUrl || getCoreApiBaseUrl());
+    const sorted = sortKeysDeep(bindToSelectedNetwork(payload));
     const payloadBytes = new TextEncoder().encode(JSON.stringify(sorted));
     const signature = bytesToHex(ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey)));
     return { payload: sorted, signature, public_key: wallet.signingPublicKey };

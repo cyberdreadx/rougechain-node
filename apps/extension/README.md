@@ -22,6 +22,22 @@ Quantum-safe cryptocurrency wallet & encrypted messenger browser extension for R
 
 ## Release notes
 
+### 1.9.0
+
+- **Signatures now commit to the network.** Everything the wallet signs for a RougeChain node —
+  transactions and signed messenger / mail / name requests — carries `chainId`, the exact chain id
+  of the network selected in the wallet (`rougechain-mainnet-1` or `rougechain-devnet-1`), inside
+  the signed bytes. Once per session the wallet checks that chain id against the node's
+  `GET /api/health` `chain_id` and refuses to sign if they differ.
+- **dApp requests show their network.** The `signTransaction` / `sendTransaction` approval shows
+  the network the payload is signed for. A request naming another network than the one selected
+  in the wallet is refused before any approval opens (`CHAIN_ID_MISMATCH: …`); switch networks to
+  sign it. A plain payload without `chainId` gets the selected network's (returned in
+  `result.payload`). A pre-serialized request (`{ payload, serializedHex }`) without `chainId` is
+  still signable for now but shows a "No network specified" warning — dApps should add `chainId`.
+- The service worker now talks to the selected network's node (it used mainnet's unless a custom
+  node URL was set).
+
 ### 1.8.0
 
 - **Sign a message to prove you control your wallet.** dApps can call

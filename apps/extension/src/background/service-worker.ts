@@ -16,6 +16,8 @@ import {
     payloadForDisplay,
     type ContractTxDetails,
 } from "../lib/contract-tx";
+import { prepareSignRequest, bindSendPayload, serializePayload, bytesToHex } from "../lib/sign-request";
+import { chainIdForNetwork, checkNodeChainId, type NetworkReview, type NetworkType } from "../lib/chain-binding";
 
 interface ConnectedSite {
     origin: string;
@@ -30,61 +32,6 @@ function hexToBytes(hex: string): Uint8Array {
     return bytes;
 }
 
-function bytesToHex(bytes: Uint8Array): string {
-    return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
-function sortKeysDeep(obj: unknown): unknown {
-    if (Array.isArray(obj)) return obj.map(sortKeysDeep);
-    if (obj !== null && typeof obj === "object") {
-        const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(obj).sort()) {
-            sorted[key] = sortKeysDeep((obj as Record<string, unknown>)[key]);
-        }
-        return sorted;
-    }
-    return obj;
-}
-
-function serializePayload(payload: Record<string, unknown>): string {
-    return JSON.stringify(sortKeysDeep(payload));
-}
-
-/**
- * Normalize a dApp signTransaction request. The site's `signViaExtension` sends
- * `{ payload, serializedHex }` (the exact bytes it will submit as `payload_bytes_hex`); other
- * dApps send the payload itself. For the envelope, the bytes must be the canonical serialization
- * of the payload (so the popup shows exactly what is signed) and the payload cannot be changed.
- * Contract payloads are validated and get approval details; outside the envelope, missing
- * from/timestamp/nonce are filled in and the filled payload is returned to the dApp.
- */
-function prepareSignRequest(
-    raw: Record<string, unknown>,
-    signer: string,
-): { error: string } | { payload: Record<string, unknown>; details?: ContractTxDetails } {
-    let payload = raw;
-    const isEnvelope = raw.payload !== null && typeof raw.payload === "object" && !Array.isArray(raw.payload)
-        && typeof raw.serializedHex === "string";
-    if (isEnvelope) {
-        payload = raw.payload as Record<string, unknown>;
-        const expected = bytesToHex(new TextEncoder().encode(serializePayload(payload)));
-        if ((raw.serializedHex as string).toLowerCase() !== expected) {
-            return { error: "serializedHex does not match the payload" };
-        }
-    }
-    if (!isContractTxType(payload.type)) return { payload };
-    if (!isEnvelope) {
-        payload = {
-            ...payload,
-            from: payload.from ?? signer,
-            timestamp: payload.timestamp ?? Date.now(),
-            nonce: payload.nonce ?? crypto.randomUUID(),
-        };
-    }
-    const analyzed = analyzeContractPayload(payload, signer);
-    if ("error" in analyzed) return { error: analyzed.error };
-    return { payload, details: analyzed.details };
-}
 
 function signPayload(payloadJson: string, privateKeyHex: string): string {
     const messageBytes = new TextEncoder().encode(payloadJson);
@@ -306,9 +253,19 @@ async function getWalletData(): Promise<{ publicKey: string; privateKey: string 
     } catch { return null; }
 }
 
+/** The network selected in the popup (same storage key as src/lib/network.ts). */
+function getSelectedNetwork(): Promise<NetworkType> {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(["rougechain-network"], (data) => {
+            resolve(data["rougechain-network"] === "testnet" ? "testnet" : "mainnet");
+        });
+    });
+}
+
+/** Node API of the selected network (custom node URL first), as src/lib/network.ts resolves it. */
 function getApiBaseUrl(): Promise<string> {
     return new Promise((resolve) => {
-        chrome.storage.local.get(["rougechain-custom-node-url"], (data) => {
+        chrome.storage.local.get(["rougechain-custom-node-url", "rougechain-network"], (data) => {
             const custom = data["rougechain-custom-node-url"];
             if (custom) {
                 let url = custom.replace(/\/+$/, "");
@@ -316,9 +273,19 @@ function getApiBaseUrl(): Promise<string> {
                 resolve(url);
                 return;
             }
-            resolve("https://api.rougechain.io/api");
+            resolve(data["rougechain-network"] === "testnet" ? "https://testnet.rougechain.io/api" : "https://api.rougechain.io/api");
         });
     });
+}
+
+/**
+ * Chain id of the selected network, checked against its node once per session. Throws (and
+ * nothing is signed) when the node reports another chain id.
+ */
+async function getCheckedChainId(): Promise<string> {
+    const chainId = chainIdForNetwork(await getSelectedNetwork());
+    await checkNodeChainId(await getApiBaseUrl(), chainId);
+    return chainId;
 }
 
 // ─── Approval popup logic ────────────────────────────────
@@ -333,14 +300,15 @@ function requestApproval(
     type: "connect" | "sign" | "sign-message" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send",
     origin: string,
     payload?: Record<string, unknown>,
-    details?: ContractTxDetails
+    details?: ContractTxDetails,
+    network?: NetworkReview
 ): Promise<boolean> {
     return new Promise((resolve) => {
         const requestId = `${Date.now()}-${++approvalCounter}`;
 
         // Store payload data in session storage for the popup to read
         chrome.storage.session.set({
-            [`approval-${requestId}`]: { payload: payload && payloadForDisplay(payload, details), details, origin, type },
+            [`approval-${requestId}`]: { payload: payload && payloadForDisplay(payload, details), details, network, origin, type },
         });
 
         // Build the popup URL
@@ -522,14 +490,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         sendResponse({ error: "Invalid payload" });
                         return;
                     }
-                    const prepared = prepareSignRequest(rawPayload as Record<string, unknown>, wallet.publicKey);
+                    const selectedChainId = await getCheckedChainId();
+                    const prepared = prepareSignRequest(rawPayload as Record<string, unknown>, wallet.publicKey, selectedChainId);
                     if ("error" in prepared) {
                         sendResponse({ error: prepared.error });
                         return;
                     }
 
                     // Open approval popup for signing
-                    const signApproved = await requestApproval("sign", origin, prepared.payload, prepared.details);
+                    const signApproved = await requestApproval("sign", origin, prepared.payload, prepared.details, prepared.network);
                     if (!signApproved) {
                         sendResponse({ error: "User denied signature request" });
                         return;
@@ -609,9 +578,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         return;
                     }
 
+                    // Network binding: refuse a payload for another network; sign the selected one's.
+                    const bound = bindSendPayload(payload as Record<string, unknown>, await getCheckedChainId());
+                    if ("error" in bound) {
+                        sendResponse({ error: bound.error });
+                        return;
+                    }
+
                     // Contract calls/deployments go to their own signed endpoints.
-                    if (isContractTxType((payload as Record<string, unknown>).type)) {
-                        const p = payload as Record<string, unknown>;
+                    if (isContractTxType(bound.payload.type)) {
+                        const p = bound.payload;
                         if (p.from !== undefined && p.from !== wallet.publicKey) {
                             sendResponse({ error: "payload.from is not this wallet's signing key" });
                             return;
@@ -627,7 +603,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                             sendResponse({ error: analyzed.error });
                             return;
                         }
-                        const ok = await requestApproval("send", origin, contractPayload, analyzed.details);
+                        const ok = await requestApproval("send", origin, contractPayload, analyzed.details, bound.network);
                         if (!ok) {
                             sendResponse({ error: "User denied transaction" });
                             return;
@@ -653,7 +629,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     }
 
                     // Open approval popup for transaction
-                    const sendApproved = await requestApproval("send", origin, payload as Record<string, unknown>);
+                    const sendApproved = await requestApproval("send", origin, bound.payload, undefined, bound.network);
                     if (!sendApproved) {
                         sendResponse({ error: "User denied transaction" });
                         return;
@@ -661,7 +637,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
                     const baseUrl = await getApiBaseUrl();
                     const txPayload = {
-                        ...payload as Record<string, unknown>,
+                        ...bound.payload,
                         from: wallet.publicKey,
                         timestamp: Date.now(),
                         nonce: crypto.randomUUID(),

@@ -1,4 +1,5 @@
 import * as storage from "./storage";
+import { chainIdForNetwork, checkNodeChainId, assertNoKnownMismatch, withChainId } from "./chain-binding";
 
 export type NetworkType = "mainnet" | "testnet";
 
@@ -58,4 +59,26 @@ function normalizeApiBaseUrl(url: string): string {
     const trimmed = url.replace(/\/+$/, "");
     if (trimmed.endsWith("/api")) return trimmed;
     return `${trimmed}/api`;
+}
+
+/**
+ * Chain id of the selected network — signed into every payload (see chain-binding.ts). Throws if
+ * the node of this network was found to report a different chain id this session.
+ */
+export function getSigningChainId(): string {
+    const chainId = chainIdForNetwork(getActiveNetwork());
+    assertNoKnownMismatch(chainId);
+    return chainId;
+}
+
+/** Check the selected network's chain id against its node, once per session (popup context). */
+export async function ensureNodeChainId(baseUrl: string = getCoreApiBaseUrl()): Promise<string> {
+    const chainId = chainIdForNetwork(getActiveNetwork());
+    await checkNodeChainId(baseUrl, chainId, fetch, getCoreApiHeaders());
+    return chainId;
+}
+
+/** `payload` bound to the selected network (`chainId` inside the signed bytes). */
+export function bindToSelectedNetwork<T extends Record<string, unknown>>(payload: T): T & { chainId: string } {
+    return withChainId(payload, getSigningChainId());
 }
