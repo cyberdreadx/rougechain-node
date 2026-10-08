@@ -74,11 +74,11 @@ used only if the manifest's signature verifies and the file's sha256 matches the
 The example is abridged (`…`).
 
 All URLs are `https://`. Unknown fields are not allowed in schema 1; `installer` is the one
-optional field (an addition that old installers ignore, so the schema number did not change). The current manifests (release 1.6.3) list the
+optional field (an addition that old installers ignore, so the schema number did not change). The current manifests (release 1.6.4) list the
 full schedule in `activations` (mainnet: 49, 90, 100, 150, 150, 160, 170, 190, 235, 235, 245; testnet
 also carries `validator_retirement` at 1240) — see the [upgrade schedule](upgrade-schedule.md). The
 example above is the 1.6.0 manifest, kept because it shows `upgrade_before_height` and `mandatory`
-set; the 1.6.3 manifests have `mandatory: false` and `upgrade_before_height: null`.
+set; the 1.6.4 manifests have `mandatory: false` and `upgrade_before_height: null`.
 
 ## Signatures
 

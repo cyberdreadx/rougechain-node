@@ -827,6 +827,45 @@ pub struct UnbondingEntry {
     pub release_height: u64,
 }
 
+/// Prefix of every refusal by the node-local AMM rules (`amm_static_rule`, `L1Node::amm_admission_rule`).
+pub(crate) const AMM_REFUSED: &str = "AMM_REQUEST_REFUSED";
+
+/// The stateless part of the node-local AMM rules (mempool admission and the block producer; never
+/// block validity). Multi-hop swaps (`swap_path`) are not admitted or produced until a consensus
+/// rule validates paths — the public API never sets the field.
+pub(crate) fn amm_static_rule(tx: &TxV1) -> Result<(), String> {
+    let refuse = |m: &str| Err(format!("{}: {}", AMM_REFUSED, m));
+    let p = &tx.payload;
+    match tx.tx_type.as_str() {
+        "create_pool" => {
+            let (a, b) = (p.token_a_symbol.as_deref().unwrap_or("").trim(), p.token_b_symbol.as_deref().unwrap_or("").trim());
+            if a.is_empty() || b.is_empty() { return refuse("both token symbols are required"); }
+            if a.eq_ignore_ascii_case(b) { return refuse("a pool needs two different tokens"); }
+            let (x, y) = (p.amount_a.unwrap_or(0), p.amount_b.unwrap_or(0));
+            if x == 0 || y == 0 { return refuse("amounts must be greater than zero"); }
+            if crate::units::isqrt(x as u128 * y as u128) <= amm::MINIMUM_LIQUIDITY as u128 {
+                return refuse("no LP tokens would be minted");
+            }
+        }
+        "add_liquidity" => {
+            if p.pool_id.as_deref().unwrap_or("").is_empty() { return refuse("pool_id is required"); }
+            if p.amount_a.unwrap_or(0) == 0 || p.amount_b.unwrap_or(0) == 0 { return refuse("amounts must be greater than zero"); }
+        }
+        "remove_liquidity" => {
+            if p.pool_id.as_deref().unwrap_or("").is_empty() { return refuse("pool_id is required"); }
+            if p.lp_amount.unwrap_or(0) == 0 { return refuse("lp_amount must be greater than zero"); }
+        }
+        "swap" => {
+            if p.swap_path.is_some() { return refuse("multi-hop swaps (swap_path) are not accepted"); }
+            let (i, o) = (p.token_a_symbol.as_deref().unwrap_or("").trim(), p.token_b_symbol.as_deref().unwrap_or("").trim());
+            if i.is_empty() || o.is_empty() || i.eq_ignore_ascii_case(o) { return refuse("a swap needs two different tokens"); }
+            if p.amount_a.unwrap_or(0) == 0 { return refuse("amount_in must be greater than zero"); }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct L1Node {
     node_id: String,
@@ -919,6 +958,11 @@ pub struct L1Node {
     shield_v2_store: ShieldV2Store,
     /// SHIELD_V2: proofs this node has verified and accepted (node-local; once per tx per node).
     shield_v2_verified: shield_v2::VerifyCache,
+    /// Producer-only, node-local: while the block producer's speculative apply runs, the AMM
+    /// transactions (by tx hash) that would not take effect or would be charged without output,
+    /// with the reason. `None` (not recording) everywhere else, including block import; recording
+    /// only reads state and never changes what a block does.
+    amm_outcomes: Arc<Mutex<Option<HashMap<String, String>>>>,
 }
 
 impl L1Node {
@@ -1054,6 +1098,7 @@ impl L1Node {
             snapshot_db,
             shield_v2_store,
             shield_v2_verified: shield_v2::VerifyCache::default(),
+            amm_outcomes: Arc::new(Mutex::new(None)),
         };
 
         start_entropy_prefetch();
@@ -2686,6 +2731,8 @@ impl L1Node {
         // old node). From activation: the stateless rule (spec §3.6 checks 1–12), decoded once.
         shield_v2::shield_v2_local_rule(&tx, next_height)?;
         let shield_v2_parsed = shield_v2_tx_rule(&tx, next_height, &self.opts.chain.chain_id)?;
+        // Node-local AMM rule (malformed liquidity / swap requests; never block validity).
+        self.amm_admission_rule(&tx)?;
 
         let identity = quantum_vault_types::tx_identity(&tx);
         if let Some(h) = self.tx_included_at(&identity) {
@@ -3832,6 +3879,27 @@ impl L1Node {
         Ok((total_fees, last_fees))
     }
 
+    /// Producer only: the index of the first transaction of `block` whose application fails —
+    /// the shortest failing prefix, found by bisection over speculative applies, each rolled back.
+    /// `None` when even the empty block fails (a failure not caused by a transaction).
+    fn producer_first_failing_tx(&self, block: &BlockV1) -> Result<Option<usize>, String> {
+        let fails = |k: usize| -> Result<bool, String> {
+            let probe = BlockV1 { txs: block.txs[..k].to_vec(), ..block.clone() };
+            let snap = self.capture_pre_apply_snapshot(&probe)?;
+            let failed = self.apply_balance_block(&probe).is_err();
+            self.restore_pre_apply_snapshot(snap)?;
+            Ok(failed)
+        };
+        let n = block.txs.len();
+        if n == 0 || fails(0)? || !fails(n)? { return Ok(None); }
+        let (mut ok, mut bad) = (0usize, n); // prefix `ok` applies, prefix `bad` fails
+        while bad - ok > 1 {
+            let mid = (ok + bad) / 2;
+            if fails(mid)? { bad = mid } else { ok = mid }
+        }
+        Ok(Some(bad - 1))
+    }
+
     pub fn mine_pending(&self) -> Result<Option<BlockV1>, String> {
         // Producer-side proposer rule + anti-equivocation journal, BEFORE touching the mempool.
         {
@@ -3925,6 +3993,11 @@ impl L1Node {
             // carry the fields (the V2 types are judged by the selection below)
             .filter(|(_, tx)| shield_v2::shield_v2_local_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| shield_v2::is_shield_v2_type(&tx.tx_type) || !shield_v2::has_shield_v2_fields(&tx.payload))
+            // Node-local AMM rule, stateless part (positional checks: see the AMM outcomes below)
+            .filter(|(_, tx)| match amm_static_rule(tx) {
+                Ok(()) => true,
+                Err(e) => { eprintln!("[miner] dropping {} {}: {}", tx.tx_type, &compute_single_tx_hash(tx)[..16], e); false }
+            })
             .collect();
         // SHIELD_V2: V2 transactions in order against the evolving pool state; failing ones are
         // left out (spec §4.6), at most 8 per block — the valid ones beyond the limit go straight
@@ -3941,106 +4014,160 @@ impl L1Node {
         if verified_entries.is_empty() {
             return Ok(None);
         }
-        let txs: Vec<TxV1> = verified_entries.iter().map(|(_, tx)| tx.clone()).collect();
-        let requeue = verified_entries; // returned to the mempool if production fails before commit
-        let tip = self.store.get_tip()?;
-        let height = tip.height + 1;
-        let time = Utc::now().timestamp_millis() as u64;
-        let proposer_pub_key = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
-        let tx_hash = compute_tx_hash(&txs);
+        let mut candidates = verified_entries;
+        // Assembled again (same height) each time a transaction is left out — see the error path.
+        let (block, block_exec) = 'assemble: loop {
+            if candidates.is_empty() {
+                return Ok(None);
+            }
+            let txs: Vec<TxV1> = candidates.iter().map(|(_, tx)| tx.clone()).collect();
+            let requeue = candidates.clone(); // returned to the mempool if production fails before commit
+            let apply_failed = std::cell::Cell::new(false);
+            let amm_ineffective: std::cell::RefCell<Vec<(String, String)>> = std::cell::RefCell::new(Vec::new());
+            let tip = self.store.get_tip()?;
+            let height = tip.height + 1;
+            let time = Utc::now().timestamp_millis() as u64;
+            let proposer_pub_key = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
+            let tx_hash = compute_tx_hash(&txs);
 
-        // Phase 2: commit to the POST-state root, so the block header must be
-        // sealed AFTER applying the block. apply_balance_block reads only
-        // header.{height,time,proposer_pub_key} and txs — never sig/hash/state_root
-        // — so a preliminary header (unsigned, no root) is sufficient to apply.
-        let prelim_header = BlockHeaderV1 {
-            version: 1,
-            chain_id: self.opts.chain.chain_id.clone(),
-            height,
-            time,
-            prev_hash: tip.hash.clone(),
-            tx_hash: tx_hash.clone(),
-            proposer_pub_key: proposer_pub_key.clone(),
-            state_root: None,
-            parent_commit: if self.parent_commit_required(height) { self.get_persisted_finality_proof(tip.height)? } else { None },
-        };
-        if self.parent_commit_required(height) && prelim_header.parent_commit.is_none() {
-            // the tip changed or the certificate vanished between the guard and here: requeue
-            if let Ok(mut mp) = self.mempool.lock() { for (id, tx) in requeue { mp.insert(id, tx); } }
-            return Ok(None);
-        }
-        let prelim_block = BlockV1 {
-            version: 1,
-            header: prelim_header.clone(),
-            txs: txs.clone(),
-            proposer_sig: String::new(),
-            hash: String::new(),
-        };
-        // ── PRODUCER ATOMICITY (same contract as import_block) ────────────────────────
-        // Full pre-apply snapshot first. Every step through append_block is speculative:
-        // ANY failure before the commit point restores the node state exactly and requeues
-        // the drained transactions. Order: snapshot → apply ledger effects (incl. matured
-        // unbonding) → post-state root → sign → validator effects → append (COMMIT POINT)
-        // → derived bookkeeping (mined hashes, finality, receipts, payouts, stats).
-        let pre_snapshot = self.capture_pre_apply_snapshot(&prelim_block)?;
-        // Slot key journaled by THIS attempt (None until the journal write succeeded). A failure
-        // after that point but before append means the block was never durable nor broadcast, so
-        // the record is withdrawn with the rollback; a record left by an earlier attempt/process is
-        // never touched here (it is re-imported at the top of mine_pending instead).
-        let journaled_key: std::cell::Cell<Option<Vec<u8>>> = std::cell::Cell::new(None);
-        let attempt = (|| -> Result<(BlockV1, BlockExecution), String> {
-            // Apply to state ONCE, here. (The old post-append apply_balance_block call
-            // is intentionally removed — applying twice would double-charge fees.)
-            let block_exec = self.apply_balance_block(&prelim_block)?;
-            #[cfg(test)]
-            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 1 { return Err("injected fault: root computation".into()); } }
-            // Stamp the post-state root, gated on the activation height.
-            let state_root = if height >= state_root_activation_height() {
-                Some(self.compute_state_root_for_height(height)?)
-            } else {
-                None
+            // Phase 2: commit to the POST-state root, so the block header must be
+            // sealed AFTER applying the block. apply_balance_block reads only
+            // header.{height,time,proposer_pub_key} and txs — never sig/hash/state_root
+            // — so a preliminary header (unsigned, no root) is sufficient to apply.
+            let prelim_header = BlockHeaderV1 {
+                version: 1,
+                chain_id: self.opts.chain.chain_id.clone(),
+                height,
+                time,
+                prev_hash: tip.hash.clone(),
+                tx_hash: tx_hash.clone(),
+                proposer_pub_key: proposer_pub_key.clone(),
+                state_root: None,
+                parent_commit: if self.parent_commit_required(height) { self.get_persisted_finality_proof(tip.height)? } else { None },
             };
-            let header = BlockHeaderV1 { state_root, ..prelim_header.clone() };
-            let header_bytes = encode_header_v1(&header);
-            let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
-            let hash = compute_block_hash(&header_bytes, &proposer_sig);
-            let block = BlockV1 { version: 1, header, txs: prelim_block.txs.clone(), proposer_sig, hash };
-            // Amendment 2: durable proposal record for (height, parent) BEFORE the block can be made
-            // durable or broadcast. A different record for this slot ⇒ refuse (equivocation guard).
-            self.journal_proposal(&block)?;
-            journaled_key.set(Some(Self::proposal_key(block.header.height, &block.header.prev_hash)));
-            // Validator-store effects BEFORE the block is durable (post-root, store-only).
-            self.apply_validator_block(&block, &block_exec.validator)?;
-            #[cfg(test)]
-            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 2 { return Err("injected fault: validator persistence".into()); } }
-            #[cfg(test)]
-            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 3 { return Err("injected fault: append_block".into()); } }
-            self.store.append_block(&block)?;
-            self.shield_v2_mark_accepted(block.header.height); // node-local report (RW3-6)
-            Ok((block, block_exec))
-        })();
-        let (block, block_exec) = match attempt {
-            Ok(v) => v,
-            Err(e) => {
-                let restore = self.restore_pre_apply_snapshot(pre_snapshot);
-                if let Some(k) = journaled_key.take() { let _ = self.proposal_journal.remove(k); let _ = self.proposal_journal.flush(); }
-                // Requeue the drained (already signature-verified) transactions. If a SHIELD_V2
-                // rule failed the attempt, its V2 transactions are dropped instead of requeued, so
-                // the producer cannot loop on the same refused transaction.
-                let drop_v2 = e.contains("shield_v2");
-                if let Ok(mut mempool) = self.mempool.lock() {
-                    if let Ok(mut verified) = self.verified_tx_ids.lock() {
-                        for (id, tx) in requeue {
-                            if drop_v2 && shield_v2::is_shield_v2_type(&tx.tx_type) { continue; }
-                            verified.insert(id.clone()); mempool.insert(id, tx);
+            if self.parent_commit_required(height) && prelim_header.parent_commit.is_none() {
+                // the tip changed or the certificate vanished between the guard and here: requeue
+                if let Ok(mut mp) = self.mempool.lock() { for (id, tx) in requeue { mp.insert(id, tx); } }
+                return Ok(None);
+            }
+            let prelim_block = BlockV1 {
+                version: 1,
+                header: prelim_header.clone(),
+                txs: txs.clone(),
+                proposer_sig: String::new(),
+                hash: String::new(),
+            };
+            // ── PRODUCER ATOMICITY (same contract as import_block) ────────────────────────
+            // Full pre-apply snapshot first. Every step through append_block is speculative:
+            // ANY failure before the commit point restores the node state exactly and requeues
+            // the drained transactions. Order: snapshot → apply ledger effects (incl. matured
+            // unbonding) → post-state root → sign → validator effects → append (COMMIT POINT)
+            // → derived bookkeeping (mined hashes, finality, receipts, payouts, stats).
+            let pre_snapshot = self.capture_pre_apply_snapshot(&prelim_block)?;
+            // Slot key journaled by THIS attempt (None until the journal write succeeded). A failure
+            // after that point but before append means the block was never durable nor broadcast, so
+            // the record is withdrawn with the rollback; a record left by an earlier attempt/process is
+            // never touched here (it is re-imported at the top of mine_pending instead).
+            let journaled_key: std::cell::Cell<Option<Vec<u8>>> = std::cell::Cell::new(None);
+            let attempt = (|| -> Result<(BlockV1, BlockExecution), String> {
+                // Apply to state ONCE, here. (The old post-append apply_balance_block call
+                // is intentionally removed — applying twice would double-charge fees.)
+                // Node-local: record the AMM transactions that would not take effect (observation only).
+                if let Ok(mut g) = self.amm_outcomes.lock() { *g = Some(HashMap::new()); }
+                let applied = self.apply_balance_block(&prelim_block);
+                let outcomes = self.amm_outcomes.lock().ok().and_then(|mut g| g.take()).unwrap_or_default();
+                let block_exec = match applied {
+                    Ok(x) => x,
+                    Err(e) => { apply_failed.set(true); return Err(e); }
+                };
+                // Leave out an AMM transaction that would not take effect at its position (e.g. a
+                // swap below its min_amount_out, a pool that already exists): the FIRST one in block
+                // order is dropped and the block is assembled again without it (the ones after it
+                // are judged again, against the state without it).
+                let ineffective: Vec<(String, String)> = prelim_block.txs.iter()
+                    .map(compute_single_tx_hash)
+                    .filter_map(|h| outcomes.get(&h).map(|r| (h.clone(), r.clone())))
+                    .take(1)
+                    .collect();
+                if !ineffective.is_empty() {
+                    let n = ineffective.len();
+                    amm_ineffective.replace(ineffective);
+                    return Err(format!("{} AMM transaction(s) would not take effect", n));
+                }
+                #[cfg(test)]
+                { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 1 { return Err("injected fault: root computation".into()); } }
+                // Stamp the post-state root, gated on the activation height.
+                let state_root = if height >= state_root_activation_height() {
+                    Some(self.compute_state_root_for_height(height)?)
+                } else {
+                    None
+                };
+                let header = BlockHeaderV1 { state_root, ..prelim_header.clone() };
+                let header_bytes = encode_header_v1(&header);
+                let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
+                let hash = compute_block_hash(&header_bytes, &proposer_sig);
+                let block = BlockV1 { version: 1, header, txs: prelim_block.txs.clone(), proposer_sig, hash };
+                // Amendment 2: durable proposal record for (height, parent) BEFORE the block can be made
+                // durable or broadcast. A different record for this slot ⇒ refuse (equivocation guard).
+                self.journal_proposal(&block)?;
+                journaled_key.set(Some(Self::proposal_key(block.header.height, &block.header.prev_hash)));
+                // Validator-store effects BEFORE the block is durable (post-root, store-only).
+                self.apply_validator_block(&block, &block_exec.validator)?;
+                #[cfg(test)]
+                { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 2 { return Err("injected fault: validator persistence".into()); } }
+                #[cfg(test)]
+                { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 3 { return Err("injected fault: append_block".into()); } }
+                self.store.append_block(&block)?;
+                self.shield_v2_mark_accepted(block.header.height); // node-local report (RW3-6)
+                Ok((block, block_exec))
+            })();
+            break 'assemble match attempt {
+                Ok(v) => v,
+                Err(e) => {
+                    let restore = self.restore_pre_apply_snapshot(pre_snapshot);
+                    if let Some(k) = journaled_key.take() { let _ = self.proposal_journal.remove(k); let _ = self.proposal_journal.flush(); }
+                    // Node-local: a transaction that fails or would not take effect is DROPPED (logged)
+                    // and the block is assembled again without it — one transaction never holds back
+                    // the others.
+                    if restore.is_ok() {
+                        let ineffective = amm_ineffective.take();
+                        let drop_ids: Vec<String> = if !ineffective.is_empty() {
+                            for (h, r) in &ineffective { eprintln!("[miner] height {}: leaving out tx {}: {}", height, &h[..16.min(h.len())], r); }
+                            let hs: HashSet<String> = ineffective.into_iter().map(|(h, _)| h).collect();
+                            candidates.iter().filter(|(_, tx)| hs.contains(&compute_single_tx_hash(tx))).map(|(id, _)| id.clone()).collect()
+                        } else if apply_failed.get() {
+                            match self.producer_first_failing_tx(&prelim_block) {
+                                Ok(Some(i)) => {
+                                    eprintln!("[miner] height {}: leaving out tx {} ({}): its application fails: {}", height,
+                                        &compute_single_tx_hash(&txs[i])[..16], txs[i].tx_type, e);
+                                    vec![candidates[i].0.clone()]
+                                }
+                                _ => Vec::new(),
+                            }
+                        } else { Vec::new() };
+                        if !drop_ids.is_empty() {
+                            candidates.retain(|(id, _)| !drop_ids.contains(id));
+                            continue 'assemble;
                         }
                     }
+                    // Requeue the drained (already signature-verified) transactions. If a SHIELD_V2
+                    // rule failed the attempt, its V2 transactions are dropped instead of requeued, so
+                    // the producer cannot loop on the same refused transaction.
+                    let drop_v2 = e.contains("shield_v2");
+                    if let Ok(mut mempool) = self.mempool.lock() {
+                        if let Ok(mut verified) = self.verified_tx_ids.lock() {
+                            for (id, tx) in requeue {
+                                if drop_v2 && shield_v2::is_shield_v2_type(&tx.tx_type) { continue; }
+                                verified.insert(id.clone()); mempool.insert(id, tx);
+                            }
+                        }
+                    }
+                    return Err(match restore {
+                        Ok(()) => format!("block production at height {} failed and was rolled back: {}", height, e),
+                        Err(re) => format!("block production at height {} failed ({}) AND rollback failed ({}) — manual investigation", height, e, re),
+                    });
                 }
-                return Err(match restore {
-                    Ok(()) => format!("block production at height {} failed and was rolled back: {}", height, e),
-                    Err(re) => format!("block production at height {} failed ({}) AND rollback failed ({}) — manual investigation", height, e, re),
-                });
-            }
+            };
         };
         // ── COMMIT POINT: the block is durable; everything below is derived bookkeeping ──
         // Track mined tx hashes to prevent re-adding to mempool
@@ -6278,6 +6405,58 @@ impl L1Node {
     }
 
     /// Apply AMM-specific transaction effects
+    /// Node-local AMM admission rule (mempool admission — which every `/api/v2` handler, the batch
+    /// route and P2P relay go through — and, for the stateless part, the block producer). Never part
+    /// of block validity: `import_block` does not apply it. Judged against this node's current
+    /// state; the producer additionally judges each AMM transaction at its position in the block.
+    pub(crate) fn amm_admission_rule(&self, tx: &TxV1) -> Result<(), String> {
+        amm_static_rule(tx)?;
+        match tx.tx_type.as_str() {
+            "create_pool" => {
+                let (a, b) = (tx.payload.token_a_symbol.as_deref().unwrap_or(""), tx.payload.token_b_symbol.as_deref().unwrap_or(""));
+                if self.amm_pool_exists(a, b) {
+                    return Err(format!("{}: pool {} already exists", AMM_REFUSED, LiquidityPool::make_pool_id(a, b)));
+                }
+            }
+            "add_liquidity" | "remove_liquidity" => {
+                let pool_id = tx.payload.pool_id.as_deref().unwrap_or("");
+                let pool = self.pool_store.get_pool(pool_id)?.ok_or_else(|| format!("{}: pool {} not found", AMM_REFUSED, pool_id))?;
+                if tx.tx_type == "add_liquidity" {
+                    let (a, b) = (tx.payload.amount_a.unwrap_or(0), tx.payload.amount_b.unwrap_or(0));
+                    match amm::calculate_lp_mint(a, b, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                        Some(lp) if lp > 0 => {}
+                        _ => return Err(format!("{}: no LP tokens would be minted", AMM_REFUSED)),
+                    }
+                } else {
+                    let lp = tx.payload.lp_amount.unwrap_or(0);
+                    if lp > pool.total_lp_supply || amm::calculate_remove_liquidity(lp, pool.reserve_a, pool.reserve_b, pool.total_lp_supply).is_none() {
+                        return Err(format!("{}: nothing would be returned on one side of the pool", AMM_REFUSED));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Producer-only AMM observation (see `amm_outcomes`): record why an AMM transaction would
+    /// not take effect. A no-op unless the producer is recording.
+    fn amm_note(&self, tx_hash: &str, reason: impl FnOnce() -> String) {
+        if let Ok(mut g) = self.amm_outcomes.lock() {
+            if let Some(m) = g.as_mut() { m.entry(tx_hash.to_string()).or_insert_with(reason); }
+        }
+    }
+    fn amm_recording(&self) -> bool {
+        self.amm_outcomes.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+    /// Whether a pool exists for the pair, in either order, as given or with the symbols
+    /// upper-cased (pool ids are built from the sorted symbols as given).
+    pub(crate) fn amm_pool_exists(&self, token_a: &str, token_b: &str) -> bool {
+        let ids = [LiquidityPool::make_pool_id(token_a, token_b),
+                   LiquidityPool::make_pool_id(&token_a.trim().to_uppercase(), &token_b.trim().to_uppercase())];
+        ids.iter().any(|id| matches!(self.pool_store.get_pool(id), Ok(Some(_))))
+    }
+
     fn apply_amm_tx_inner(
         &self,
         balances: &mut HashMap<String, u128>,
@@ -6303,14 +6482,14 @@ impl L1Node {
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(xrge_needed) {
                     eprintln!("[node] Rejecting create_pool: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 if token_a != "XRGE" {
                     let key = (canon_addr(&tx.from_pub_key), token_a.clone());
                     let bal = *token_balances.get(&key).unwrap_or(&0);
                     if bal < amount_a as u128 {
                         eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_a, bal, amount_a);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 if token_b != "XRGE" {
@@ -6318,7 +6497,7 @@ impl L1Node {
                     let bal = *token_balances.get(&key).unwrap_or(&0);
                     if bal < amount_b as u128 {
                         eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_b, bal, amount_b);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 
@@ -6339,6 +6518,16 @@ impl L1Node {
                     block_time,
                 );
                 
+                // Producer-only observation (no effect on the block): a pool for this pair already
+                // exists, or no LP tokens would be minted.
+                if self.amm_recording() {
+                    if self.amm_pool_exists(token_a, token_b) {
+                        self.amm_note(&tx_hash, || format!("create_pool: pool {} already exists", pool.pool_id));
+                    } else if pool.total_lp_supply == 0 || token_a.trim().eq_ignore_ascii_case(token_b.trim()) {
+                        self.amm_note(&tx_hash, || "create_pool: no LP tokens would be minted".to_string());
+                    }
+                }
+
                 // Mint LP tokens to creator
                 let lp_key = (canon_addr(&tx.from_pub_key), pool.pool_id.clone());
                 *lp_balances.entry(lp_key).or_insert(0) += pool.total_lp_supply as u128;
@@ -6392,7 +6581,7 @@ impl L1Node {
                     Some(p) => p,
                     None => {
                         eprintln!("[node] Warning: Pool {} not found, skipping add_liquidity", pool_id);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 };
 
@@ -6403,14 +6592,14 @@ impl L1Node {
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(xrge_needed) {
                     eprintln!("[node] Rejecting add_liquidity: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 if pool.token_a != "XRGE" {
                     let key = (canon_addr(&tx.from_pub_key), pool.token_a.clone());
                     let bal = *token_balances.get(&key).unwrap_or(&0);
                     if bal < amount_a as u128 {
                         eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_a, bal, amount_a);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 if pool.token_b != "XRGE" {
@@ -6418,7 +6607,7 @@ impl L1Node {
                     let bal = *token_balances.get(&key).unwrap_or(&0);
                     if bal < amount_b as u128 {
                         eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_b, bal, amount_b);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 
@@ -6437,6 +6626,9 @@ impl L1Node {
                     pool.reserve_b,
                     pool.total_lp_supply,
                 ).ok_or("Failed to calculate LP mint")?;
+                if lp_amount == 0 {
+                    self.amm_note(&tx_hash, || "add_liquidity: no LP tokens would be minted".to_string());
+                }
                 
                 // Update pool
                 pool.reserve_a += amount_a;
@@ -6494,7 +6686,7 @@ impl L1Node {
                     Some(p) => p,
                     None => {
                         eprintln!("[node] Warning: Pool {} not found, skipping remove_liquidity", pool_id);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 };
 
@@ -6502,13 +6694,13 @@ impl L1Node {
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting remove_liquidity: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 let lp_key = (canon_addr(&tx.from_pub_key), pool_id.clone());
                 let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0);
                 if lp_bal < lp_amount as u128 {
                     eprintln!("[node] Rejecting remove_liquidity: insufficient LP tokens ({:.4} < {})", lp_bal, lp_amount);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 
                 // Deduct fee
@@ -6588,18 +6780,18 @@ impl L1Node {
                 if token_in == "XRGE" {
                     if xrge_bal < xrge_f64_to_quanta(amount_in as f64 + tx.fee) {
                         eprintln!("[node] Rejecting swap: insufficient XRGE balance ({:.4} < {:.4})", xrge_bal, amount_in as f64 + tx.fee);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 } else {
                     if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                         eprintln!("[node] Rejecting swap: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                     let token_key = (canon_addr(&tx.from_pub_key), token_in.clone());
                     let token_bal = *token_balances.get(&token_key).unwrap_or(&0);
                     if token_bal < amount_in as u128 {
                         eprintln!("[node] Rejecting swap: insufficient {} balance ({:.4} < {})", token_in, token_bal, amount_in);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 
@@ -6663,15 +6855,19 @@ impl L1Node {
                 }
                 
                 if !swap_ok {
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 
                 // Enforce slippage protection
                 if current_amount < min_amount_out {
                     eprintln!("[node] Rejecting swap: slippage exceeded (got {} < min {})", current_amount, min_amount_out);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 
+                if current_amount == 0 {
+                    self.amm_note(&tx_hash, || "swap: no output".to_string());
+                }
+
                 // Credit output token
                 let final_token = path.last().unwrap();
                 Self::amm_credit(balances, token_balances, &tx.from_pub_key, final_token, current_amount as f64);
@@ -13318,11 +13514,11 @@ mod game_ready_tests {
         let cs = e.node.contract_store.as_ref().unwrap();
         assert!(cs.get_contract(&probe).unwrap().is_some() && cs.get_contract(&unknown).unwrap().is_some());
         let col = crate::nft_store::NftCollection::make_collection_id(&pk, "X");
-        // Call: the producer can't execute either, so it doesn't include them …
+        // Call: the producer can't execute either, so it leaves them out (dropped, not requeued) …
         for (n, addr) in [(3u64, &probe), (4, &unknown)] {
             let err = mine(&e, call_tx(&e.player, addr, "probe", json!({ "c": col }), Value::Null, n)).unwrap_err();
-            assert!(err.contains("Instantiation: cannot find definition for import"), "{err}");
-            e.node.mempool.lock().unwrap().clear(); // the producer re-queues it; drop it
+            assert!(err.contains("tx not mined"), "{err}");
+            assert!(e.node.mempool.lock().unwrap().is_empty(), "the failing call is dropped");
         }
         // … and a block that carries such a call is rejected the same way for both.
         let tip = e.node.tip_height().unwrap();
@@ -13335,9 +13531,14 @@ mod game_ready_tests {
         let h = mine(&e, call_tx(&e.player, &probe, "probe", json!({ "c": col }), Value::Null, 3)).expect("runs after activation");
         assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
         assert_eq!(probe_state(&e, &probe), (-1, -1, None));
-        let err = mine(&e, call_tx(&e.player, &unknown, "probe", json!({ "c": col }), Value::Null, 4)).unwrap_err();
+        // A truly unknown import still fails: the producer leaves the call out, and a block
+        // carrying it is rejected.
+        let bad = call_tx(&e.player, &unknown, "probe", json!({ "c": col }), Value::Null, 4);
+        let err = mine(&e, bad.clone()).unwrap_err();
+        assert!(err.contains("tx not mined"), "{err}");
+        assert!(e.node.mempool.lock().unwrap().is_empty(), "the failing call is dropped");
+        let err = import(&e, vec![bad]).unwrap_err();
         assert!(err.contains("host_no_such_function"), "a truly unknown import still fails: {err}");
-        e.node.mempool.lock().unwrap().clear();
         royalty_forks_off();
     }
 
@@ -13392,9 +13593,10 @@ mod game_ready_tests {
         // Block 5 (before activation): listing can't run on either node.
         const PRICE: u64 = 1_234_567_891; // ≈1.23 XRGE; 3% = 37,037,036.73 → floor
         let list = |nft: u64, n: u64| call_tx(seller, &market, "list", json!({ "collection": col, "token_id": nft, "price": PRICE }), Value::Null, n);
+        // The producer leaves the failing call out (dropped, not requeued): no block.
         let err = mine_relay(list(1, 5)).unwrap_err();
-        assert!(err.contains("cannot find definition for import env::host_nft_royalty"), "{err}");
-        a.node.mempool.lock().unwrap().clear();
+        assert_eq!(err, "no block");
+        assert!(a.node.mempool.lock().unwrap().is_empty(), "the failing call is dropped");
         mine_relay(v2(seller, "transfer", &json!({ "from": spk, "to": b.player.public_key_hex, "amount": 1, "fee": 1.0,
             "timestamp": ts(5), "nonce": "0000000000000005" }), 5)).expect("filler block 5");
         assert_eq!(a.node.tip_height().unwrap(), 5);
@@ -16909,5 +17111,244 @@ mod chain_id_binding_tests {
             n.y.import_block(serde_json::from_str(&serde_json::to_string(&b2).unwrap()).unwrap()).expect("imported at activation");
         });
         assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+    }
+}
+
+/// Node-local AMM guards (mempool admission + the block producer). Block validity is unchanged:
+/// every block the guarded producer makes is imported by a plain importer, and a block carrying
+/// what the producer now leaves out is still accepted on import.
+#[cfg(test)]
+mod amm_producer_guard_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, signed, TmpDir};
+    use quantum_vault_crypto::pqc_keygen;
+
+    const TOK: &str = "QTOK";
+
+    /// `x` produces (guarded producer); `y` only imports what `x` produces (the import path, which
+    /// has no AMM guard). Both start from the same funded state.
+    struct Net { _d: Vec<TmpDir>, x: L1Node, y: L1Node, user: PQKeypair, other: PQKeypair, nonce: std::cell::Cell<u64> }
+
+    fn net() -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0))); // header state root committed + verified
+        let (dx, x, _) = node_with_store();
+        let (dy, y, _) = node_with_store();
+        let (user, other) = (pqc_keygen(), pqc_keygen());
+        for n in [&x, &y] {
+            for k in [&user, &other] {
+                fund_xrge(n, &k.public_key_hex, 1_000_000.0);
+                n.token_balances.lock().unwrap().insert((canon_addr(&k.public_key_hex), TOK.to_string()), 10_000_000);
+            }
+        }
+        Net { _d: vec![dx, dy], x, y, user, other, nonce: std::cell::Cell::new(0) }
+    }
+
+    impl Net {
+        fn tx(&self, who: &PQKeypair, ty: &str, payload: TxPayload) -> TxV1 {
+            self.nonce.set(self.nonce.get() + 1);
+            signed(TxV1 { version: 1, tx_type: ty.into(), from_pub_key: who.public_key_hex.clone(), nonce: self.nonce.get(),
+                payload, fee: 1.0, sig: String::new(), signed_payload: None }, &who.secret_key_hex)
+        }
+        fn transfer(&self) -> TxV1 {
+            self.tx(&self.user, "transfer", TxPayload { to_pub_key_hex: Some(self.other.public_key_hex.clone()), amount: Some(1), ..Default::default() })
+        }
+        fn create(&self, a: &str, b: &str, x: u64, y: u64) -> TxV1 {
+            self.tx(&self.user, "create_pool", TxPayload { pool_id: Some(LiquidityPool::make_pool_id(a, b)), token_a_symbol: Some(a.into()),
+                token_b_symbol: Some(b.into()), amount_a: Some(x), amount_b: Some(y), ..Default::default() })
+        }
+        fn add(&self, x: u64, y: u64) -> TxV1 {
+            self.tx(&self.user, "add_liquidity", TxPayload { pool_id: Some(pool_id()), amount_a: Some(x), amount_b: Some(y), ..Default::default() })
+        }
+        fn remove(&self, lp: u64) -> TxV1 {
+            self.tx(&self.user, "remove_liquidity", TxPayload { pool_id: Some(pool_id()), lp_amount: Some(lp), ..Default::default() })
+        }
+        fn swap(&self, who: &PQKeypair, amount_in: u64, min_out: u64, path: Option<Vec<String>>) -> TxV1 {
+            self.tx(who, "swap", TxPayload { pool_id: Some(pool_id()), token_a_symbol: Some("XRGE".into()), token_b_symbol: Some(TOK.into()),
+                amount: Some(amount_in), amount_a: Some(amount_in), min_amount_out: Some(min_out), swap_path: path, ..Default::default() })
+        }
+        /// Queue on the producer as an entry admitted by older software (no admission check).
+        fn queue(&self, tx: &TxV1) {
+            let id = compute_single_tx_hash(tx);
+            self.x.verified_tx_ids.lock().unwrap().insert(id.clone());
+            self.x.mempool.lock().unwrap().insert(id, tx.clone());
+        }
+        /// `x` produces a block from what is queued; `y` imports it (as relayed).
+        fn produce(&self) -> BlockV1 {
+            let b = self.x.mine_pending().expect("production does not fail").expect("a block is produced");
+            self.y.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()).expect("a plain importer accepts it");
+            assert_eq!(Self::fingerprint(&self.x), Self::fingerprint(&self.y));
+            b
+        }
+        fn fingerprint(n: &L1Node) -> (u64, String, String) {
+            let h = n.tip_height().unwrap();
+            (h, n.get_block(h).unwrap().unwrap().hash, n.get_state_root().unwrap())
+        }
+        /// A pool QTOK/XRGE with reserves (QTOK 1,000,000 ; XRGE 1,000) made in its own block.
+        fn with_pool(&self) {
+            self.queue(&self.create("XRGE", TOK, 1_000, 1_000_000));
+            self.produce();
+            assert!(self.x.pool_store.get_pool(&pool_id()).unwrap().is_some());
+        }
+    }
+    fn pool_id() -> String { LiquidityPool::make_pool_id("XRGE", TOK) }
+    fn hashes(b: &BlockV1) -> Vec<String> { b.txs.iter().map(compute_single_tx_hash).collect() }
+    fn h(tx: &TxV1) -> String { compute_single_tx_hash(tx) }
+
+    #[test]
+    fn a_failing_transaction_is_left_out_and_the_others_are_produced() {
+        let n = net();
+        n.with_pool();
+        // 1 LP returns 32 QTOK and 0 XRGE: its application fails (the whole block used to fail
+        // and be requeued, every time).
+        let failing = n.remove(1);
+        let (t1, t2) = (n.transfer(), n.transfer());
+        for tx in [&t1, &failing, &t2] { n.queue(tx); }
+        let b = n.produce();
+        let mut got = hashes(&b); got.sort();
+        let mut want = vec![h(&t1), h(&t2)]; want.sort();
+        assert_eq!(got, want, "the failing transaction is left out, the others are included");
+        assert!(n.x.get_mempool_snapshot().is_empty(), "the failing transaction is dropped, not requeued");
+    }
+
+    #[test]
+    fn the_bisection_finds_the_failing_transaction() {
+        let n = net();
+        n.with_pool();
+        let mut txs: Vec<TxV1> = (0..6).map(|_| n.transfer()).collect();
+        txs.insert(4, n.remove(1));
+        let probe = BlockV1 { version: 1, header: BlockHeaderV1 { version: 1, chain_id: "test".into(), height: n.x.tip_height().unwrap() + 1, time: 9,
+            prev_hash: String::new(), tx_hash: String::new(), proposer_pub_key: String::new(), state_root: None, parent_commit: None },
+            txs, proposer_sig: String::new(), hash: String::new() };
+        let root = n.x.get_state_root().unwrap();
+        assert_eq!(n.x.producer_first_failing_tx(&probe).unwrap(), Some(4));
+        assert_eq!(n.x.get_state_root().unwrap(), root, "every probe is rolled back");
+        let ok = BlockV1 { txs: probe.txs[..4].to_vec(), ..probe.clone() };
+        assert_eq!(n.x.producer_first_failing_tx(&ok).unwrap(), None);
+    }
+
+    #[test]
+    fn a_swap_below_its_minimum_at_its_position_is_left_out() {
+        let n = net();
+        n.with_pool();
+        // Each swap alone meets its minimum against the current reserves; the second one no longer
+        // does after the first moved the price. The producer judges it at its position.
+        let expect = amm::get_amount_out(100, 1_000, 1_000_000).unwrap();
+        let first = n.swap(&n.user, 100, expect, None);
+        let second = n.swap(&n.other, 100, expect, None);
+        let hopeless = n.swap(&n.other, 1, 1_000_000, None);
+        let bal = |k: &PQKeypair| (n.x.get_balance(&k.public_key_hex).unwrap(), n.x.get_token_balance(&k.public_key_hex, TOK).unwrap());
+        let (u0, o0) = (bal(&n.user), bal(&n.other));
+        for tx in [&first, &second, &hopeless] { n.queue(tx); }
+        let b = n.produce();
+        // Whichever of the two equal swaps comes first (the mempool has no order) is produced;
+        // the other, and the hopeless one, are left out — and their senders pay nothing.
+        let got = hashes(&b);
+        assert_eq!(got.len(), 1, "exactly one swap is produced");
+        assert!(got[0] == h(&first) || got[0] == h(&second));
+        let (left_out, before) = if got[0] == h(&first) { (&n.other, o0) } else { (&n.user, u0) };
+        assert_eq!(bal(left_out), before, "nothing was charged for the swaps left out");
+        assert!(n.x.get_mempool_snapshot().is_empty());
+    }
+
+    #[test]
+    fn multi_hop_swaps_are_refused_at_admission_and_left_out_by_the_producer() {
+        let n = net();
+        n.with_pool();
+        let hop = n.swap(&n.user, 10, 0, Some(vec!["XRGE".into(), TOK.into()]));
+        assert!(n.x.add_tx_to_mempool(hop.clone()).unwrap_err().starts_with(AMM_REFUSED));
+        n.queue(&hop);
+        let t = n.transfer();
+        n.queue(&t);
+        assert_eq!(hashes(&n.produce()), vec![h(&t)]);
+    }
+
+    #[test]
+    fn pool_creation_for_an_existing_pair_is_left_out() {
+        let n = net();
+        n.with_pool();
+        let reversed = n.create(TOK, "XRGE", 5, 5_000_000);
+        let lower = n.create("xrge", TOK, 5_000, 5_000);
+        let t = n.transfer();
+        for tx in [&reversed, &lower, &t] { n.queue(tx); }
+        assert_eq!(hashes(&n.produce()), vec![h(&t)]);
+        let pool = n.x.pool_store.get_pool(&pool_id()).unwrap().unwrap();
+        assert_eq!((pool.reserve_a, pool.reserve_b), (1_000_000, 1_000), "the pool is untouched");
+        // Two creations of one new pair in the same block: only the first is produced.
+        for n2 in [&n.x, &n.y] { n2.token_balances.lock().unwrap().insert((canon_addr(&n.user.public_key_hex), "BTOK".into()), 1_000_000); }
+        let (c1, c2) = (n.create("BTOK", "XRGE", 100_000, 100), n.create("XRGE", "BTOK", 7, 70_000));
+        n.queue(&c1); n.queue(&c2);
+        let got = hashes(&n.produce()); // the mempool has no order: whichever comes first
+        assert!(got == vec![h(&c1)] || got == vec![h(&c2)], "{got:?}");
+    }
+
+    #[test]
+    fn liquidity_that_would_mint_or_return_nothing_is_left_out() {
+        let n = net();
+        n.with_pool();
+        let zero_lp = n.add(1, 1); // 1 QTOK / 1 XRGE mints 0 LP against these reserves
+        let t = n.transfer();
+        for tx in [&zero_lp, &t] { n.queue(tx); }
+        assert_eq!(hashes(&n.produce()), vec![h(&t)]);
+        let good = n.add(1_000, 1);
+        n.queue(&good);
+        assert_eq!(hashes(&n.produce()), vec![h(&good)], "a well-formed add is produced");
+    }
+
+    /// Mempool admission — the path every `/api/v2` AMM handler, the batch route and P2P relay take
+    /// (`add_tx_to_mempool_verified` is the handlers' last step; their transactions come from
+    /// `v2_binding::build_v2_tx`, as here).
+    #[test]
+    fn admission_refuses_malformed_liquidity_and_swap_requests() {
+        let n = net();
+        n.with_pool();
+        let pk = n.user.public_key_hex.clone();
+        let v2 = |ty: &str, p: serde_json::Value| -> Result<(), String> {
+            let tx = crate::v2_binding::build_v2_tx(ty, pk.clone(), chrono::Utc::now().timestamp_millis() as u64 + n.nonce.get(), &p,
+                "00".into(), p.to_string())?;
+            n.nonce.set(n.nonce.get() + 1);
+            n.x.add_tx_to_mempool_verified(tx)
+        };
+        let refused = |r: Result<(), String>, what: &str| assert!(r.as_ref().is_err_and(|e| e.starts_with(AMM_REFUSED)), "{what}: {r:?}");
+        refused(v2("create_pool", serde_json::json!({"token_a": "XRGE", "token_b": TOK, "amount_a": 10, "amount_b": 10_000_000})), "existing pool");
+        refused(v2("create_pool", serde_json::json!({"token_a": TOK, "token_b": "XRGE", "amount_a": 10, "amount_b": 10})), "existing pool, other order");
+        refused(v2("create_pool", serde_json::json!({"token_a": "xrge", "token_b": "qtok", "amount_a": 10_000, "amount_b": 10_000})), "existing pool, other case");
+        refused(v2("create_pool", serde_json::json!({"token_a": "ATOK", "token_b": "atok", "amount_a": 10_000, "amount_b": 10_000})), "same token");
+        refused(v2("create_pool", serde_json::json!({"token_a": "ATOK", "token_b": "XRGE", "amount_a": 0, "amount_b": 10_000})), "zero amount");
+        refused(v2("create_pool", serde_json::json!({"token_a": "ATOK", "token_b": "XRGE", "amount_a": 1_000, "amount_b": 1_000})), "zero LP");
+        refused(v2("add_liquidity", serde_json::json!({"pool_id": pool_id(), "amount_a": 0, "amount_b": 5})), "zero amount");
+        refused(v2("add_liquidity", serde_json::json!({"pool_id": pool_id(), "amount_a": 1, "amount_b": 1})), "zero LP");
+        refused(v2("add_liquidity", serde_json::json!({"pool_id": "NOPE-XRGE", "amount_a": 1_000, "amount_b": 1_000})), "no pool");
+        refused(v2("remove_liquidity", serde_json::json!({"pool_id": pool_id(), "lp_amount": 1})), "nothing on one side");
+        refused(v2("remove_liquidity", serde_json::json!({"pool_id": pool_id(), "lp_amount": 0})), "zero LP");
+        refused(v2("swap", serde_json::json!({"token_in": "XRGE", "token_out": "XRGE", "amount_in": 5, "min_amount_out": 0})), "same token");
+        refused(v2("swap", serde_json::json!({"token_in": "XRGE", "token_out": TOK, "amount_in": 0, "min_amount_out": 0})), "zero amount");
+        assert!(n.x.get_mempool_snapshot().is_empty());
+        // well-formed requests are admitted
+        v2("create_pool", serde_json::json!({"token_a": "ATOK", "token_b": "XRGE", "amount_a": 100_000, "amount_b": 100})).expect("new pool");
+        v2("add_liquidity", serde_json::json!({"pool_id": pool_id(), "amount_a": 1_000, "amount_b": 1})).expect("add");
+        v2("remove_liquidity", serde_json::json!({"pool_id": pool_id(), "lp_amount": 1_000})).expect("remove");
+        v2("swap", serde_json::json!({"token_in": "XRGE", "token_out": TOK, "amount_in": 5, "min_amount_out": 1})).expect("swap");
+    }
+
+    /// Consensus is unchanged: a block that carries what the producer now leaves out (a swap below
+    /// its minimum, charged its fee without output, and a pool creation for an existing pair) is
+    /// still valid for every node, exactly as before.
+    #[test]
+    fn blocks_carrying_left_out_shapes_are_still_valid_on_import() {
+        let n = net();
+        n.with_pool();
+        let proposer = pqc_keygen();
+        let txs = vec![n.swap(&n.other, 1, 1_000_000, None), n.create(TOK, "XRGE", 5, 5_000_000), n.transfer()];
+        let t = n.y.tip_height().unwrap() + 1;
+        let probe = sealed_block(&n.y, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), None, t);
+        let snap = n.y.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = n.y.apply_balance_block(&probe).unwrap();
+        let root = n.y.compute_state_root_for_height(probe.header.height).unwrap();
+        n.y.restore_pre_apply_snapshot(snap).unwrap();
+        let b = sealed_block(&n.y, &proposer.public_key_hex, &proposer.secret_key_hex, txs, Some(root), t);
+        n.y.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()).expect("valid as before");
+        n.x.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()).expect("valid for the guarded node too");
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        assert!(n.x.amm_outcomes.lock().unwrap().is_none(), "nothing is recorded outside production");
     }
 }
