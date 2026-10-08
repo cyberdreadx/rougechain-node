@@ -25,6 +25,20 @@ install it promptly — it is step 1 of the [network-binding rollout](upgrade-sc
   (`success: false`, `accepted: 0`, a result per item), nothing is queued and no signature is used up,
   so the valid items can be sent again unchanged. A batch that passes is offered to the mempool item
   by item, as before.
+- **Block producer and liquidity / swap requests.** The block producer leaves out transactions
+  that would fail and refuses malformed liquidity and swap requests:
+  - a transaction whose application fails is dropped (and logged) and the block is produced with
+    the others — one transaction no longer holds back the rest of the queue;
+  - a pool, liquidity or swap transaction that would not take effect at its position in the block
+    (for example a swap whose output would be below its `min_amount_out`) is left out instead of
+    included, so it is not charged;
+  - the node refuses, with `AMM_REQUEST_REFUSED`, requests with zero amounts, a pool with the same
+    token on both sides, a pool for a pair that already has one (in either order), an addition
+    that would mint no LP tokens, a withdrawal that would return nothing on one side, and swaps
+    with a multi-hop path (`swap_path`, which the public API never sets).
+
+  These are rules of the node that builds and admits transactions; what makes a block valid is
+  unchanged, and blocks from nodes without this release are accepted exactly as before.
 - **Balances.** `GET /api/balance/:publicKey/XRGE` returns the native XRGE balance (`native: true`);
   it used to answer 0. Both balance routes also return the stored integers as decimal strings
   (`balance_raw` + `decimals`; `balance_quanta` + `token_balances_raw`) — use these for any threshold
@@ -44,12 +58,12 @@ state roots as 1.6.3.
 | Item | Value |
 |---|---|
 | Binary | `quantum-vault-daemon` |
-| sha256 | `05a320122175c8c6847448f6ab358a17592365e3ab8f881b5d982788d4587573` |
-| Size | 29,383,808 bytes |
-| Source | quantum-vault `0be1493`; public [`rougechain-node`](https://github.com/cyberdreadx/rougechain-node) |
+| sha256 | `48a43cad46388ede48179432a371a32819492aa59dbc2149653655a5f414e9c3` |
+| Size | 29,396,176 bytes |
+| Source | quantum-vault `447abca`; public [`rougechain-node`](https://github.com/cyberdreadx/rougechain-node) |
 | Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02), `x86_64-unknown-linux-gnu` |
-| Download | `https://api.rougechain.io/releases/quantum-vault-daemon-network-binding-0be1493` |
-| CLI | `rougechain` 1.3.0, `rougechain-0be1493`, sha256 `0df5a526a120eeb12ac77a5a86b6b448bbdf80b371c63db0a4c1427ef22f6870` |
+| Download | `https://api.rougechain.io/releases/quantum-vault-daemon-network-binding-447abca` |
+| CLI | `rougechain` 1.3.0, `rougechain-447abca`, sha256 `0df5a526a120eeb12ac77a5a86b6b448bbdf80b371c63db0a4c1427ef22f6870` |
 
 Built twice from clean; the two builds were byte-identical. The release is described by a manifest
 signed with the release keys ([Signed releases](releases.md)).
@@ -60,8 +74,8 @@ Nodes installed with the one-line installer and [auto-update](auto-update.md) in
 themselves (node and CLI). Otherwise:
 
 ```bash
-curl -fLo /tmp/quantum-vault-daemon https://api.rougechain.io/releases/quantum-vault-daemon-network-binding-0be1493
-echo "05a320122175c8c6847448f6ab358a17592365e3ab8f881b5d982788d4587573  /tmp/quantum-vault-daemon" | sha256sum -c
+curl -fLo /tmp/quantum-vault-daemon https://api.rougechain.io/releases/quantum-vault-daemon-network-binding-447abca
+echo "48a43cad46388ede48179432a371a32819492aa59dbc2149653655a5f414e9c3  /tmp/quantum-vault-daemon" | sha256sum -c
 systemctl cat rougechain-validator | grep ExecStart      # the first path is the binary your node runs
 BIN=/path/from/ExecStart/quantum-vault-daemon             # set this to that path
 sudo systemctl stop rougechain-validator

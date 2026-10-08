@@ -28,7 +28,9 @@ All notable changes to RougeChain.
   rule, `from` = signer, signed `account_nonce`); a batch with any failing item is refused as a whole
   and uses up no signature. `GET /api/balance/:publicKey/XRGE` returns the native balance, and both
   balance routes return exact integer fields (`balance_raw` + `decimals`, `balance_quanta` +
-  `token_balances_raw`). The shielded pool V2 code is present and inactive.
+  `token_balances_raw`). The block producer leaves out transactions that would fail and refuses
+  malformed liquidity and swap requests (`AMM_REQUEST_REFUSED`; node rules, block validity
+  unchanged). The shielded pool V2 code is present and inactive.
   `quantum-vault-daemon --version` reports `1.6.4`.
 - See [Security](security.md#network-binding) and the [release notes](running-a-node/release-1.6.4.md).
 

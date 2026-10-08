@@ -4,22 +4,22 @@
   "chain_id": "rougechain-mainnet-1",
   "version": "1.6.4",
   "released": "2026-10-08",
-  "source_commit": "0be1493",
+  "source_commit": "447abca",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-network-binding-0be1493",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-network-binding-0be1493",
+    "name": "quantum-vault-daemon-network-binding-447abca",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-network-binding-447abca",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.4/quantum-vault-daemon-network-binding-0be1493"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.4/quantum-vault-daemon-network-binding-447abca"
     ],
-    "sha256": "05a320122175c8c6847448f6ab358a17592365e3ab8f881b5d982788d4587573",
-    "size": 29383808
+    "sha256": "48a43cad46388ede48179432a371a32819492aa59dbc2149653655a5f414e9c3",
+    "size": 29396176
   },
   "cli": {
-    "name": "rougechain-0be1493",
-    "url": "https://api.rougechain.io/releases/rougechain-0be1493",
+    "name": "rougechain-447abca",
+    "url": "https://api.rougechain.io/releases/rougechain-447abca",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.4/rougechain-0be1493"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.4/rougechain-447abca"
     ],
     "sha256": "0df5a526a120eeb12ac77a5a86b6b448bbdf80b371c63db0a4c1427ef22f6870",
     "size": 5294304
