@@ -1584,6 +1584,8 @@ sense of completeness.
 
 ### 12.2 Smaller choices left open
 
+*DECIDED by the owner 2026-10-08: all six recommendations below (items 5–10) adopted as written — 5: decide the commit wait after testnet measures real delays, keep 0.5 s until then; 6: no early round skip, keep the published rules; 7: hold evidence against the last validator until another is active; 8: storage limits set in the stage B implementation design and tested in the simulator, part of the decision-11 gate; 9: the 30-day grace runs from stage A's activation; 10: check LC1 §17.9 and amend it so earlier-offence evidence still reaches withdrawals.*
+
 | # | Question | Recommendation | If the other choice is made |
 |---|---|---|---|
 | 5 | Honest validators on slow links are left out of certificates when they answer later than the 0.5-second commit wait; they lose that block's reward and collect absences (F9, §3.6). Lengthen the wait, let later blocks add late signatures, or neither? | Decide after testnet has measured real delays between validators. Keep 0.5 s until then. The wait is a per-node setting and can be changed without a fork; late inclusion is a rule change | Lengthening now: every quiet-period block starts up to that much later, for a problem not yet observed on a real network. Late inclusion now: 3,309 B per late signature and a new rule to review. Neither, ever: validators far from the others are paid less and jailed more easily |
