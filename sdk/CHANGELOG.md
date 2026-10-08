@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.14.0
+
+Verify that a transaction is in a FINALIZED block without trusting a node's "success" answer. See `docs/advanced/verifying-finality.md`.
+
+### Added
+- `verifyTxFinalized({ txHash, nodes, chainId, trustedValidatorSet?, minConfirmations?, fetch?, timeoutMs? })` resolves to `{ status: "finalized" | "included-not-finalized" | "not-found" | "invalid", height, blockHash, txIndex, trust, proof, outcome, checks }`. It recomputes the transaction hash, the header `tx_hash` from the block's transaction list, and the block hash; verifies the proposer's ML-DSA-65 signature and the header `chain_id`; verifies every precommit signature of the FINALITY_V2 certificate (`ROUGECHAIN_FINALITY_VOTE_V2|chain=…|type=precommit|height=…|round=0|block=…`) and recomputes the stake quorum `floor(2T/3)+1`; and requires a strict majority of `nodes` to serve the same block. Every check is returned with pass/fail.
+- **Not proven:** the execution outcome. The receipt status is not committed in the block header, so a failed transaction is still included and finalized; it is returned as `outcome: { source: "node receipt", verified: false, value }`. Without `trustedValidatorSet` the validator set comes from a node (`trust: "node-reported validator set"`); nodes expose only the current set, not the set for a past height.
+- Building blocks: `fetchAndVerifyBlock(height, { node, chainId })`, `verifyBlock`, `verifyFinalityCertificate`, `computeSingleTxHash`, `computeTxListHash`, `computeBlockHash`, `encodeTxV1`, `encodeHeaderV1`, `encodeFinalityProof`, `voteSigningMessage`, `finalityQuorum`, `formatF64`, lossless JSON (`parseJsonLossless`, `stringifyLossless`, `JsonNumber`) and the constants `FINALITY_VOTE_DOMAIN_V2`, `FINALITY_ONLY_ROUND`, `FINALITY_MAX_PROOF_VOTES`, `MAINNET_FINALITY_V2_HEIGHT`.
+
+Nothing existing changed.
+
 ## 1.13.0
 
 Wallet message signing, for proving control of a wallet to a website (login, token gating). See `docs/advanced/wallet-authentication.md`.
