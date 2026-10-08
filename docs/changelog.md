@@ -19,7 +19,7 @@ All notable changes to RougeChain.
   transaction's signed bytes must commit to the chain id (V1-format, node-signed transactions use a
   new network-bound signing encoding from that height). CONTRACT_CHAIN_ID — contracts can read the
   chain id with `host_get_chain_id`. Both are `None` on every network; history replays identically.
-- Clients: site (rougechain.io), `@rougechain/sdk` 1.14.0, browser extension 1.9.0 (approval
+- Clients: site (rougechain.io), `@rougechain/sdk` 1.15.0, browser extension 1.9.0 (approval
   screen shows the network and refuses another one), `rougechain` CLI 1.3.0 (`--chain-id`), Qwalla
   1.3.0 (patch). Sign-in verification (`verifySignIn`) already required the chain id; the docs now
   say verifiers must check it.

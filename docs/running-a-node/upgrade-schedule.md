@@ -127,7 +127,7 @@ their own V1 transactions in the network-bound encoding at `H` automatically.
 **What must ship first, in this order.**
 
 1. Node release 1.6.4 on every node of the network (node rule; harmless to older wallets).
-2. Wallets that sign `chainId`: the site, `@rougechain/sdk` 1.14.0 (and every dApp built on it,
+2. Wallets that sign `chainId`: the site, `@rougechain/sdk` 1.15.0 (and every dApp built on it,
    after a dependency bump), browser extension 1.9.0, Qwalla 1.3.0, `rougechain` CLI 1.3.0, the
    MCP server. Watch the node log / API errors for payloads still arriving without the field.
 3. Operators turn on `REQUIRE_SIGNED_CHAIN_ID` (testnet first). Only then is a payload without a
