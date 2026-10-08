@@ -1,0 +1,37 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const abandon_unsubmitted: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const assert_sole_copy: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const attach_signature: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const build_own_shield: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const build_shield: (a: number, b: number) => [number, number, number, number];
+export const build_transfer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const build_unshield: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const can_spend_now: (a: number, b: number, c: number) => [number, number, number, number];
+export const confirm_state: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const constants: () => [number, number, number, number];
+export const expect_revision_id: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const export_scan_key: (a: number, b: number, c: number) => [number, number, number, number];
+export const new_state: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const note_rejection: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const parse_address: (a: number, b: number) => [number, number, number, number];
+export const pending: (a: number, b: number) => [number, number, number, number];
+export const plan_payment: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const plan_self_merge: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const recover_locks: (a: number, b: number) => [number, number, number, number];
+export const rescan_state: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+export const resolve_pending: (a: number, b: number, c: number) => [number, number, number, number];
+export const scan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const scan_pages: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const set_nodes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const shielded_address: (a: number, b: number) => [number, number, number, number];
+export const summary: (a: number, b: number) => [number, number, number, number];
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __wbindgen_start: () => void;
