@@ -1,3 +1,4 @@
+/* global process, globalThis */
 // End-to-end run of the /shield page in headless Chromium against MOCKED nodes (never a real
 // node: every request that does not go to 127.0.0.1 is aborted).
 //
