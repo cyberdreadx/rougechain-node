@@ -5414,6 +5414,17 @@ impl L1Node {
             if deducted > 0 { actual_fees_collected += fee_to_quanta(tx.fee).min(deducted); }
             
             // Handle AMM transactions
+            if crate::amm_integrity::amm_integrity_active(block.header.height) {
+                // AMM_INTEGRITY: all-or-nothing, and the fee is counted exactly when it is charged.
+                actual_fees_collected += self.apply_amm_tx_integrity(
+                    &mut balances,
+                    &mut token_balances,
+                    &mut lp_balances,
+                    tx,
+                    block.header.time,
+                    block.header.height,
+                )?;
+            } else {
             let before_amm = balances.values().sum::<u128>();
             self.apply_amm_tx_inner(
                 &mut balances,
@@ -5426,6 +5437,7 @@ impl L1Node {
             let after_amm = balances.values().sum::<u128>();
             let deducted_amm = before_amm.saturating_sub(after_amm);
             if deducted_amm > 0 { actual_fees_collected += fee_to_quanta(tx.fee).min(deducted_amm); }
+            }
 
             // Handle NFT transactions
             let before_nft = balances.values().sum::<u128>();
@@ -6455,6 +6467,159 @@ impl L1Node {
         let ids = [LiquidityPool::make_pool_id(token_a, token_b),
                    LiquidityPool::make_pool_id(&token_a.trim().to_uppercase(), &token_b.trim().to_uppercase())];
         ids.iter().any(|id| matches!(self.pool_store.get_pool(id), Ok(Some(_))))
+    }
+
+    /// AMM_INTEGRITY applier (heights at or above the activation height; the rule is in
+    /// `amm_integrity.rs`). The outcome is planned first on copies; a transaction that would not
+    /// take its full effect changes nothing at all — no fee, no balance, no pool — and never fails
+    /// the block. Returns the fee charged, in quanta (0 when the transaction has no effect).
+    /// `Err` only for a failure of this node's own storage.
+    fn apply_amm_tx_integrity(
+        &self,
+        balances: &mut HashMap<String, u128>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
+        lp_balances: &mut HashMap<TokenBalanceKey, u128>,
+        tx: &TxV1,
+        block_time: u64,
+        block_height: u64,
+    ) -> Result<u128, String> {
+        use crate::amm_integrity::{self, AmmView, Effect, LpChange, XRGE};
+        if !matches!(tx.tx_type.as_str(), "create_pool" | "add_liquidity" | "remove_liquidity" | "swap") {
+            return Ok(0);
+        }
+        let sender = canon_addr(&tx.from_pub_key);
+        let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+
+        struct View<'a> {
+            sender: &'a str,
+            balances: &'a HashMap<String, u128>,
+            token_balances: &'a HashMap<TokenBalanceKey, u128>,
+            lp_balances: &'a HashMap<TokenBalanceKey, u128>,
+            pool_store: &'a PoolStore,
+            store_error: std::cell::RefCell<Option<String>>,
+        }
+        impl View<'_> {
+            fn read<T>(&self, r: Result<T, String>) -> Result<T, String> {
+                if let Err(e) = &r { self.store_error.borrow_mut().get_or_insert_with(|| e.clone()); }
+                r
+            }
+        }
+        impl AmmView for View<'_> {
+            fn xrge_quanta(&self) -> u128 { *self.balances.get(self.sender).unwrap_or(&0) }
+            fn token(&self, symbol: &str) -> u128 {
+                *self.token_balances.get(&(self.sender.to_string(), symbol.to_string())).unwrap_or(&0)
+            }
+            fn lp(&self, pool_id: &str) -> u128 {
+                *self.lp_balances.get(&(self.sender.to_string(), pool_id.to_string())).unwrap_or(&0)
+            }
+            fn pool(&self, pool_id: &str) -> Result<Option<LiquidityPool>, String> { self.read(self.pool_store.get_pool(pool_id)) }
+            fn pools(&self) -> Result<Vec<LiquidityPool>, String> { self.read(self.pool_store.list_pools()) }
+        }
+
+        let planned = {
+            let view = View {
+                sender: &sender, balances: &*balances, token_balances: &*token_balances, lp_balances: &*lp_balances,
+                pool_store: &self.pool_store, store_error: std::cell::RefCell::new(None),
+            };
+            let planned = amm_integrity::plan(&view, tx, block_time);
+            if let Some(e) = view.store_error.into_inner() { return Err(format!("pool store: {}", e)); }
+            planned
+        };
+        let plan = match planned {
+            Ok(p) => p,
+            Err(reason) => {
+                eprintln!("[node] {} {} has no effect: {}", tx.tx_type, &tx_hash[..16.min(tx_hash.len())], reason);
+                self.amm_note(&tx_hash, || format!("{}: {}", tx.tx_type, reason));
+                return Ok(0);
+            }
+        };
+
+        // Write the plan. Every amount was checked against these same balances by the planner, so
+        // the checked operations below cannot fail; if one ever did, the block fails and is rolled
+        // back as a whole rather than leaving a partial effect.
+        const MISMATCH: &str = "AMM plan does not match the ledger";
+        let mut xrge_out = plan.fee_quanta;
+        for (sym, amount) in &plan.debits {
+            if sym == XRGE {
+                xrge_out = xrge_out.checked_add(crate::units::xrge_to_quanta(*amount)).ok_or(MISMATCH)?;
+            } else {
+                let e = token_balances.entry((sender.clone(), sym.clone())).or_insert(0);
+                *e = e.checked_sub(*amount as u128).ok_or(MISMATCH)?;
+            }
+        }
+        {
+            let e = balances.entry(sender.clone()).or_insert(0);
+            *e = e.checked_sub(xrge_out).ok_or(MISMATCH)?;
+        }
+        for (sym, amount) in &plan.credits {
+            if sym == XRGE {
+                let e = balances.entry(sender.clone()).or_insert(0);
+                *e = e.checked_add(crate::units::xrge_to_quanta(*amount)).ok_or(MISMATCH)?;
+            } else {
+                let e = token_balances.entry((sender.clone(), sym.clone())).or_insert(0);
+                *e = e.checked_add(*amount as u128).ok_or(MISMATCH)?;
+            }
+        }
+        if let Some((pool_id, change)) = &plan.lp {
+            let e = lp_balances.entry((sender.clone(), pool_id.clone())).or_insert(0);
+            *e = match change {
+                LpChange::Mint(n) => e.checked_add(*n as u128),
+                LpChange::Burn(n) => e.checked_sub(*n as u128),
+            }.ok_or(MISMATCH)?;
+        }
+        for pool in &plan.pools {
+            self.pool_store.save_pool(pool)?;
+        }
+
+        // Event log, LP fee ledger and price history (read by the API only; not consensus data).
+        let Some(first) = plan.pools.first() else { return Ok(plan.fee_quanta) };
+        let (suffix, event_type, token_in, token_out, amount_in, amount_out, amount_a, amount_b, lp_amount) = match &plan.effect {
+            Effect::Create { amount_a, amount_b, lp } => ("create", PoolEventType::CreatePool, None, None, None, None, Some(*amount_a), Some(*amount_b), Some(*lp)),
+            Effect::Add { amount_a, amount_b, lp } => ("add", PoolEventType::AddLiquidity, None, None, None, None, Some(*amount_a), Some(*amount_b), Some(*lp)),
+            Effect::Remove { amount_a, amount_b, lp } => ("remove", PoolEventType::RemoveLiquidity, None, None, None, None, Some(*amount_a), Some(*amount_b), Some(*lp)),
+            Effect::Swap { token_in, token_out, amount_in, amount_out } =>
+                ("swap", PoolEventType::Swap, Some(token_in.clone()), Some(token_out.clone()), Some(*amount_in), Some(*amount_out), None, None, None),
+        };
+        let _ = self.pool_event_store.save_event(&PoolEvent {
+            id: format!("{}-{}", tx_hash, suffix),
+            pool_id: first.pool_id.clone(),
+            event_type,
+            user_pub_key: tx.from_pub_key.clone(),
+            timestamp: block_time,
+            block_height,
+            tx_hash: tx_hash.clone(),
+            token_in, token_out, amount_in, amount_out, amount_a, amount_b, lp_amount,
+            reserve_a_after: first.reserve_a,
+            reserve_b_after: first.reserve_b,
+        });
+        match &plan.effect {
+            Effect::Create { lp, .. } | Effect::Add { lp, .. } => {
+                if let Some(v) = crate::pool_events::lp_share_value(first.reserve_a, first.reserve_b, first.total_lp_supply) {
+                    let _ = self.pool_event_store.record_lp_change(&first.pool_id, &sender, true, *lp, v);
+                }
+            }
+            Effect::Remove { amount_a, amount_b, lp } => {
+                let pre = (first.reserve_a.saturating_add(*amount_a), first.reserve_b.saturating_add(*amount_b), first.total_lp_supply.saturating_add(*lp));
+                if let Some(v) = crate::pool_events::lp_share_value(first.reserve_a, first.reserve_b, first.total_lp_supply)
+                    .or_else(|| crate::pool_events::lp_share_value(pre.0, pre.1, pre.2))
+                {
+                    let _ = self.pool_event_store.record_lp_change(&first.pool_id, &sender, false, *lp, v);
+                }
+            }
+            Effect::Swap { .. } => {}
+        }
+        for pool in &plan.pools {
+            let _ = self.pool_event_store.save_price_snapshot(&PriceSnapshot {
+                pool_id: pool.pool_id.clone(),
+                timestamp: block_time,
+                block_height,
+                reserve_a: pool.reserve_a,
+                reserve_b: pool.reserve_b,
+                price_a_in_b: if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 },
+                price_b_in_a: if pool.reserve_b > 0 { pool.reserve_a as f64 / pool.reserve_b as f64 } else { 0.0 },
+            });
+        }
+        Ok(plan.fee_quanta)
     }
 
     fn apply_amm_tx_inner(
@@ -17350,5 +17515,232 @@ mod amm_producer_guard_tests {
         n.x.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()).expect("valid for the guarded node too");
         assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
         assert!(n.x.amm_outcomes.lock().unwrap().is_none(), "nothing is recorded outside production");
+    }
+
+    /// AMM_INTEGRITY (consensus, fork-gated): pool transactions apply all-or-nothing.
+    mod amm_integrity_fork {
+        use super::*;
+        use crate::amm_integrity::set_test_amm_integrity;
+        use crate::units::{xrge_to_quanta, QUANTA_PER_XRGE};
+
+        const FEE_Q: u128 = QUANTA_PER_XRGE; // every test transaction carries a fee of 1 XRGE
+
+        fn xrge(n: &L1Node, k: &PQKeypair) -> u128 { *n.balances.lock().unwrap().get(&canon_addr(&k.public_key_hex)).unwrap_or(&0) }
+        fn tok(n: &L1Node, k: &PQKeypair, sym: &str) -> u128 {
+            *n.token_balances.lock().unwrap().get(&(canon_addr(&k.public_key_hex), sym.to_string())).unwrap_or(&0)
+        }
+        fn lp(n: &L1Node, k: &PQKeypair) -> u128 {
+            *n.lp_balances.lock().unwrap().get(&(canon_addr(&k.public_key_hex), pool_id())).unwrap_or(&0)
+        }
+        fn reserves(n: &L1Node, id: &str) -> (u64, u64, u64) {
+            let p = n.pool_store.get_pool(id).unwrap().unwrap();
+            (p.reserve_a, p.reserve_b, p.total_lp_supply)
+        }
+        /// A block made by a producer WITHOUT the node-local guards (any transactions, in this
+        /// order), imported by both nodes. `Err` = the block is invalid.
+        fn raw(n: &Net, proposer: &PQKeypair, txs: Vec<TxV1>) -> Result<(), String> {
+            let t = n.y.tip_height().unwrap() + 1;
+            let probe = sealed_block(&n.y, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), None, t);
+            let snap = n.y.capture_pre_apply_snapshot(&probe).unwrap();
+            let applied = n.y.apply_balance_block(&probe).map(|_| ());
+            let root = n.y.compute_state_root_for_height(probe.header.height).unwrap();
+            n.y.restore_pre_apply_snapshot(snap).unwrap();
+            applied?;
+            let b = sealed_block(&n.y, &proposer.public_key_hex, &proposer.secret_key_hex, txs, Some(root), t);
+            n.y.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap())?;
+            n.x.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap())?;
+            assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+            Ok(())
+        }
+        /// The post-state root of a block carrying `txs` on `y`, without importing it.
+        fn root_of(n: &Net, proposer: &PQKeypair, txs: Vec<TxV1>) -> String {
+            let t = n.y.tip_height().unwrap() + 1;
+            let probe = sealed_block(&n.y, &proposer.public_key_hex, &proposer.secret_key_hex, txs, None, t);
+            let snap = n.y.capture_pre_apply_snapshot(&probe).unwrap();
+            n.y.apply_balance_block(&probe).map(|_| ()).expect("applies");
+            let root = n.y.compute_state_root_for_height(probe.header.height).unwrap();
+            n.y.restore_pre_apply_snapshot(snap).unwrap();
+            root
+        }
+        fn swap_of(n: &Net, who: &PQKeypair, t_in: &str, t_out: &str, amount: u64, min: u64, path: Option<Vec<&str>>) -> TxV1 {
+            n.tx(who, "swap", TxPayload { token_a_symbol: Some(t_in.into()), token_b_symbol: Some(t_out.into()), amount: Some(amount),
+                amount_a: Some(amount), min_amount_out: Some(min), swap_path: path.map(|p| p.into_iter().map(String::from).collect()), ..Default::default() })
+        }
+
+        /// Below the activation height a block has exactly the outcome it has without the upgrade.
+        #[test]
+        fn below_the_height_execution_is_unchanged() {
+            let n = net();
+            n.with_pool();
+            let p = pqc_keygen();
+            let txs = vec![
+                n.swap(&n.other, 1, 1_000_000, None),          // below its minimum: old rules keep the input
+                n.create(TOK, "XRGE", 5, 5_000_000),           // second pool for the pair: old rules overwrite
+                n.swap(&n.user, 10, 0, None),
+                n.add(1_000, 1),
+                n.transfer(),
+            ];
+            set_test_amm_integrity(None);
+            let without = root_of(&n, &p, txs.clone());
+            set_test_amm_integrity(Some(n.y.tip_height().unwrap() + 2)); // scheduled, one block later
+            assert_eq!(root_of(&n, &p, txs.clone()), without, "identical below the height");
+            set_test_amm_integrity(Some(n.y.tip_height().unwrap() + 1));
+            assert_ne!(root_of(&n, &p, txs), without, "the rule takes over at the height");
+        }
+
+        /// The block the old rules cannot survive: a liquidity removal that returns nothing on one
+        /// side used to make the whole block invalid, and a malformed route used to stop the node.
+        /// From the height each of these transactions simply has no effect, and the block is valid.
+        #[test]
+        fn transactions_that_cannot_take_effect_change_nothing_and_the_block_is_valid() {
+            let n = net();
+            n.with_pool();
+            set_test_amm_integrity(Some(0));
+            let p = pqc_keygen();
+            let (u_x, u_t, u_lp) = (xrge(&n.y, &n.user), tok(&n.y, &n.user, TOK), lp(&n.y, &n.user));
+            let (o_x, o_t) = (xrge(&n.y, &n.other), tok(&n.y, &n.other, TOK));
+            let pool0 = reserves(&n.y, &pool_id());
+            let txs = vec![
+                n.remove(1),                                                        // 0 XRGE on one side
+                n.remove(u_lp as u64 + 1),                                          // more LP than held
+                n.add(1, 1),                                                        // mints 0 LP
+                n.create(TOK, "XRGE", 5, 5_000_000),                                // pair already has a pool
+                n.create("xrge", "qtok", 5_000, 5_000),                             // same pair, other case
+                n.create(TOK, TOK, 5_000, 5_000),                                   // one token with itself
+                n.swap(&n.other, 1, 1_000_000, None),                               // below its minimum
+                swap_of(&n, &n.other, "XRGE", TOK, 10, 0, Some(vec![])),            // empty route
+                swap_of(&n, &n.other, "XRGE", TOK, 10, 0, Some(vec!["XRGE"])),      // credits without a debit under old rules
+                swap_of(&n, &n.other, "XRGE", TOK, 10, 0, Some(vec![TOK, "XRGE"])), // does not start at the input
+                swap_of(&n, &n.other, "XRGE", "NOPE", 10, 0, None),                 // no such pool
+                swap_of(&n, &n.other, "XRGE", TOK, 2_000_000, 0, None),             // more XRGE than held
+                n.transfer(),
+            ];
+            raw(&n, &p, txs).expect("the block is valid");
+            assert_eq!(reserves(&n.y, &pool_id()), pool0, "the pool is untouched");
+            assert_eq!((xrge(&n.y, &n.other) - xrge_to_quanta(1), tok(&n.y, &n.other, TOK)), (o_x, o_t), "the other account only received the transfer");
+            assert_eq!((tok(&n.y, &n.user, TOK), lp(&n.y, &n.user)), (u_t, u_lp));
+            assert_eq!(u_x - xrge(&n.y, &n.user), xrge_to_quanta(1) + FEE_Q, "the sender paid for the transfer only: no fee for a transaction without effect");
+            assert_eq!(n.y.pool_store.list_pools().unwrap().len(), 1);
+        }
+
+        /// A swap below the minimum its sender signed: the input stays with the sender.
+        #[test]
+        fn a_swap_below_its_minimum_keeps_the_senders_funds() {
+            let n = net();
+            n.with_pool();
+            let p = pqc_keygen();
+            let expect = amm::get_amount_out(100, 1_000, 1_000_000).unwrap();
+            // Old rules, for the record: the input and the fee are taken and nothing is returned.
+            set_test_amm_integrity(None);
+            let (x0, t0) = (xrge(&n.y, &n.other), tok(&n.y, &n.other, TOK));
+            raw(&n, &p, vec![n.swap(&n.other, 100, expect + 1, None)]).unwrap();
+            assert_eq!((x0 - xrge(&n.y, &n.other), tok(&n.y, &n.other, TOK)), (xrge_to_quanta(100) + FEE_Q, t0), "old rules");
+            // From the height: nothing is taken; with a minimum it meets, it trades exactly.
+            set_test_amm_integrity(Some(0));
+            let (x0, t0, pool0) = (xrge(&n.y, &n.other), tok(&n.y, &n.other, TOK), reserves(&n.y, &pool_id()));
+            let out = amm::get_amount_out(100, pool0.1, pool0.0).unwrap();
+            raw(&n, &p, vec![n.swap(&n.other, 100, out + 1, None)]).unwrap();
+            assert_eq!((xrge(&n.y, &n.other), tok(&n.y, &n.other, TOK), reserves(&n.y, &pool_id())), (x0, t0, pool0));
+            raw(&n, &p, vec![n.swap(&n.other, 100, out, None)]).unwrap();
+            assert_eq!(x0 - xrge(&n.y, &n.other), xrge_to_quanta(100) + FEE_Q);
+            assert_eq!(tok(&n.y, &n.other, TOK) - t0, out as u128);
+            assert_eq!(reserves(&n.y, &pool_id()), (pool0.0 - out, pool0.1 + 100, pool0.2));
+        }
+
+        /// Two swaps in one block, each signed against the price before the block: the first trades,
+        /// the second no longer meets its minimum and is left whole.
+        #[test]
+        fn the_second_of_two_swaps_is_judged_after_the_first() {
+            let n = net();
+            n.with_pool();
+            set_test_amm_integrity(Some(0));
+            let p = pqc_keygen();
+            let expect = amm::get_amount_out(100, 1_000, 1_000_000).unwrap();
+            let (u0, o0) = (xrge(&n.y, &n.user), xrge(&n.y, &n.other));
+            raw(&n, &p, vec![n.swap(&n.user, 100, expect, None), n.swap(&n.other, 100, expect, None)]).unwrap();
+            assert_eq!(u0 - xrge(&n.y, &n.user), xrge_to_quanta(100) + FEE_Q);
+            assert_eq!(xrge(&n.y, &n.other), o0);
+        }
+
+        /// A route through two pools trades atomically; one unit short of its minimum, neither pool moves.
+        #[test]
+        fn a_route_through_two_pools_is_atomic() {
+            let n = net();
+            n.with_pool();
+            set_test_amm_integrity(Some(0));
+            let p = pqc_keygen();
+            for node in [&n.x, &n.y] { node.token_balances.lock().unwrap().insert((canon_addr(&n.user.public_key_hex), "BTOK".into()), 10_000_000); }
+            raw(&n, &p, vec![n.create("BTOK", TOK, 2_000_000, 1_000_000)]).unwrap();
+            let second = LiquidityPool::make_pool_id("BTOK", TOK);
+            let (a0, b0) = (reserves(&n.y, &pool_id()), reserves(&n.y, &second));
+            let hop1 = amm::get_amount_out(50, a0.1, a0.0).unwrap();   // XRGE -> QTOK
+            let hop2 = amm::get_amount_out(hop1, b0.1, b0.0).unwrap(); // QTOK -> BTOK
+            let (x0, t0) = (xrge(&n.y, &n.other), tok(&n.y, &n.other, TOK));
+            raw(&n, &p, vec![swap_of(&n, &n.other, "XRGE", "BTOK", 50, hop2 + 1, Some(vec!["XRGE", TOK, "BTOK"]))]).unwrap();
+            assert_eq!((reserves(&n.y, &pool_id()), reserves(&n.y, &second), xrge(&n.y, &n.other)), (a0, b0, x0));
+            raw(&n, &p, vec![swap_of(&n, &n.other, "XRGE", "BTOK", 50, hop2, Some(vec!["XRGE", TOK, "BTOK"]))]).unwrap();
+            assert_eq!(x0 - xrge(&n.y, &n.other), xrge_to_quanta(50) + FEE_Q);
+            assert_eq!((tok(&n.y, &n.other, "BTOK"), tok(&n.y, &n.other, TOK)), (hop2 as u128, t0), "only the final token is received");
+            assert_eq!(reserves(&n.y, &pool_id()), (a0.0 - hop1, a0.1 + 50, a0.2));
+            assert_eq!(reserves(&n.y, &second), (b0.0 - hop2, b0.1 + hop1, b0.2));
+        }
+
+        /// Two creations of one pair in one block: the first makes the pool, the second has no
+        /// effect (it used to replace the pool and strand the first deposit).
+        #[test]
+        fn a_pair_gets_one_pool() {
+            let n = net();
+            set_test_amm_integrity(Some(0));
+            let p = pqc_keygen();
+            let (o_x, o_t) = (xrge(&n.y, &n.other), tok(&n.y, &n.other, TOK));
+            let second = n.tx(&n.other, "create_pool", TxPayload { token_a_symbol: Some(TOK.into()), token_b_symbol: Some("XRGE".into()),
+                amount_a: Some(9_000_000), amount_b: Some(9), ..Default::default() });
+            raw(&n, &p, vec![n.create("XRGE", TOK, 1_000, 1_000_000), second]).unwrap();
+            assert_eq!(reserves(&n.y, &pool_id()), (1_000_000, 1_000, 30_622));
+            assert_eq!(lp(&n.y, &n.user), 30_622);
+            assert_eq!((xrge(&n.y, &n.other), tok(&n.y, &n.other, TOK), lp(&n.y, &n.other)), (o_x, o_t, 0));
+        }
+
+        /// Liquidity in and out, exact amounts; the producer and a plain importer agree.
+        #[test]
+        fn liquidity_and_swaps_produced_and_imported() {
+            let n = net();
+            set_test_amm_integrity(Some(0));
+            n.with_pool();
+            let (x0, t0) = (xrge(&n.x, &n.user), tok(&n.x, &n.user, TOK));
+            let add = n.add(100_000, 100);
+            n.queue(&add);
+            assert_eq!(hashes(&n.produce()), vec![h(&add)]);
+            assert_eq!(reserves(&n.x, &pool_id()), (1_100_000, 1_100, 30_622 + 3_062));
+            assert_eq!((x0 - xrge(&n.x, &n.user), t0 - tok(&n.x, &n.user, TOK)), (xrge_to_quanta(100) + FEE_Q, 100_000));
+            let rem = n.remove(3_062);
+            n.queue(&rem);
+            assert_eq!(hashes(&n.produce()), vec![h(&rem)]);
+            let (a, b) = (3_062u128 * 1_100_000 / 33_684, 3_062u128 * 1_100 / 33_684);
+            assert_eq!(reserves(&n.x, &pool_id()), (1_100_000 - a as u64, 1_100 - b as u64, 30_622));
+            // The producer still leaves out what would have no effect, and its sender pays nothing.
+            let (dust, t) = (n.remove(1), n.transfer());
+            n.queue(&dust); n.queue(&t);
+            assert_eq!(hashes(&n.produce()), vec![h(&t)]);
+            assert!(n.x.get_mempool_snapshot().is_empty());
+        }
+
+        /// The fee of a swap that pays out XRGE is collected like any other fee (it used to be taken
+        /// from the sender and credited to no one).
+        #[test]
+        fn the_fee_of_a_token_to_xrge_swap_is_collected() {
+            let n = net();
+            n.with_pool();
+            let sell = |n: &Net| n.tx(&n.other, "swap", TxPayload { token_a_symbol: Some(TOK.into()), token_b_symbol: Some("XRGE".into()),
+                amount: Some(200_000), amount_a: Some(200_000), min_amount_out: Some(1), ..Default::default() });
+            let earned = |on: Option<u64>| {
+                set_test_amm_integrity(on);
+                let p = pqc_keygen();
+                raw(&n, &p, vec![sell(&n)]).unwrap();
+                xrge(&n.y, &p)
+            };
+            assert_eq!(earned(None), 0, "old rules: the proposer's share of this fee is lost");
+            assert!(earned(Some(0)) > 0, "from the height the fee is distributed");
+        }
     }
 }

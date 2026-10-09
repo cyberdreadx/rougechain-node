@@ -4,7 +4,8 @@
 //! Every upgrade check in the node (`tx_uniqueness_rule_active`, `proposer_selection_active`,
 //! `finality_v2_active`, `game_ready_active`, `game_ready_2_active`, `game_ready_3_active`,
 //! `payable_calls_active`, `token_minting_active`, `contract_nft_royalty_active`, `monetary_integrity_active`,
-//! `shield_v2::shield_v2_active`, `chain_binding::chain_id_binding_active`, `contract_chain_id_active`) reads its height from the schedule selected here at startup by chain id.
+//! `shield_v2::shield_v2_active`, `chain_binding::chain_id_binding_active`, `contract_chain_id_active`,
+//! `amm_integrity::amm_integrity_active`) reads its height from the schedule selected here at startup by chain id.
 //!
 //! * **Mainnet** (`rougechain-mainnet-1`) keeps the heights it activated at. They are history now:
 //!   changing any of them would make a node reject mainnet's own blocks. `mainnet_schedule_is_pinned`
@@ -56,6 +57,9 @@ pub struct UpgradeSchedule {
     /// CONTRACT_CHAIN_ID (`host_get_chain_id`): contracts can read the chain id. **Not scheduled
     /// on any network**; before it a module importing the function fails like any unknown import.
     pub contract_chain_id: Option<u64>,
+    /// AMM_INTEGRITY (`amm_integrity`): pool transactions apply all-or-nothing, swap routes are
+    /// validated, a pair can have one pool. **Not scheduled on any network.**
+    pub amm_integrity: Option<u64>,
     /// Whether this network has a faucet (a mint signed by a genesis validator key). Judged in
     /// consensus from MONETARY_INTEGRITY; mainnet has none.
     pub faucet_mint: bool,
@@ -92,6 +96,7 @@ pub const MAINNET: UpgradeSchedule = UpgradeSchedule {
     shield_v2: crate::shield_v2::SHIELD_V2_ACTIVATION_HEIGHT,
     chain_id_binding: crate::chain_binding::CHAIN_ID_BINDING_ACTIVATION_HEIGHT,
     contract_chain_id: crate::node::CONTRACT_CHAIN_ID_ACTIVATION_HEIGHT,
+    amm_integrity: crate::amm_integrity::AMM_INTEGRITY_ACTIVATION_HEIGHT,
     faucet_mint: false,
     validator_retirement: None,
 };
@@ -114,6 +119,7 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     shield_v2: None,
     chain_id_binding: None,
     contract_chain_id: None,
+    amm_integrity: None,
     faucet_mint: true,
     validator_retirement: Some(ValidatorRetirement { height: 1240, validators: &[TESTNET_RETIRED_VALIDATOR] }),
 };
@@ -171,6 +177,7 @@ mod tests {
             shield_v2: None,
             chain_id_binding: None,
             contract_chain_id: None,
+            amm_integrity: None,
             faucet_mint: false,
             validator_retirement: None,
         });
@@ -217,6 +224,16 @@ mod tests {
         }
         assert!(!crate::chain_binding::chain_id_binding_active(u64::MAX));
         assert!(!crate::node::contract_chain_id_active(u64::MAX));
+    }
+
+    /// AMM_INTEGRITY is `None` on every network until the owner schedules it.
+    #[test]
+    fn amm_integrity_is_unscheduled_everywhere() {
+        assert_eq!(crate::amm_integrity::AMM_INTEGRITY_ACTIVATION_HEIGHT, None);
+        for id in [MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, "test", ""] {
+            assert_eq!(schedule_for(id).amm_integrity, None, "{id}");
+        }
+        assert!(!crate::amm_integrity::amm_integrity_active(0) && !crate::amm_integrity::amm_integrity_active(u64::MAX));
     }
 
     #[test]
