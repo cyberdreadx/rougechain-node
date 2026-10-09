@@ -23,8 +23,8 @@ use crate::pool_store::LiquidityPool;
 use crate::units::{fee_to_quanta, isqrt, xrge_to_quanta};
 use quantum_vault_types::TxV1;
 
-/// Mainnet activation height. `None` = not scheduled.
-pub const AMM_INTEGRITY_ACTIVATION_HEIGHT: Option<u64> = None;
+/// Mainnet activation height.
+pub const AMM_INTEGRITY_ACTIVATION_HEIGHT: Option<u64> = Some(260);
 
 #[cfg(test)]
 thread_local! {
@@ -280,10 +280,10 @@ mod tests {
     }
 
     #[test]
-    fn unscheduled_on_mainnet() {
+    fn mainnet_height_is_260() {
         // The mainnet constant; testnet's height lives in `upgrades::TESTNET`.
-        assert_eq!(AMM_INTEGRITY_ACTIVATION_HEIGHT, None);
-        assert!(!amm_integrity_active(0) && !amm_integrity_active(u64::MAX));
+        assert_eq!(AMM_INTEGRITY_ACTIVATION_HEIGHT, Some(260));
+        assert!(!amm_integrity_active(259) && amm_integrity_active(260) && amm_integrity_active(u64::MAX));
     }
 
     #[test]

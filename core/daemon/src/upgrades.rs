@@ -177,7 +177,7 @@ mod tests {
             shield_v2: None,
             chain_id_binding: None,
             contract_chain_id: None,
-            amm_integrity: None,
+            amm_integrity: Some(260),
             faucet_mint: false,
             validator_retirement: None,
         });
@@ -227,14 +227,13 @@ mod tests {
         assert!(!crate::node::contract_chain_id_active(u64::MAX));
     }
 
-    /// AMM_INTEGRITY: testnet 1440; `None` on mainnet (and on every chain that uses the mainnet
-    /// schedule) until the owner schedules it.
+    /// AMM_INTEGRITY: mainnet 260 (and every chain that uses the mainnet schedule), testnet 1440.
     #[test]
-    fn amm_integrity_is_scheduled_on_testnet_only() {
-        assert_eq!(crate::amm_integrity::AMM_INTEGRITY_ACTIVATION_HEIGHT, None);
+    fn amm_integrity_heights_are_pinned() {
+        assert_eq!(crate::amm_integrity::AMM_INTEGRITY_ACTIVATION_HEIGHT, Some(260));
         assert_eq!(schedule_for(TESTNET_CHAIN_ID).amm_integrity, Some(1440));
         for id in [MAINNET_CHAIN_ID, "test", ""] {
-            assert_eq!(schedule_for(id).amm_integrity, None, "{id}");
+            assert_eq!(schedule_for(id).amm_integrity, Some(260), "{id}");
         }
     }
 
