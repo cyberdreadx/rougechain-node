@@ -11,6 +11,7 @@ const arm = (from, to) => binding.slice(binding.indexOf(from), binding.indexOf(t
 function capture() {
   const posts = [];
   const fn = async (url, init) => {
+    if (url.endsWith("/health")) return new Response(JSON.stringify({ status: "ok", chain_id: "rougechain-mainnet-1", height: 1 }), { status: 200 });
     posts.push({ url, body: JSON.parse(init.body) });
     return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "Content-Type": "application/json" } });
   };

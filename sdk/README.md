@@ -35,7 +35,9 @@ npm install @rougechain/sdk
 ```typescript
 import { RougeChain, Wallet } from "@rougechain/sdk";
 
-const rc = new RougeChain("https://testnet.rougechain.io/api");
+// `chainId` names the network you sign for; every signature commits to it, and the client
+// refuses to sign if the node reports a different chain id.
+const rc = new RougeChain("https://testnet.rougechain.io/api", { chainId: "rougechain-devnet-1" });
 const wallet = Wallet.generate();
 
 // Get testnet tokens
@@ -630,6 +632,41 @@ const payload = {
 const signedTx = signTransaction(payload, wallet.privateKey, wallet.publicKey);
 const valid = verifyTransaction(signedTx); // true
 ```
+
+## Message Signing & Sign-In (1.13.0)
+
+Prove control of a wallet to a website (login, token gating) without sending a transaction.
+
+```typescript
+import { signMessage, verifyMessage, createSignInMessage, verifySignIn, pubkeyToAddress } from "@rougechain/sdk";
+
+// Arbitrary message
+const signature = signMessage(wallet.privateKey, "hello");
+verifyMessage(wallet.publicKey, "hello", signature); // true — false on anything else, never throws
+
+// Sign-in message (canonical multi-line text, modelled on Sign-In with Ethereum)
+const message = createSignInMessage({
+  domain: "tickets.example.com",
+  address: await pubkeyToAddress(wallet.publicKey),
+  uri: "https://tickets.example.com/login",
+  statement: "Sign in to see your tickets.",
+  nonce,                                   // from your server, single use, >= 16 characters
+  issuedAt: new Date().toISOString(),
+  expirationTime: new Date(Date.now() + 10 * 60_000).toISOString(),
+  chainId: "rougechain-mainnet-1",
+});
+
+// Server side
+const result = await verifySignIn({
+  message, signature, publicKey,
+  expectedDomain: "tickets.example.com",
+  expectedNonce: nonce,
+  expectedChainId: "rougechain-mainnet-1",
+});
+// { valid: true, address, publicKey, fields } | { valid: false, error }
+```
+
+The signature is ML-DSA-65 over `"\x19RougeChain Signed Message:\n" + decimal(byte length) + "\n" + message bytes`. A transaction's signed bytes are always a JSON document starting with `{`, so a message signature can never be replayed as a transaction and a transaction signature never verifies as a message. In a browser, ask the wallet with `window.rougechain.signMessage({ message })` (extension 1.8.0+; feature-detect). Full guide with a token-gating server: [Wallet authentication](https://docs.rougechain.io/advanced/wallet-authentication).
 
 ## Address Resolution
 

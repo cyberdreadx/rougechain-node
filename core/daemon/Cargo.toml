@@ -1,6 +1,6 @@
 [package]
 name = "quantum-vault-daemon"
-version = "0.1.0"
+version = "1.6.4"
 edition = "2021"
 
 [dependencies]
@@ -46,3 +46,7 @@ protoc-bin-vendored = "3"
 [dev-dependencies]
 wat = "1"
 quantum-vault-shield-v2 = { path = "../shield-v2", features = ["test-prover"] }
+# The wallet core, for `node::shield_v2_wallet_interop_tests` ONLY (it enables the `prover`
+# feature of the crate above). A dev-dependency: never part of a normal daemon build — asserted
+# with `cargo tree -p quantum-vault-daemon -e normal,build,features`.
+quantum-vault-shield-v2-wallet = { path = "../shield-v2-wallet" }

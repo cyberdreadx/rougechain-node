@@ -1,0 +1,49 @@
+[package]
+name = "quantum-vault-shield-v2-wallet"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Shielded pool V2 (docs/SHIELDED_POOL_V2_SPEC.md), wallet side: key derivation (§5.2), shielded address (§5.3), note encryption (§3.4), transaction building with the production prover (§3, §5.5–5.7), note scanning and the wallet's own note tree (§5.4), coin selection. Pure Rust, no network, no UI; compiles natively and to wasm32-unknown-unknown."
+
+# `test-vectors`: deterministic entropy for everything EXCEPT the proof blinding, so that keys,
+# ciphertexts, bodies and bindings of the test vectors (spec §8.4) are reproducible. Off by
+# default; a wallet build must never enable it. It does not touch the prover: a proof is always
+# blinded from the operating system's generator inside `prove_spend` (spec §5.6).
+[features]
+default = []
+test-vectors = []
+
+[dependencies]
+# The verifier, the primitives of spec §2 and the production prover. `prover` only — never
+# `test-prover`: this crate cannot name a function that takes a blinding seed.
+quantum-vault-shield-v2 = { path = "../shield-v2", features = ["prover"] }
+# The chain's transaction structure and its signing encoding (spec §3.1), so that the envelope and
+# the bytes a shield's account key signs are the node's own, not a re-implementation.
+quantum-vault-types = { path = "../types" }
+
+# ML-KEM-768 (FIPS 203), by the authors of the `fips204` crate the chain uses for ML-DSA-65.
+fips203 = { version = "0.4", default-features = false, features = ["ml-kem-768"] }
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+hkdf = "0.12"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha2 = "0.10"
+getrandom = "0.2"
+# the trait `fips203` takes its encapsulation randomness through (no generator of its own is used)
+rand_core = { version = "0.6", default-features = false }
+zeroize = "1"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[[test]]
+name = "vectors"
+path = "tests/vectors.rs"
+required-features = ["test-vectors"]
+
+[[test]]
+name = "wallet_flow"
+path = "tests/wallet_flow.rs"
+required-features = ["test-vectors"]

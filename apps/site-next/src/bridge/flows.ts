@@ -27,6 +27,7 @@ import {
 } from "@rougechain/core/bridge";
 import { createSignedBridgeWithdraw, generateNonce, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
 import { signViaExtension } from "@rougechain/core/extension-bridge";
+import { verifyNodeChainId } from "@rougechain/core/chain-id";
 import {
   approveCalldata,
   assertChain,
@@ -291,6 +292,7 @@ export interface WithdrawWallet {
 export async function signBridgeWithdraw(wallet: WithdrawWallet, amountUnits: number, destination: string, tokenSymbol: string): Promise<SignedTransaction> {
   const isBtc = tokenSymbol === "qBTC";
   if (wallet.privateKey) {
+    await verifyNodeChainId(); // once per session: the node must be on the selected network
     return createSignedBridgeWithdraw(wallet.publicKey, wallet.privateKey, amountUnits, destination, tokenSymbol, BRIDGE_FEE_XRGE, !isBtc);
   }
   const payload: TransactionPayload = {

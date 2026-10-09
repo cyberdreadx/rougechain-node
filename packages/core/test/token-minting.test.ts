@@ -36,7 +36,9 @@ function mockFetch() {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   const call = (i = 0) => {
-    const [url, init] = fetchMock.mock.calls[i] as unknown as [string, RequestInit];
+    // skip the once-per-session chain id check (GET /health, /stats) that precedes signing
+    const posts = fetchMock.mock.calls.filter((c) => !/\/(health|stats)$/.test(String((c as unknown[])[0])));
+    const [url, init] = posts[i] as unknown as [string, RequestInit];
     return { url, body: JSON.parse(String(init.body)) };
   };
   return { fetchMock, call };
@@ -104,14 +106,14 @@ describe("create_token mint fields", () => {
     expect(verifyTransaction(body)).toBe(true);
     const r = await secureCreateToken(pub, priv, "N", "SYM", 1000, 100, undefined, undefined, { mintable: true, maxSupply: 10 });
     expect(r.success).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter((c) => !/\/(health|stats)$/.test(String((c as unknown[])[0])))).toHaveLength(1);
   });
 });
 
 describe("mint_tokens", () => {
   it("createSignedTokenMint signs exactly the fields the node reads", () => {
     const tx = createSignedTokenMint(pub, priv, " mnt ", 250);
-    expect(Object.keys(tx.payload).sort()).toEqual(["amount", "fee", "from", "nonce", "timestamp", "token_symbol", "type"]);
+    expect(Object.keys(tx.payload).sort()).toEqual(["amount", "chainId", "fee", "from", "nonce", "timestamp", "token_symbol", "type"]);
     expect(tx.payload).toMatchObject({ type: "mint_tokens", token_symbol: "MNT", amount: 250, fee: 1, from: pub });
     expect(tx.public_key).toBe(pub);
     expect(verifyTransaction(tx)).toBe(true);
@@ -134,7 +136,7 @@ describe("mint_tokens", () => {
     expect(verifyTransaction(body)).toBe(true);
     const bad = await secureMintTokens(pub, priv, "MNT", 0);
     expect(bad.success).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter((c) => !/\/(health|stats)$/.test(String((c as unknown[])[0])))).toHaveLength(1);
   });
 });
 

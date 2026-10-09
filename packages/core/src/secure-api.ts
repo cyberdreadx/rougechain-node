@@ -19,6 +19,7 @@ import {
 } from "./pqc-signer";
 import { type TokenMintOptions, tokenMintFields, tokenMintingActive } from "./token-minting";
 import { signViaExtension, getRougeChainProvider } from "./extension-bridge";
+import { verifyNodeChainId } from "./chain-id";
 
 // Re-export burn address for convenience
 export { BURN_ADDRESS };
@@ -40,6 +41,8 @@ async function resolveSignedTx(
   publicKey: string,
   privateKey: string
 ): Promise<SignedTransaction> {
+  // Once per session: the node must report the chain id of the selected network.
+  await verifyNodeChainId();
   if (!privateKey) {
     if (!getRougeChainProvider()) {
       throw new Error("No private key and no wallet extension available — cannot sign transaction");

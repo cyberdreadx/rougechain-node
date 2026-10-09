@@ -11,6 +11,9 @@ import {
   type SignedTransaction,
   serializePayload,
 } from "./pqc-signer";
+import { pubkeyToAddress } from "./address";
+import { verifyNodeChainId, withChainId } from "./chain-id";
+import { verifyMessage } from "./message-signing";
 
 interface RougeChainProvider {
   isRougeChain: boolean;
@@ -25,6 +28,12 @@ interface RougeChainProvider {
     signedPayload?: string;
   }>;
   sendTransaction(params: unknown): Promise<unknown>;
+  /** Extension 1.8.0+ and Qwalla after its next update. Feature-detect before calling. */
+  signMessage?(params: { message: string }): Promise<{
+    signature: string;
+    publicKey: string;
+    address: string;
+  }>;
   on?(event: string, callback: (...args: unknown[]) => void): void;
   removeListener?(event: string, callback: (...args: unknown[]) => void): void;
 }
@@ -55,19 +64,64 @@ export async function signViaExtension(
     throw new Error("RougeChain wallet extension not available");
   }
 
-  const serialized = serializePayload(payload);
+  // Signatures commit to the network: the payload the wallet signs carries `chainId`, checked
+  // once per session against the node, and the wallet refuses a chain id other than its own.
+  const chainId = await verifyNodeChainId();
+  const bound = withChainId(payload, chainId);
+  const serialized = serializePayload(bound);
   const serializedHex = bytesToHex(serialized);
 
-  const result = await provider.signTransaction({ payload, serializedHex });
+  const result = await provider.signTransaction({ payload: bound, serializedHex });
 
   if (!result?.signature) {
     throw new Error("Extension did not return a signature");
   }
 
   return {
-    payload,
+    payload: bound,
     signature: result.signature,
     public_key: publicKey,
     payload_bytes_hex: serializedHex,
   };
+}
+
+/** A message signed by a wallet: what `verifyMessage` / `verifySignIn` take. */
+export interface SignedMessage {
+  message: string;
+  signature: string;
+  publicKey: string;
+  address: string;
+}
+
+/** True when the connected provider can sign messages (extension 1.8.0+, Qwalla after its next update). */
+export function providerSupportsSignMessage(): boolean {
+  return typeof getRougeChainProvider()?.signMessage === "function";
+}
+
+/**
+ * Sign a text message via the extension / dApp browser provider (the wallet asks the user every
+ * time). The result is checked before it is returned: it must come from `publicKey` — the wallet
+ * this page is connected as — and verify for exactly `message`.
+ */
+export async function signMessageViaExtension(message: string, publicKey: string): Promise<SignedMessage> {
+  const provider = getRougeChainProvider();
+  if (!provider) {
+    throw new Error("RougeChain wallet extension not available");
+  }
+  if (typeof provider.signMessage !== "function") {
+    throw new Error("This wallet does not support message signing yet. Update the RougeChain wallet extension or Qwalla.");
+  }
+
+  const result = await provider.signMessage({ message });
+  if (!result?.signature) {
+    throw new Error("Extension did not return a signature");
+  }
+  if (typeof result.publicKey === "string" && result.publicKey.toLowerCase() !== publicKey.toLowerCase()) {
+    throw new Error("The wallet signed with a different account than the connected one");
+  }
+  if (!verifyMessage(publicKey, message, result.signature)) {
+    throw new Error("The wallet returned a signature that does not verify for this message");
+  }
+
+  return { message, signature: result.signature, publicKey, address: await pubkeyToAddress(publicKey) };
 }

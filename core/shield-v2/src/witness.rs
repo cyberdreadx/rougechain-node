@@ -172,6 +172,30 @@ impl JoinSplit {
     }
 }
 
+/// The research witness as the wallet prover's witness (tests only: this module does not exist in
+/// a wallet build).
+impl From<&JoinSplit> for crate::prover::SpendWitness {
+    fn from(js: &JoinSplit) -> Self {
+        let i = |n: usize| {
+            let x = &js.inputs[n];
+            crate::prover::InputWitness {
+                enabled: x.enabled,
+                sk: x.sk,
+                value: x.value,
+                rho: x.rho,
+                r: x.r,
+                index: x.index,
+                path: x.path,
+            }
+        };
+        let o = |n: usize| {
+            let x = &js.outputs[n];
+            crate::prover::OutputWitness { value: x.value, pk: x.pk, r: x.r }
+        };
+        crate::prover::SpendWitness { inputs: [i(0), i(1)], outputs: [o(0), o(1)] }
+    }
+}
+
 /// A dummy input: fresh random key, rho and r, value 0, an arbitrary (all-zero, index 0) path.
 /// Its nullifier is derived exactly like a real one and is unlinkable to anything.
 pub fn dummy_input(src: &mut dyn DigestSource) -> InputNote {

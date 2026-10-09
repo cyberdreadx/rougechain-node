@@ -4,6 +4,12 @@ export interface WalletKeys {
   publicKey: string;
   privateKey: string;
   mnemonic?: string;
+  /**
+   * Network this wallet signs for (the exact chain id, e.g. "rougechain-mainnet-1"). When set,
+   * every payload built by the SDK's signers carries it as `chainId`, inside the signed bytes.
+   * The `RougeChain` client sets it for you (see `RougeChainOptions.chainId`).
+   */
+  chainId?: string;
 }
 
 export interface ApiResponse<T = unknown> {
@@ -54,6 +60,8 @@ export interface TransactionPayload {
   evmAddress?: string;
   timestamp: number;
   nonce: string;
+  /** Exact chain id of the network this payload is signed for (inside the signed bytes). */
+  chainId?: string;
   token_name?: string;
   token_symbol?: string;
   initial_supply?: number;

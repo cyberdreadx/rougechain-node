@@ -395,6 +395,32 @@ pub fn contract_nft_royalty_active(height: u64) -> bool {
     matches!(crate::upgrades::current().contract_nft_royalty, Some(a) if height >= a)
 }
 
+/// CONTRACT_CHAIN_ID — one read-only host function, `host_get_chain_id(buf_ptr, buf_len) -> i32`
+/// (`quantum_vault_vm::game::register_chain_id_function`): writes the chain id string into contract
+/// memory, so a contract can bind the messages it verifies to the network. From this height every
+/// contract call links it; before it, a module importing it fails to instantiate exactly like a
+/// module importing any unknown function. No tx fields, no state-root change. `None` = not
+/// scheduled (the per-network height lives in `upgrades.rs`).
+pub const CONTRACT_CHAIN_ID_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_CONTRACT_CHAIN_ID_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_contract_chain_id(h: Option<u64>) {
+    TEST_CONTRACT_CHAIN_ID_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn contract_chain_id_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_CONTRACT_CHAIN_ID_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(crate::upgrades::current().contract_chain_id, Some(a) if height >= a)
+}
+
 /// MONETARY_INTEGRITY — from this height a block is invalid if it carries a transaction that
 /// (a) has a fee that is not a finite number ≥ 0, (b) is of type `slash`, (c) sets the faucet
 /// flag on a network whose schedule does not allow faucet mints (`upgrades::…faucet_mint`; mainnet
@@ -801,6 +827,45 @@ pub struct UnbondingEntry {
     pub release_height: u64,
 }
 
+/// Prefix of every refusal by the node-local AMM rules (`amm_static_rule`, `L1Node::amm_admission_rule`).
+pub(crate) const AMM_REFUSED: &str = "AMM_REQUEST_REFUSED";
+
+/// The stateless part of the node-local AMM rules (mempool admission and the block producer; never
+/// block validity). Multi-hop swaps (`swap_path`) are not admitted or produced until a consensus
+/// rule validates paths — the public API never sets the field.
+pub(crate) fn amm_static_rule(tx: &TxV1) -> Result<(), String> {
+    let refuse = |m: &str| Err(format!("{}: {}", AMM_REFUSED, m));
+    let p = &tx.payload;
+    match tx.tx_type.as_str() {
+        "create_pool" => {
+            let (a, b) = (p.token_a_symbol.as_deref().unwrap_or("").trim(), p.token_b_symbol.as_deref().unwrap_or("").trim());
+            if a.is_empty() || b.is_empty() { return refuse("both token symbols are required"); }
+            if a.eq_ignore_ascii_case(b) { return refuse("a pool needs two different tokens"); }
+            let (x, y) = (p.amount_a.unwrap_or(0), p.amount_b.unwrap_or(0));
+            if x == 0 || y == 0 { return refuse("amounts must be greater than zero"); }
+            if crate::units::isqrt(x as u128 * y as u128) <= amm::MINIMUM_LIQUIDITY as u128 {
+                return refuse("no LP tokens would be minted");
+            }
+        }
+        "add_liquidity" => {
+            if p.pool_id.as_deref().unwrap_or("").is_empty() { return refuse("pool_id is required"); }
+            if p.amount_a.unwrap_or(0) == 0 || p.amount_b.unwrap_or(0) == 0 { return refuse("amounts must be greater than zero"); }
+        }
+        "remove_liquidity" => {
+            if p.pool_id.as_deref().unwrap_or("").is_empty() { return refuse("pool_id is required"); }
+            if p.lp_amount.unwrap_or(0) == 0 { return refuse("lp_amount must be greater than zero"); }
+        }
+        "swap" => {
+            if p.swap_path.is_some() { return refuse("multi-hop swaps (swap_path) are not accepted"); }
+            let (i, o) = (p.token_a_symbol.as_deref().unwrap_or("").trim(), p.token_b_symbol.as_deref().unwrap_or("").trim());
+            if i.is_empty() || o.is_empty() || i.eq_ignore_ascii_case(o) { return refuse("a swap needs two different tokens"); }
+            if p.amount_a.unwrap_or(0) == 0 { return refuse("amount_in must be greater than zero"); }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct L1Node {
     node_id: String,
@@ -893,6 +958,11 @@ pub struct L1Node {
     shield_v2_store: ShieldV2Store,
     /// SHIELD_V2: proofs this node has verified and accepted (node-local; once per tx per node).
     shield_v2_verified: shield_v2::VerifyCache,
+    /// Producer-only, node-local: while the block producer's speculative apply runs, the AMM
+    /// transactions (by tx hash) that would not take effect or would be charged without output,
+    /// with the reason. `None` (not recording) everywhere else, including block import; recording
+    /// only reads state and never changes what a block does.
+    amm_outcomes: Arc<Mutex<Option<HashMap<String, String>>>>,
 }
 
 impl L1Node {
@@ -1028,6 +1098,7 @@ impl L1Node {
             snapshot_db,
             shield_v2_store,
             shield_v2_verified: shield_v2::VerifyCache::default(),
+            amm_outcomes: Arc::new(Mutex::new(None)),
         };
 
         start_entropy_prefetch();
@@ -1103,6 +1174,19 @@ impl L1Node {
             self.fork_readiness_check()?;
         }
         self.rebuild_proposer_counts()?;
+        // SHIELD_V2, node-local (not consensus): the ciphertext hash and the accepted report are
+        // derived data. A store written by an earlier build has neither; both are rebuilt here
+        // from the stored blocks. The pool store is at the tip at this point (checked above).
+        if shield_v2::shield_v2_activation_height().is_some() {
+            match self.shield_v2_rebuild_ciphertext_acc() {
+                Ok(true) => eprintln!("[shield_v2] rebuilt the node-local ciphertext hash from the stored blocks"),
+                Ok(false) => {}
+                Err(e) => eprintln!("[shield_v2] the node-local ciphertext hash could not be rebuilt: {} — this node reports none (API only)", e),
+            }
+            if let Ok(t) = self.store.get_tip() {
+                self.shield_v2_mark_accepted(t.height);
+            }
+        }
         // C1: the tx-seen index is derived state — make it complete for the stored chain.
         self.ensure_tx_seen_index()?;
         // Amendment 2: a proposal journaled before a crash but never appended is re-imported now,
@@ -1543,12 +1627,23 @@ impl L1Node {
             // block if such a tx is not exactly the signer-less shape. Before activation there is
             // no exemption (R1-1: an old node has none). Evaluated once, outside the worker threads.
             let v2_signerless_exempt = shield_v2_active(block.header.height);
+            // CHAIN_ID_BINDING: from activation only formats that commit to the chain id verify
+            // (chain_binding::signature_valid_chain_bound); before it, exactly the old formats.
+            let chain_bound = crate::chain_binding::chain_id_binding_active(block.header.height);
+            let chain_id = self.opts.chain.chain_id.as_str();
             let invalid_count = block
                 .txs
                 .par_iter()
                 .filter(|tx| {
                     if v2_signerless_exempt && shield_v2::is_signerless_envelope(tx) {
                         return false; // valid (no signature to check)
+                    }
+                    if chain_bound {
+                        if crate::chain_binding::signature_valid_chain_bound(tx, chain_id, authority_keys) {
+                            return false;
+                        }
+                        eprintln!("[peer] Rejecting tx: no network-bound signature for {}", &tx.from_pub_key[..16.min(tx.from_pub_key.len())]);
+                        return true;
                     }
                     // V2 transactions carry the original signed payload
                     if let Some(ref sp) = tx.signed_payload {
@@ -1607,6 +1702,9 @@ impl L1Node {
             nft_royalty_cap_tx_rule(tx, block.header.height)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
             monetary_integrity_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
+            // CHAIN_ID_BINDING: a signed payload must carry this chain's id (from activation).
+            crate::chain_binding::consensus_tx_rule(tx, block.header.height, &self.opts.chain.chain_id)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
             // SHIELD_V2: envelope, body and lengths (spec §3.6 checks 1–12) from activation; before
             // it the rule is silent, like the previous release's (R1-1).
@@ -1707,6 +1805,7 @@ impl L1Node {
             let _ = self.restore_pre_apply_snapshot(pre_snapshot);
             return Err(e);
         }
+        self.shield_v2_mark_accepted(block.header.height); // node-local report (RW3-6)
 
         // Generate and store transaction receipts
         let receipts = self.generate_receipts(&block, &block_exec.bridge, &block_exec.validator);
@@ -1754,6 +1853,13 @@ impl L1Node {
     pub fn get_balance(&self, public_key: &str) -> Result<f64, String> {
         let balances = self.balances.lock().map_err(|_| "balance lock")?;
         Ok(quanta_to_display(*balances.get(&canon_addr(public_key)).unwrap_or(&0)))
+    }
+
+    /// Native balance exactly as stored: integer quanta (1 XRGE = 10^9 quanta). `get_balance`
+    /// converts to `f64`, which cannot represent every quanta value above 2^53.
+    pub fn get_balance_quanta(&self, public_key: &str) -> Result<u128, String> {
+        let balances = self.balances.lock().map_err(|_| "balance lock")?;
+        Ok(*balances.get(&canon_addr(public_key)).unwrap_or(&0))
     }
 
     /// Get a transaction receipt by hash.
@@ -2028,6 +2134,24 @@ impl L1Node {
         let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let key = (canon_addr(&public_key), token_symbol.to_string());
         Ok(*token_balances.get(&key).unwrap_or(&0) as f64)
+    }
+
+    /// One token balance exactly as stored (integer units).
+    pub fn get_token_balance_raw(&self, public_key: &str, token_symbol: &str) -> Result<u128, String> {
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let key = (canon_addr(&public_key), token_symbol.to_string());
+        Ok(*token_balances.get(&key).unwrap_or(&0))
+    }
+
+    /// Every non-zero token balance of a wallet exactly as stored (integer units).
+    pub fn get_all_token_balances_raw(&self, public_key: &str) -> Result<HashMap<String, u128>, String> {
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let addr = canon_addr(&public_key);
+        Ok(token_balances
+            .iter()
+            .filter(|((pubkey, _), balance)| pubkey == &addr && **balance > 0)
+            .map(|((_, symbol), balance)| (symbol.clone(), *balance))
+            .collect())
     }
 
     pub fn get_all_token_balances(&self, public_key: &str) -> Result<HashMap<String, f64>, String> {
@@ -2544,6 +2668,8 @@ impl L1Node {
         let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
         let sig_valid = if shield_v2::skips_account_signature(&tx, next_height) {
             true
+        } else if crate::chain_binding::chain_id_binding_active(next_height) {
+            crate::chain_binding::signature_valid_chain_bound(&tx, &self.opts.chain.chain_id, &self.opts.bridge_authority_keys)
         } else if let Some(ref sp) = tx.signed_payload {
             pqc_verify(&tx.from_pub_key, sp.as_bytes(), &tx.sig).ok() == Some(true)
         } else {
@@ -2593,6 +2719,10 @@ impl L1Node {
         nft_royalty_cap_tx_rule(&tx, next_height)?;
         fee_and_type_sanity(&tx)?; // node-local, always on
         monetary_integrity_tx_rule(&tx, next_height)?;
+        // Signatures commit to the network: node rule (a signed payload naming another chain id,
+        // or none with REQUIRE_SIGNED_CHAIN_ID) and, from CHAIN_ID_BINDING, the consensus rule.
+        crate::chain_binding::local_tx_rule(&tx, &self.opts.chain.chain_id, crate::chain_binding::require_signed())?;
+        crate::chain_binding::consensus_tx_rule(&tx, next_height, &self.opts.chain.chain_id)?;
         if tx.tx_type == "mint_tokens" && token_minting_active(next_height) {
             self.check_token_mint_now(&tx)?;
         }
@@ -2601,6 +2731,8 @@ impl L1Node {
         // old node). From activation: the stateless rule (spec §3.6 checks 1–12), decoded once.
         shield_v2::shield_v2_local_rule(&tx, next_height)?;
         let shield_v2_parsed = shield_v2_tx_rule(&tx, next_height, &self.opts.chain.chain_id)?;
+        // Node-local AMM rule (malformed liquidity / swap requests; never block validity).
+        self.amm_admission_rule(&tx)?;
 
         let identity = quantum_vault_types::tx_identity(&tx);
         if let Some(h) = self.tx_included_at(&identity) {
@@ -2665,6 +2797,13 @@ impl L1Node {
         Ok(())
     }
 
+    /// The bytes to sign for a V1-format (node-built) transaction headed for the next block: from
+    /// CHAIN_ID_BINDING activation the network-bound encoding, before it the plain one.
+    pub fn v1_signing_bytes(&self, tx: &TxV1) -> Vec<u8> {
+        let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        crate::chain_binding::v1_signing_bytes(tx, &self.opts.chain.chain_id, next_height)
+    }
+
     pub fn get_node_public_key(&self) -> String {
         self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default()
     }
@@ -2719,7 +2858,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -2784,7 +2923,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -2840,7 +2979,7 @@ impl L1Node {
                 sig: String::new(),
                 signed_payload: None,
             };
-            let bytes = encode_tx_for_signing(&tx);
+            let bytes = self.v1_signing_bytes(&tx);
             tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
             match self.accept_tx(tx.clone()) {
                 Ok(()) => return Ok(tx),
@@ -2900,7 +3039,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -2977,7 +3116,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         // Mark as pre-verified so mine_pending skips signature re-check.
         // The sig is node-signed (not user-signed), so pqc_verify(user_pubkey, sig) would fail.
@@ -3011,7 +3150,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         self.accept_tx(tx.clone())?;
         Ok(tx)
@@ -3044,7 +3183,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash);
@@ -3083,7 +3222,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash);
@@ -3130,7 +3269,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -3163,7 +3302,7 @@ impl L1Node {
             sig: String::new(),
             signed_payload: None,
         };
-        let bytes = encode_tx_for_signing(&tx);
+        let bytes = self.v1_signing_bytes(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -3740,6 +3879,27 @@ impl L1Node {
         Ok((total_fees, last_fees))
     }
 
+    /// Producer only: the index of the first transaction of `block` whose application fails —
+    /// the shortest failing prefix, found by bisection over speculative applies, each rolled back.
+    /// `None` when even the empty block fails (a failure not caused by a transaction).
+    fn producer_first_failing_tx(&self, block: &BlockV1) -> Result<Option<usize>, String> {
+        let fails = |k: usize| -> Result<bool, String> {
+            let probe = BlockV1 { txs: block.txs[..k].to_vec(), ..block.clone() };
+            let snap = self.capture_pre_apply_snapshot(&probe)?;
+            let failed = self.apply_balance_block(&probe).is_err();
+            self.restore_pre_apply_snapshot(snap)?;
+            Ok(failed)
+        };
+        let n = block.txs.len();
+        if n == 0 || fails(0)? || !fails(n)? { return Ok(None); }
+        let (mut ok, mut bad) = (0usize, n); // prefix `ok` applies, prefix `bad` fails
+        while bad - ok > 1 {
+            let mid = (ok + bad) / 2;
+            if fails(mid)? { bad = mid } else { ok = mid }
+        }
+        Ok(Some(bad - 1))
+    }
+
     pub fn mine_pending(&self) -> Result<Option<BlockV1>, String> {
         // Producer-side proposer rule + anti-equivocation journal, BEFORE touching the mempool.
         {
@@ -3787,13 +3947,24 @@ impl L1Node {
         let producing_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
         // SHIELD_V2: the signer-less exemption, from activation only (once, outside the workers)
         let v2_signerless_exempt = shield_v2_active(producing_height);
+        // CHAIN_ID_BINDING: from activation every transaction is re-checked for a network-bound
+        // signature (also pre-verified ones: one admitted before activation may not have it).
+        let chain_bound = crate::chain_binding::chain_id_binding_active(producing_height);
+        let chain_id = self.opts.chain.chain_id.as_str();
+        let authority_keys = &self.opts.bridge_authority_keys;
         let mut verified_set = self.verified_tx_ids.lock().map_err(|_| "verified lock")?;
         // Verify signatures in parallel; skip re-verification for pre-verified (v2 API) txs
         let verified_entries: Vec<(String, TxV1)> = {
             use rayon::prelude::*;
             tx_entries.into_par_iter()
                 .filter(|(id, tx)| {
-                    if verified_set.contains(id) || (v2_signerless_exempt && shield_v2::is_signerless_envelope(tx)) {
+                    if v2_signerless_exempt && shield_v2::is_signerless_envelope(tx) {
+                        return true;
+                    }
+                    if chain_bound {
+                        return crate::chain_binding::signature_valid_chain_bound(tx, chain_id, authority_keys);
+                    }
+                    if verified_set.contains(id) {
                         return true;
                     }
                     let bytes = encode_tx_for_signing(tx);
@@ -3814,11 +3985,19 @@ impl L1Node {
             .filter(|(_, tx)| nft_royalty_cap_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| fee_and_type_sanity(tx).is_ok() && monetary_integrity_tx_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| crate::v2_binding::verify_v2_binding_at(tx, producing_height).is_ok())
+            // Signatures commit to the network (node rule + CHAIN_ID_BINDING from activation)
+            .filter(|(_, tx)| crate::chain_binding::local_tx_rule(tx, chain_id, crate::chain_binding::require_signed()).is_ok()
+                && crate::chain_binding::consensus_tx_rule(tx, producing_height, chain_id).is_ok())
             // SHIELD_V2 (R1-1, node-local): before activation this node produces no V2 type and
             // no transaction carrying either field; from activation an ordinary type must not
             // carry the fields (the V2 types are judged by the selection below)
             .filter(|(_, tx)| shield_v2::shield_v2_local_rule(tx, producing_height).is_ok())
             .filter(|(_, tx)| shield_v2::is_shield_v2_type(&tx.tx_type) || !shield_v2::has_shield_v2_fields(&tx.payload))
+            // Node-local AMM rule, stateless part (positional checks: see the AMM outcomes below)
+            .filter(|(_, tx)| match amm_static_rule(tx) {
+                Ok(()) => true,
+                Err(e) => { eprintln!("[miner] dropping {} {}: {}", tx.tx_type, &compute_single_tx_hash(tx)[..16], e); false }
+            })
             .collect();
         // SHIELD_V2: V2 transactions in order against the evolving pool state; failing ones are
         // left out (spec §4.6), at most 8 per block — the valid ones beyond the limit go straight
@@ -3835,105 +4014,160 @@ impl L1Node {
         if verified_entries.is_empty() {
             return Ok(None);
         }
-        let txs: Vec<TxV1> = verified_entries.iter().map(|(_, tx)| tx.clone()).collect();
-        let requeue = verified_entries; // returned to the mempool if production fails before commit
-        let tip = self.store.get_tip()?;
-        let height = tip.height + 1;
-        let time = Utc::now().timestamp_millis() as u64;
-        let proposer_pub_key = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
-        let tx_hash = compute_tx_hash(&txs);
+        let mut candidates = verified_entries;
+        // Assembled again (same height) each time a transaction is left out — see the error path.
+        let (block, block_exec) = 'assemble: loop {
+            if candidates.is_empty() {
+                return Ok(None);
+            }
+            let txs: Vec<TxV1> = candidates.iter().map(|(_, tx)| tx.clone()).collect();
+            let requeue = candidates.clone(); // returned to the mempool if production fails before commit
+            let apply_failed = std::cell::Cell::new(false);
+            let amm_ineffective: std::cell::RefCell<Vec<(String, String)>> = std::cell::RefCell::new(Vec::new());
+            let tip = self.store.get_tip()?;
+            let height = tip.height + 1;
+            let time = Utc::now().timestamp_millis() as u64;
+            let proposer_pub_key = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
+            let tx_hash = compute_tx_hash(&txs);
 
-        // Phase 2: commit to the POST-state root, so the block header must be
-        // sealed AFTER applying the block. apply_balance_block reads only
-        // header.{height,time,proposer_pub_key} and txs — never sig/hash/state_root
-        // — so a preliminary header (unsigned, no root) is sufficient to apply.
-        let prelim_header = BlockHeaderV1 {
-            version: 1,
-            chain_id: self.opts.chain.chain_id.clone(),
-            height,
-            time,
-            prev_hash: tip.hash.clone(),
-            tx_hash: tx_hash.clone(),
-            proposer_pub_key: proposer_pub_key.clone(),
-            state_root: None,
-            parent_commit: if self.parent_commit_required(height) { self.get_persisted_finality_proof(tip.height)? } else { None },
-        };
-        if self.parent_commit_required(height) && prelim_header.parent_commit.is_none() {
-            // the tip changed or the certificate vanished between the guard and here: requeue
-            if let Ok(mut mp) = self.mempool.lock() { for (id, tx) in requeue { mp.insert(id, tx); } }
-            return Ok(None);
-        }
-        let prelim_block = BlockV1 {
-            version: 1,
-            header: prelim_header.clone(),
-            txs: txs.clone(),
-            proposer_sig: String::new(),
-            hash: String::new(),
-        };
-        // ── PRODUCER ATOMICITY (same contract as import_block) ────────────────────────
-        // Full pre-apply snapshot first. Every step through append_block is speculative:
-        // ANY failure before the commit point restores the node state exactly and requeues
-        // the drained transactions. Order: snapshot → apply ledger effects (incl. matured
-        // unbonding) → post-state root → sign → validator effects → append (COMMIT POINT)
-        // → derived bookkeeping (mined hashes, finality, receipts, payouts, stats).
-        let pre_snapshot = self.capture_pre_apply_snapshot(&prelim_block)?;
-        // Slot key journaled by THIS attempt (None until the journal write succeeded). A failure
-        // after that point but before append means the block was never durable nor broadcast, so
-        // the record is withdrawn with the rollback; a record left by an earlier attempt/process is
-        // never touched here (it is re-imported at the top of mine_pending instead).
-        let journaled_key: std::cell::Cell<Option<Vec<u8>>> = std::cell::Cell::new(None);
-        let attempt = (|| -> Result<(BlockV1, BlockExecution), String> {
-            // Apply to state ONCE, here. (The old post-append apply_balance_block call
-            // is intentionally removed — applying twice would double-charge fees.)
-            let block_exec = self.apply_balance_block(&prelim_block)?;
-            #[cfg(test)]
-            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 1 { return Err("injected fault: root computation".into()); } }
-            // Stamp the post-state root, gated on the activation height.
-            let state_root = if height >= state_root_activation_height() {
-                Some(self.compute_state_root_for_height(height)?)
-            } else {
-                None
+            // Phase 2: commit to the POST-state root, so the block header must be
+            // sealed AFTER applying the block. apply_balance_block reads only
+            // header.{height,time,proposer_pub_key} and txs — never sig/hash/state_root
+            // — so a preliminary header (unsigned, no root) is sufficient to apply.
+            let prelim_header = BlockHeaderV1 {
+                version: 1,
+                chain_id: self.opts.chain.chain_id.clone(),
+                height,
+                time,
+                prev_hash: tip.hash.clone(),
+                tx_hash: tx_hash.clone(),
+                proposer_pub_key: proposer_pub_key.clone(),
+                state_root: None,
+                parent_commit: if self.parent_commit_required(height) { self.get_persisted_finality_proof(tip.height)? } else { None },
             };
-            let header = BlockHeaderV1 { state_root, ..prelim_header.clone() };
-            let header_bytes = encode_header_v1(&header);
-            let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
-            let hash = compute_block_hash(&header_bytes, &proposer_sig);
-            let block = BlockV1 { version: 1, header, txs: prelim_block.txs.clone(), proposer_sig, hash };
-            // Amendment 2: durable proposal record for (height, parent) BEFORE the block can be made
-            // durable or broadcast. A different record for this slot ⇒ refuse (equivocation guard).
-            self.journal_proposal(&block)?;
-            journaled_key.set(Some(Self::proposal_key(block.header.height, &block.header.prev_hash)));
-            // Validator-store effects BEFORE the block is durable (post-root, store-only).
-            self.apply_validator_block(&block, &block_exec.validator)?;
-            #[cfg(test)]
-            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 2 { return Err("injected fault: validator persistence".into()); } }
-            #[cfg(test)]
-            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 3 { return Err("injected fault: append_block".into()); } }
-            self.store.append_block(&block)?;
-            Ok((block, block_exec))
-        })();
-        let (block, block_exec) = match attempt {
-            Ok(v) => v,
-            Err(e) => {
-                let restore = self.restore_pre_apply_snapshot(pre_snapshot);
-                if let Some(k) = journaled_key.take() { let _ = self.proposal_journal.remove(k); let _ = self.proposal_journal.flush(); }
-                // Requeue the drained (already signature-verified) transactions. If a SHIELD_V2
-                // rule failed the attempt, its V2 transactions are dropped instead of requeued, so
-                // the producer cannot loop on the same refused transaction.
-                let drop_v2 = e.contains("shield_v2");
-                if let Ok(mut mempool) = self.mempool.lock() {
-                    if let Ok(mut verified) = self.verified_tx_ids.lock() {
-                        for (id, tx) in requeue {
-                            if drop_v2 && shield_v2::is_shield_v2_type(&tx.tx_type) { continue; }
-                            verified.insert(id.clone()); mempool.insert(id, tx);
+            if self.parent_commit_required(height) && prelim_header.parent_commit.is_none() {
+                // the tip changed or the certificate vanished between the guard and here: requeue
+                if let Ok(mut mp) = self.mempool.lock() { for (id, tx) in requeue { mp.insert(id, tx); } }
+                return Ok(None);
+            }
+            let prelim_block = BlockV1 {
+                version: 1,
+                header: prelim_header.clone(),
+                txs: txs.clone(),
+                proposer_sig: String::new(),
+                hash: String::new(),
+            };
+            // ── PRODUCER ATOMICITY (same contract as import_block) ────────────────────────
+            // Full pre-apply snapshot first. Every step through append_block is speculative:
+            // ANY failure before the commit point restores the node state exactly and requeues
+            // the drained transactions. Order: snapshot → apply ledger effects (incl. matured
+            // unbonding) → post-state root → sign → validator effects → append (COMMIT POINT)
+            // → derived bookkeeping (mined hashes, finality, receipts, payouts, stats).
+            let pre_snapshot = self.capture_pre_apply_snapshot(&prelim_block)?;
+            // Slot key journaled by THIS attempt (None until the journal write succeeded). A failure
+            // after that point but before append means the block was never durable nor broadcast, so
+            // the record is withdrawn with the rollback; a record left by an earlier attempt/process is
+            // never touched here (it is re-imported at the top of mine_pending instead).
+            let journaled_key: std::cell::Cell<Option<Vec<u8>>> = std::cell::Cell::new(None);
+            let attempt = (|| -> Result<(BlockV1, BlockExecution), String> {
+                // Apply to state ONCE, here. (The old post-append apply_balance_block call
+                // is intentionally removed — applying twice would double-charge fees.)
+                // Node-local: record the AMM transactions that would not take effect (observation only).
+                if let Ok(mut g) = self.amm_outcomes.lock() { *g = Some(HashMap::new()); }
+                let applied = self.apply_balance_block(&prelim_block);
+                let outcomes = self.amm_outcomes.lock().ok().and_then(|mut g| g.take()).unwrap_or_default();
+                let block_exec = match applied {
+                    Ok(x) => x,
+                    Err(e) => { apply_failed.set(true); return Err(e); }
+                };
+                // Leave out an AMM transaction that would not take effect at its position (e.g. a
+                // swap below its min_amount_out, a pool that already exists): the FIRST one in block
+                // order is dropped and the block is assembled again without it (the ones after it
+                // are judged again, against the state without it).
+                let ineffective: Vec<(String, String)> = prelim_block.txs.iter()
+                    .map(compute_single_tx_hash)
+                    .filter_map(|h| outcomes.get(&h).map(|r| (h.clone(), r.clone())))
+                    .take(1)
+                    .collect();
+                if !ineffective.is_empty() {
+                    let n = ineffective.len();
+                    amm_ineffective.replace(ineffective);
+                    return Err(format!("{} AMM transaction(s) would not take effect", n));
+                }
+                #[cfg(test)]
+                { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 1 { return Err("injected fault: root computation".into()); } }
+                // Stamp the post-state root, gated on the activation height.
+                let state_root = if height >= state_root_activation_height() {
+                    Some(self.compute_state_root_for_height(height)?)
+                } else {
+                    None
+                };
+                let header = BlockHeaderV1 { state_root, ..prelim_header.clone() };
+                let header_bytes = encode_header_v1(&header);
+                let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
+                let hash = compute_block_hash(&header_bytes, &proposer_sig);
+                let block = BlockV1 { version: 1, header, txs: prelim_block.txs.clone(), proposer_sig, hash };
+                // Amendment 2: durable proposal record for (height, parent) BEFORE the block can be made
+                // durable or broadcast. A different record for this slot ⇒ refuse (equivocation guard).
+                self.journal_proposal(&block)?;
+                journaled_key.set(Some(Self::proposal_key(block.header.height, &block.header.prev_hash)));
+                // Validator-store effects BEFORE the block is durable (post-root, store-only).
+                self.apply_validator_block(&block, &block_exec.validator)?;
+                #[cfg(test)]
+                { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 2 { return Err("injected fault: validator persistence".into()); } }
+                #[cfg(test)]
+                { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 3 { return Err("injected fault: append_block".into()); } }
+                self.store.append_block(&block)?;
+                self.shield_v2_mark_accepted(block.header.height); // node-local report (RW3-6)
+                Ok((block, block_exec))
+            })();
+            break 'assemble match attempt {
+                Ok(v) => v,
+                Err(e) => {
+                    let restore = self.restore_pre_apply_snapshot(pre_snapshot);
+                    if let Some(k) = journaled_key.take() { let _ = self.proposal_journal.remove(k); let _ = self.proposal_journal.flush(); }
+                    // Node-local: a transaction that fails or would not take effect is DROPPED (logged)
+                    // and the block is assembled again without it — one transaction never holds back
+                    // the others.
+                    if restore.is_ok() {
+                        let ineffective = amm_ineffective.take();
+                        let drop_ids: Vec<String> = if !ineffective.is_empty() {
+                            for (h, r) in &ineffective { eprintln!("[miner] height {}: leaving out tx {}: {}", height, &h[..16.min(h.len())], r); }
+                            let hs: HashSet<String> = ineffective.into_iter().map(|(h, _)| h).collect();
+                            candidates.iter().filter(|(_, tx)| hs.contains(&compute_single_tx_hash(tx))).map(|(id, _)| id.clone()).collect()
+                        } else if apply_failed.get() {
+                            match self.producer_first_failing_tx(&prelim_block) {
+                                Ok(Some(i)) => {
+                                    eprintln!("[miner] height {}: leaving out tx {} ({}): its application fails: {}", height,
+                                        &compute_single_tx_hash(&txs[i])[..16], txs[i].tx_type, e);
+                                    vec![candidates[i].0.clone()]
+                                }
+                                _ => Vec::new(),
+                            }
+                        } else { Vec::new() };
+                        if !drop_ids.is_empty() {
+                            candidates.retain(|(id, _)| !drop_ids.contains(id));
+                            continue 'assemble;
                         }
                     }
+                    // Requeue the drained (already signature-verified) transactions. If a SHIELD_V2
+                    // rule failed the attempt, its V2 transactions are dropped instead of requeued, so
+                    // the producer cannot loop on the same refused transaction.
+                    let drop_v2 = e.contains("shield_v2");
+                    if let Ok(mut mempool) = self.mempool.lock() {
+                        if let Ok(mut verified) = self.verified_tx_ids.lock() {
+                            for (id, tx) in requeue {
+                                if drop_v2 && shield_v2::is_shield_v2_type(&tx.tx_type) { continue; }
+                                verified.insert(id.clone()); mempool.insert(id, tx);
+                            }
+                        }
+                    }
+                    return Err(match restore {
+                        Ok(()) => format!("block production at height {} failed and was rolled back: {}", height, e),
+                        Err(re) => format!("block production at height {} failed ({}) AND rollback failed ({}) — manual investigation", height, e, re),
+                    });
                 }
-                return Err(match restore {
-                    Ok(()) => format!("block production at height {} failed and was rolled back: {}", height, e),
-                    Err(re) => format!("block production at height {} failed ({}) AND rollback failed ({}) — manual investigation", height, e, re),
-                });
-            }
+            };
         };
         // ── COMMIT POINT: the block is durable; everything below is derived bookkeeping ──
         // Track mined tx hashes to prevent re-adding to mempool
@@ -4382,6 +4616,7 @@ impl L1Node {
             block_hashes: game_ready_3_active(height),
             payable: payable_calls_active(height),
             nft_royalty: contract_nft_royalty_active(height),
+            chain_id: contract_chain_id_active(height).then(|| self.opts.chain.chain_id.clone()),
             attached: attach.map(|(_, _, s, a)| (s.to_string(), a)),
         })
     }
@@ -5551,6 +5786,7 @@ impl L1Node {
                                 block_hashes: game_ready_3_active(block.header.height),
                                 payable: payable_calls_active(block.header.height),
                                 nft_royalty: contract_nft_royalty_active(block.header.height),
+                                chain_id: contract_chain_id_active(block.header.height).then(|| self.opts.chain.chain_id.clone()),
                                 attached: attach.clone(),
                             });
                             match rt.execute_contract_ext(
@@ -5696,6 +5932,25 @@ impl L1Node {
 
     // ── SHIELD_V2: read-only views (API) ────────────────────────────────────────────────────
     /// Pool statistics: activation, pool total, note and nullifier counts, tree root, anchor window.
+    ///
+    /// **`report`** (REVIEW_WALLET_2 RW2-6) is what a wallet passes to `confirm_state`: the height
+    /// and both halves of the pool state of spec §4.8 — `tree_root` and `nullifier_acc`, with
+    /// `note_count` and `nullifier_count` — **all five from ONE read of the pool record**. The
+    /// record is one value, written once per block together with that block's leaves and
+    /// nullifiers; `height` is the record's own `next_height − 1`, the last block whose effects it
+    /// holds. It is never paired with `tip_height`, which comes from the chain store in another
+    /// read: a block applied between the two reads would give the root of one height under the
+    /// number of another, and two nodes racing the same block would send a wallet two reports
+    /// that match nothing. `report` is `null` before the pool's first block. API only: nothing
+    /// here is consensus.
+    ///
+    /// REVIEW_WALLET_3: the report carries **`ciphertext_acc`** as a sixth value — this node's
+    /// running hash over `(cm_out, kem_ct, note_ct)` of every accepted output in tree order
+    /// (`shield_v2::ciphertext_acc_step`; node-local, outside the pool record and the state
+    /// root; `null` if this node cannot vouch for it) — and it is the record of the last
+    /// **accepted** block (RW3-6): a block that is being applied and may still be rejected does
+    /// not show. The `pool` object beside it is still the pool record as stored and can be one
+    /// block ahead for a moment; a wallet confirms against `report` only.
     pub fn shield_v2_stats(&self) -> Result<serde_json::Value, String> {
         let activation = shield_v2::shield_v2_activation_height();
         let tip = self.store.get_tip()?.height;
@@ -5714,6 +5969,17 @@ impl L1Node {
             Some(m) => Some(shield_v2::decode_stored_pool(&m)?),
             None => None,
         };
+        // RW3-6: the report is the record of the last ACCEPTED block — one read of one value that
+        // is written only after a block was stored on this node's chain. The pool record itself
+        // is written by the speculative apply of a block that may still be rejected. Before the
+        // first accepted pool block the pool is in its genesis state, which no apply has touched.
+        let accepted = match self.shield_v2_store.accepted()?.as_deref().and_then(shield_v2::AcceptedReport::decode) {
+            Some(r) => Some(r),
+            None => stored.as_ref().filter(|st| st.next_height == st.activation_height).and_then(|st| {
+                st.next_height.checked_sub(1).map(|h| shield_v2::AcceptedReport::of(h, &st.state, Some([0u8; 32])))
+            }),
+        };
+        v["report"] = accepted.map(|r| r.json()).unwrap_or(serde_json::Value::Null);
         if let Some(st) = stored {
             let p = &st.state;
             v["pool"] = serde_json::json!({
@@ -5731,6 +5997,56 @@ impl L1Node {
             v["pool"] = serde_json::Value::Null;
         }
         Ok(v)
+    }
+
+    /// Node-local, not consensus (RW3-6): records the pool state after the block at `height` as
+    /// this node's `report`, once that block is stored on its chain. Called after
+    /// `store.append_block` on the import and the producer path, and at start-up for the tip.
+    /// Does nothing unless the pool record is exactly at that height.
+    fn shield_v2_mark_accepted(&self, height: u64) {
+        let r = (|| -> Result<(), String> {
+            let Some(m) = self.shield_v2_store.meta()? else { return Ok(()) };
+            let st = shield_v2::decode_stored_pool(&m)?;
+            if st.next_height != height.saturating_add(1) || height < st.activation_height {
+                return Ok(());
+            }
+            let acc = shield_v2::current_ciphertext_acc(&self.shield_v2_store)?;
+            self.shield_v2_store.put_accepted(&shield_v2::AcceptedReport::of(height, &st.state, acc).encode())
+        })();
+        if let Err(e) = r {
+            eprintln!("[shield_v2] could not record the accepted report at height {}: {} (API only)", height, e);
+        }
+    }
+
+    /// Node-local, not consensus (RW3-2): a store written before the node kept the ciphertext
+    /// hash has leaves and no side record. Rebuild it once from the stored blocks — the same
+    /// bytes the listing serves — and check every commitment against the stored leaf on the way.
+    /// On any mismatch nothing is written and the node keeps reporting no ciphertext hash.
+    fn shield_v2_rebuild_ciphertext_acc(&self) -> Result<bool, String> {
+        if shield_v2::current_ciphertext_acc(&self.shield_v2_store)?.is_some() {
+            return Ok(false);
+        }
+        let Some(m) = self.shield_v2_store.meta()? else { return Ok(false) };
+        let st = shield_v2::decode_stored_pool(&m)?;
+        let (mut acc, mut leaf) = ([0u8; 32], 0u64);
+        for h in st.activation_height..st.next_height {
+            let Some(block) = self.store.get_block(h)? else { continue };
+            for tx in &block.txs {
+                let Some(f) = shield_v2::listing_fields(tx) else { continue };
+                for j in 0..2 {
+                    if self.shield_v2_store.leaf(leaf)? != Some(f.cm_out[j]) {
+                        return Err(format!("leaf {} is not the commitment of the block at height {}", leaf, h));
+                    }
+                    acc = shield_v2::ciphertext_acc_step(&acc, &f.cm_out[j], &f.kem_ct[j], &f.note_ct[j]);
+                    leaf += 1;
+                }
+            }
+        }
+        if leaf != self.shield_v2_store.leaf_count()? {
+            return Err(format!("the stored blocks hold {} outputs, the pool store {}", leaf, self.shield_v2_store.leaf_count()?));
+        }
+        self.shield_v2_store.put_side(&shield_v2::encode_side(&acc, leaf))?;
+        Ok(true)
     }
 
     /// Wallet-facing listing (spec §5.4): for every accepted V2 transaction of the blocks
@@ -5920,7 +6236,14 @@ impl L1Node {
             if let Some(p) = &parsed { pool_txs.push(p.pool_tx()); }
             txs.push(parsed);
         }
-        let pool = self.shield_v2_pool()?;
+        // node-local (not consensus): the ciphertexts of the block's outputs in leaf order, for
+        // the running ciphertext hash the store keeps beside the pool record (RW3-2)
+        let ciphertexts: Vec<(Vec<u8>, Vec<u8>)> = txs.iter().flatten()
+            .filter_map(|p| shield_v2::body_ciphertexts(&p.body_bytes)).flatten().collect();
+        let a = shield_v2::shield_v2_activation_height().ok_or_else(|| "shield_v2: not scheduled on this network".to_string())?;
+        let pool = quantum_vault_shield_v2::pool::Pool::open_or_init(
+            shield_v2::DaemonPoolStore::with_ciphertexts(self.shield_v2_store.clone(), ciphertexts), a)
+            .map_err(|e| format!("shield_v2: pool store: {:?}", e))?;
         let prepared = pool.validate_block(height, &pool_txs)
             .map_err(|e| format!("shield_v2: block {} refused by the pool rules: {:?}", height, e))?;
         Ok(ShieldV2BlockPlan { txs, pool, prepared })
@@ -6082,6 +6405,58 @@ impl L1Node {
     }
 
     /// Apply AMM-specific transaction effects
+    /// Node-local AMM admission rule (mempool admission — which every `/api/v2` handler, the batch
+    /// route and P2P relay go through — and, for the stateless part, the block producer). Never part
+    /// of block validity: `import_block` does not apply it. Judged against this node's current
+    /// state; the producer additionally judges each AMM transaction at its position in the block.
+    pub(crate) fn amm_admission_rule(&self, tx: &TxV1) -> Result<(), String> {
+        amm_static_rule(tx)?;
+        match tx.tx_type.as_str() {
+            "create_pool" => {
+                let (a, b) = (tx.payload.token_a_symbol.as_deref().unwrap_or(""), tx.payload.token_b_symbol.as_deref().unwrap_or(""));
+                if self.amm_pool_exists(a, b) {
+                    return Err(format!("{}: pool {} already exists", AMM_REFUSED, LiquidityPool::make_pool_id(a, b)));
+                }
+            }
+            "add_liquidity" | "remove_liquidity" => {
+                let pool_id = tx.payload.pool_id.as_deref().unwrap_or("");
+                let pool = self.pool_store.get_pool(pool_id)?.ok_or_else(|| format!("{}: pool {} not found", AMM_REFUSED, pool_id))?;
+                if tx.tx_type == "add_liquidity" {
+                    let (a, b) = (tx.payload.amount_a.unwrap_or(0), tx.payload.amount_b.unwrap_or(0));
+                    match amm::calculate_lp_mint(a, b, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                        Some(lp) if lp > 0 => {}
+                        _ => return Err(format!("{}: no LP tokens would be minted", AMM_REFUSED)),
+                    }
+                } else {
+                    let lp = tx.payload.lp_amount.unwrap_or(0);
+                    if lp > pool.total_lp_supply || amm::calculate_remove_liquidity(lp, pool.reserve_a, pool.reserve_b, pool.total_lp_supply).is_none() {
+                        return Err(format!("{}: nothing would be returned on one side of the pool", AMM_REFUSED));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Producer-only AMM observation (see `amm_outcomes`): record why an AMM transaction would
+    /// not take effect. A no-op unless the producer is recording.
+    fn amm_note(&self, tx_hash: &str, reason: impl FnOnce() -> String) {
+        if let Ok(mut g) = self.amm_outcomes.lock() {
+            if let Some(m) = g.as_mut() { m.entry(tx_hash.to_string()).or_insert_with(reason); }
+        }
+    }
+    fn amm_recording(&self) -> bool {
+        self.amm_outcomes.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+    /// Whether a pool exists for the pair, in either order, as given or with the symbols
+    /// upper-cased (pool ids are built from the sorted symbols as given).
+    pub(crate) fn amm_pool_exists(&self, token_a: &str, token_b: &str) -> bool {
+        let ids = [LiquidityPool::make_pool_id(token_a, token_b),
+                   LiquidityPool::make_pool_id(&token_a.trim().to_uppercase(), &token_b.trim().to_uppercase())];
+        ids.iter().any(|id| matches!(self.pool_store.get_pool(id), Ok(Some(_))))
+    }
+
     fn apply_amm_tx_inner(
         &self,
         balances: &mut HashMap<String, u128>,
@@ -6107,14 +6482,14 @@ impl L1Node {
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(xrge_needed) {
                     eprintln!("[node] Rejecting create_pool: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 if token_a != "XRGE" {
                     let key = (canon_addr(&tx.from_pub_key), token_a.clone());
                     let bal = *token_balances.get(&key).unwrap_or(&0);
                     if bal < amount_a as u128 {
                         eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_a, bal, amount_a);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 if token_b != "XRGE" {
@@ -6122,7 +6497,7 @@ impl L1Node {
                     let bal = *token_balances.get(&key).unwrap_or(&0);
                     if bal < amount_b as u128 {
                         eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_b, bal, amount_b);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 
@@ -6143,6 +6518,16 @@ impl L1Node {
                     block_time,
                 );
                 
+                // Producer-only observation (no effect on the block): a pool for this pair already
+                // exists, or no LP tokens would be minted.
+                if self.amm_recording() {
+                    if self.amm_pool_exists(token_a, token_b) {
+                        self.amm_note(&tx_hash, || format!("create_pool: pool {} already exists", pool.pool_id));
+                    } else if pool.total_lp_supply == 0 || token_a.trim().eq_ignore_ascii_case(token_b.trim()) {
+                        self.amm_note(&tx_hash, || "create_pool: no LP tokens would be minted".to_string());
+                    }
+                }
+
                 // Mint LP tokens to creator
                 let lp_key = (canon_addr(&tx.from_pub_key), pool.pool_id.clone());
                 *lp_balances.entry(lp_key).or_insert(0) += pool.total_lp_supply as u128;
@@ -6196,7 +6581,7 @@ impl L1Node {
                     Some(p) => p,
                     None => {
                         eprintln!("[node] Warning: Pool {} not found, skipping add_liquidity", pool_id);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 };
 
@@ -6207,14 +6592,14 @@ impl L1Node {
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(xrge_needed) {
                     eprintln!("[node] Rejecting add_liquidity: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 if pool.token_a != "XRGE" {
                     let key = (canon_addr(&tx.from_pub_key), pool.token_a.clone());
                     let bal = *token_balances.get(&key).unwrap_or(&0);
                     if bal < amount_a as u128 {
                         eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_a, bal, amount_a);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 if pool.token_b != "XRGE" {
@@ -6222,7 +6607,7 @@ impl L1Node {
                     let bal = *token_balances.get(&key).unwrap_or(&0);
                     if bal < amount_b as u128 {
                         eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_b, bal, amount_b);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 
@@ -6241,6 +6626,9 @@ impl L1Node {
                     pool.reserve_b,
                     pool.total_lp_supply,
                 ).ok_or("Failed to calculate LP mint")?;
+                if lp_amount == 0 {
+                    self.amm_note(&tx_hash, || "add_liquidity: no LP tokens would be minted".to_string());
+                }
                 
                 // Update pool
                 pool.reserve_a += amount_a;
@@ -6298,7 +6686,7 @@ impl L1Node {
                     Some(p) => p,
                     None => {
                         eprintln!("[node] Warning: Pool {} not found, skipping remove_liquidity", pool_id);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 };
 
@@ -6306,13 +6694,13 @@ impl L1Node {
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting remove_liquidity: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 let lp_key = (canon_addr(&tx.from_pub_key), pool_id.clone());
                 let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0);
                 if lp_bal < lp_amount as u128 {
                     eprintln!("[node] Rejecting remove_liquidity: insufficient LP tokens ({:.4} < {})", lp_bal, lp_amount);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 
                 // Deduct fee
@@ -6392,18 +6780,18 @@ impl L1Node {
                 if token_in == "XRGE" {
                     if xrge_bal < xrge_f64_to_quanta(amount_in as f64 + tx.fee) {
                         eprintln!("[node] Rejecting swap: insufficient XRGE balance ({:.4} < {:.4})", xrge_bal, amount_in as f64 + tx.fee);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 } else {
                     if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                         eprintln!("[node] Rejecting swap: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                     let token_key = (canon_addr(&tx.from_pub_key), token_in.clone());
                     let token_bal = *token_balances.get(&token_key).unwrap_or(&0);
                     if token_bal < amount_in as u128 {
                         eprintln!("[node] Rejecting swap: insufficient {} balance ({:.4} < {})", token_in, token_bal, amount_in);
-                        return Ok(());
+                        { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                     }
                 }
                 
@@ -6467,15 +6855,19 @@ impl L1Node {
                 }
                 
                 if !swap_ok {
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 
                 // Enforce slippage protection
                 if current_amount < min_amount_out {
                     eprintln!("[node] Rejecting swap: slippage exceeded (got {} < min {})", current_amount, min_amount_out);
-                    return Ok(());
+                    { self.amm_note(&tx_hash, || format!("{} would not take effect", tx.tx_type)); return Ok(()); }
                 }
                 
+                if current_amount == 0 {
+                    self.amm_note(&tx_hash, || "swap: no output".to_string());
+                }
+
                 // Credit output token
                 let final_token = path.last().unwrap();
                 Self::amm_credit(balances, token_balances, &tx.from_pub_key, final_token, current_amount as f64);
@@ -13122,11 +13514,11 @@ mod game_ready_tests {
         let cs = e.node.contract_store.as_ref().unwrap();
         assert!(cs.get_contract(&probe).unwrap().is_some() && cs.get_contract(&unknown).unwrap().is_some());
         let col = crate::nft_store::NftCollection::make_collection_id(&pk, "X");
-        // Call: the producer can't execute either, so it doesn't include them …
+        // Call: the producer can't execute either, so it leaves them out (dropped, not requeued) …
         for (n, addr) in [(3u64, &probe), (4, &unknown)] {
             let err = mine(&e, call_tx(&e.player, addr, "probe", json!({ "c": col }), Value::Null, n)).unwrap_err();
-            assert!(err.contains("Instantiation: cannot find definition for import"), "{err}");
-            e.node.mempool.lock().unwrap().clear(); // the producer re-queues it; drop it
+            assert!(err.contains("tx not mined"), "{err}");
+            assert!(e.node.mempool.lock().unwrap().is_empty(), "the failing call is dropped");
         }
         // … and a block that carries such a call is rejected the same way for both.
         let tip = e.node.tip_height().unwrap();
@@ -13139,9 +13531,14 @@ mod game_ready_tests {
         let h = mine(&e, call_tx(&e.player, &probe, "probe", json!({ "c": col }), Value::Null, 3)).expect("runs after activation");
         assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
         assert_eq!(probe_state(&e, &probe), (-1, -1, None));
-        let err = mine(&e, call_tx(&e.player, &unknown, "probe", json!({ "c": col }), Value::Null, 4)).unwrap_err();
+        // A truly unknown import still fails: the producer leaves the call out, and a block
+        // carrying it is rejected.
+        let bad = call_tx(&e.player, &unknown, "probe", json!({ "c": col }), Value::Null, 4);
+        let err = mine(&e, bad.clone()).unwrap_err();
+        assert!(err.contains("tx not mined"), "{err}");
+        assert!(e.node.mempool.lock().unwrap().is_empty(), "the failing call is dropped");
+        let err = import(&e, vec![bad]).unwrap_err();
         assert!(err.contains("host_no_such_function"), "a truly unknown import still fails: {err}");
-        e.node.mempool.lock().unwrap().clear();
         royalty_forks_off();
     }
 
@@ -13196,9 +13593,10 @@ mod game_ready_tests {
         // Block 5 (before activation): listing can't run on either node.
         const PRICE: u64 = 1_234_567_891; // ≈1.23 XRGE; 3% = 37,037,036.73 → floor
         let list = |nft: u64, n: u64| call_tx(seller, &market, "list", json!({ "collection": col, "token_id": nft, "price": PRICE }), Value::Null, n);
+        // The producer leaves the failing call out (dropped, not requeued): no block.
         let err = mine_relay(list(1, 5)).unwrap_err();
-        assert!(err.contains("cannot find definition for import env::host_nft_royalty"), "{err}");
-        a.node.mempool.lock().unwrap().clear();
+        assert_eq!(err, "no block");
+        assert!(a.node.mempool.lock().unwrap().is_empty(), "the failing call is dropped");
         mine_relay(v2(seller, "transfer", &json!({ "from": spk, "to": b.player.public_key_hex, "amount": 1, "fee": 1.0,
             "timestamp": ts(5), "nonce": "0000000000000005" }), 5)).expect("filler block 5");
         assert_eq!(a.node.tip_height().unwrap(), 5);
@@ -15068,6 +15466,15 @@ mod shield_v2_daemon_tests {
         let stats = n.y.shield_v2_stats().unwrap();
         assert_eq!(stats["pool"]["note_count"], 6);
         assert_eq!(stats["pool"]["pool_total_quanta"], (4 * Q).to_string());
+        // RW2-6: the report is the pool record's own height with the state of that height — the
+        // last applied block, which here is the tip
+        let (pool, report) = (pool_state(&n.y), &stats["report"]);
+        assert_eq!(report["height"], A + 3);
+        assert_eq!((report["height"].as_u64(), stats["pool"]["next_height"].as_u64()), (Some(A + 3), Some(A + 4)));
+        assert_eq!(report["tree_root"], hex::encode(pool.tree_root));
+        assert_eq!(report["nullifier_acc"], hex::encode(pool.nullifier_acc));
+        assert_eq!((report["note_count"].as_u64(), report["nullifier_count"].as_u64()), (Some(pool.note_count), Some(pool.nullifier_count)));
+        assert_eq!(report["tree_root"], stats["pool"]["tree_root"]);
         set_test_shield_v2(None);
     }
 
@@ -15213,6 +15620,137 @@ mod shield_v2_daemon_tests {
         assert!(n.x.shield_v2_pool().unwrap().is_spent(&nf).unwrap());
         // the proof was verified at most once per node: a second verification is a cache hit
         assert!(n.x.shield_v2_verified.is_accepted(&compute_single_tx_hash(&f.transfer)));
+        set_test_shield_v2(None);
+    }
+
+    /// REVIEW_WALLET_3 RW3-6 (Low). The `report` of `/api/shield-v2/stats` used to be one read of
+    /// the pool record, and the pool record is written by the SPECULATIVE apply of a block,
+    /// before the block's state root is compared and before the block is stored: while a block
+    /// that was then REJECTED was being applied, an honest node reported `(height H, pool state
+    /// after that block)` — a state no chain ever had at height H. Since the fix the report is
+    /// the record of the last ACCEPTED block, written after `append_block`; a speculative apply
+    /// does not show. Shown with the same explicit apply / restore the test above uses.
+    #[test]
+    fn rw3_f6_the_stats_report_shows_a_block_that_is_applied_speculatively_and_then_rejected() {
+        let n = net(1_000.0);
+        let f = fixture();
+        n.reach_activation();
+        let b = n.block(&n.x, vec![f.shield.clone()]);
+        n.import_both(b);
+        let tip = n.x.tip_height().unwrap();
+        let before = n.x.shield_v2_stats().unwrap();
+        assert_eq!(before["report"]["height"].as_u64(), Some(tip));
+        let probe = n.block_any_root(&n.x, vec![f.transfer.clone()]);
+        let snap = n.x.capture_pre_apply_snapshot(&probe).unwrap();
+        n.x.apply_balance_block(&probe).unwrap();
+        let during = n.x.shield_v2_stats().unwrap(); // what a client gets in this window
+        n.x.restore_pre_apply_snapshot(snap).unwrap();
+        let after = n.x.shield_v2_stats().unwrap();
+        set_test_shield_v2(None);
+        assert_eq!(after["report"], before["report"], "the rollback restored the report");
+        println!("tip {tip}; report before {}; report while the rejected block was applied {} (tip_height in the same answer: {})",
+            before["report"], during["report"], during["tip_height"]);
+        assert_eq!(during["report"], before["report"],
+            "an honest node must not report a pool state for a height whose block it has not accepted");
+        // (the `pool` object beside it is the record as stored, one block ahead in that window)
+        assert_ne!(during["pool"]["note_count"], before["pool"]["note_count"]);
+        // and an ACCEPTED block does move the report
+        let n = net(1_000.0);
+        n.reach_activation();
+        let b = n.block(&n.x, vec![f.shield.clone()]);
+        n.import_both(b);
+        let b = n.block(&n.x, vec![f.transfer.clone()]);
+        n.import_both(b);
+        let r = n.x.shield_v2_stats().unwrap()["report"].clone();
+        assert_eq!((r["height"].as_u64(), r["note_count"].as_u64(), r["nullifier_count"].as_u64()), (n.x.tip_height().ok(), Some(4), Some(4)));
+        assert_eq!(r, n.y.shield_v2_stats().unwrap()["report"], "the producer path and the import path record the same report");
+        set_test_shield_v2(None);
+    }
+
+    /// REVIEW_WALLET_3 RW3-2. The node keeps a running hash over `(cm_out, kem_ct, note_ct)` of
+    /// every accepted V2 output in tree order and reports it as `ciphertext_acc`, so that a
+    /// quorum can vouch for the ciphertexts a listing served. **It is node-local**: stored
+    /// beside the pool record, not in it.
+    ///
+    /// * it is the fold of this node's own listing;
+    /// * **the state root is byte-identical with and without it**: one node has the side record
+    ///   destroyed, both go on importing the same blocks, and block hash, state root and pool
+    ///   record stay equal on both — the node without it simply reports no ciphertext hash;
+    /// * a rollback restores it exactly, with the rest of the pool store;
+    /// * it is rebuilt from the stored blocks (what a node upgraded from an earlier build does
+    ///   once at start-up); the import path and the producer path derive the same value.
+    #[test]
+    fn rw3_f2_the_ciphertext_hash_is_node_local_outside_the_state_root_and_rolled_back() {
+        let n = net(1_000.0);
+        let f = fixture();
+        n.reach_activation();
+        let b = n.block(&n.x, vec![f.shield.clone()]);
+        n.import_both(b);
+        let acc_of = |node: &L1Node| shield_v2::current_ciphertext_acc(&node.shield_v2_store).unwrap();
+        let listing_fold = |node: &L1Node| {
+            let listing = node.shield_v2_notes_since(0, 256).unwrap();
+            let mut acc = [0u8; 32];
+            for tx in listing["txs"].as_array().unwrap() {
+                for o in tx["outputs"].as_array().unwrap() {
+                    let h = |k: &str| hex::decode(o[k].as_str().unwrap()).unwrap();
+                    acc = shield_v2::ciphertext_acc_step(&acc, &h("cm_out").try_into().unwrap(), &h("kem_ct"), &h("note_ct"));
+                }
+            }
+            acc
+        };
+        let reported = |node: &L1Node| node.shield_v2_stats().unwrap()["report"]["ciphertext_acc"].clone();
+        let after_shield = acc_of(&n.x).expect("the node has the hash of its own outputs");
+        assert_ne!(after_shield, [0u8; 32]);
+        assert_eq!((after_shield, acc_of(&n.y)), (listing_fold(&n.x), Some(after_shield)), "the fold of the listing, on both nodes");
+        assert_eq!(reported(&n.x), serde_json::json!(hex::encode(after_shield)));
+
+        // ---- rollback: a speculative apply moves it, the restore puts it back -------------------------
+        let side_before = (n.x.shield_v2_store.side().unwrap(), n.x.shield_v2_store.accepted().unwrap());
+        let probe = n.block_any_root(&n.x, vec![f.transfer.clone()]);
+        let snap = n.x.capture_pre_apply_snapshot(&probe).unwrap();
+        n.x.apply_balance_block(&probe).unwrap();
+        assert_ne!(acc_of(&n.x), Some(after_shield), "the speculative apply advanced the hash with the pool record");
+        assert_eq!(reported(&n.x), serde_json::json!(hex::encode(after_shield)), "and the REPORT did not move (RW3-6)");
+        n.x.restore_pre_apply_snapshot(snap).unwrap();
+        assert_eq!((n.x.shield_v2_store.side().unwrap(), n.x.shield_v2_store.accepted().unwrap()), side_before, "restored byte for byte");
+        assert_eq!(fingerprint(&n.x), fingerprint(&n.y));
+
+        // ---- not consensus: node y loses the record and stays in consensus ---------------------------
+        let root_with = n.y.get_state_root().unwrap();
+        n.y.shield_v2_store.put_side(b"not a side record").unwrap();
+        assert_eq!(acc_of(&n.y), None);
+        assert_eq!(n.y.get_state_root().unwrap(), root_with, "the state root does not read it");
+        assert_eq!(n.y.get_state_root().unwrap(), n.x.get_state_root().unwrap());
+        for tx in [&f.transfer, &f.unshield] {
+            let b = n.block(&n.x, vec![tx.clone()]);
+            n.import_both(b); // y accepts x's block: its own state root for it is the header's
+            assert_eq!(fingerprint(&n.x), fingerprint(&n.y), "block hash, state root, pool record, counters: identical with and without the hash");
+        }
+        let x_acc = acc_of(&n.x).expect("x kept it across three blocks");
+        assert_eq!(x_acc, listing_fold(&n.x));
+        assert_eq!((acc_of(&n.y), reported(&n.y)), (None, serde_json::Value::Null), "y reports no ciphertext hash rather than a wrong one");
+        let (rx, ry) = (n.x.shield_v2_stats().unwrap()["report"].clone(), n.y.shield_v2_stats().unwrap()["report"].clone());
+        for k in ["height", "tree_root", "nullifier_acc", "note_count", "nullifier_count"] {
+            assert_eq!(rx[k], ry[k], "{k}: the consensus part of the report is the same");
+        }
+        // an empty block keeps it (and its absence) as it is
+        let b = n.block(&n.x, vec![]);
+        n.import_both(b);
+        assert_eq!((acc_of(&n.x), acc_of(&n.y)), (Some(x_acc), None));
+        assert_eq!(fingerprint(&n.x), fingerprint(&n.y));
+
+        // ---- derived data: rebuilt from the stored blocks --------------------------------------------
+        assert_eq!(n.x.shield_v2_rebuild_ciphertext_acc(), Ok(false), "nothing to rebuild where it is present");
+        assert_eq!(n.y.shield_v2_rebuild_ciphertext_acc(), Ok(true));
+        assert_eq!(acc_of(&n.y), Some(x_acc));
+        n.y.shield_v2_mark_accepted(n.y.tip_height().unwrap());
+        assert_eq!(n.y.shield_v2_stats().unwrap()["report"], n.x.shield_v2_stats().unwrap()["report"]);
+        assert_eq!(fingerprint(&n.x), fingerprint(&n.y), "and the rebuild touched nothing else");
+        // (a re-import derives it block by block through the import path — which is what node y
+        // did above, independently of node x — and `ShieldV2Store::clear`, the first step of the
+        // deterministic recovery, removes it with everything else)
+        n.y.shield_v2_store.clear().unwrap();
+        assert_eq!((n.y.shield_v2_store.side().unwrap(), n.y.shield_v2_store.accepted().unwrap()), (None, None));
         set_test_shield_v2(None);
     }
 
@@ -15741,5 +16279,1076 @@ mod shield_v2_review_node_1_tests {
         assert!(e.contains("already holds 64 V2 transactions"), "{e}");
         assert_eq!(node3.mempool.lock().unwrap().len(), MAX_MEMPOOL_SHIELD_V2);
         set_test_shield_v2(None);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SHIELD_V2 — wallet ⇄ node interop (spec §3, §5, §8.4; closes O-15's cross-check). The wallet
+// core (`core/shield-v2-wallet`, a dev-dependency) builds real transactions with the production
+// prover — the one without a seed parameter — and this node judges them with its own rules:
+// `shield_v2_tx_rule`, `verify_proof`, block import, the state root. The wallet then reads the
+// node's own `shield_v2_notes_since` listing. The committed wallet vectors are read with the
+// node's body parser and applied through the node's persistent pool store.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod shield_v2_wallet_interop_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, TmpDir};
+    use crate::shield_v2::{set_test_shield_v2, VerifyCache};
+    use quantum_vault_crypto::{address_from_hash, pqc_keygen, pub_key_to_address};
+    use quantum_vault_shield_v2::pool::{empty_tree_root, PoolState, SHIELD_V2_MIN_FEE_QUANTA};
+    use quantum_vault_shield_v2::reference::{digest_from_bytes, digest_to_bytes, root_from_path, Digest, PublicInputs, ZERO_DIGEST};
+    use quantum_vault_shield_v2_wallet as wallet;
+    use quantum_vault_types::encode_tx_for_signing;
+    use std::sync::OnceLock;
+    use wallet::{ListingPage, ShieldedKeys, TxContext, WalletState};
+
+    const Q: u64 = 1_000_000_000;
+    /// Activation at height 1: a freshly initialised node (tip 0) is active for its next block.
+    const A: u64 = 1;
+    const CHAIN: &str = "test";
+    const FEE: u64 = SHIELD_V2_MIN_FEE_QUANTA;
+
+    fn activate() {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0))); // header state root committed + verified
+        set_test_shield_v2(Some(A));
+    }
+
+    /// One real node with V2 active from block 1.
+    struct Harness { _d: TmpDir, node: L1Node, proposer: PQKeypair }
+
+    impl Harness {
+        fn new(funded: &[&PQKeypair]) -> Self {
+            activate();
+            let (d, node, _) = node_with_store();
+            for k in funded { fund_xrge(&node, &k.public_key_hex, 1_000.0); }
+            Harness { _d: d, node, proposer: pqc_keygen() }
+        }
+        /// A fully valid block on the tip carrying `txs` (the correct root found by probe + rollback).
+        fn block(&self, txs: Vec<TxV1>) -> Result<BlockV1, String> {
+            let n = &self.node;
+            let t = n.tip_height().unwrap() + 1;
+            let probe = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs.clone(), None, t);
+            let snap = n.capture_pre_apply_snapshot(&probe).unwrap();
+            let applied = n.apply_balance_block(&probe).map(|_| ());
+            let root = n.compute_state_root_for_height(probe.header.height);
+            n.restore_pre_apply_snapshot(snap).unwrap();
+            applied?;
+            let b = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs, Some(root?), t);
+            Ok(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()) // the relayed (P2P) shape
+        }
+        fn import(&self, txs: Vec<TxV1>) -> Result<(), String> {
+            let b = self.block(txs)?;
+            self.node.import_block(b)
+        }
+        /// A block the node must refuse at import: sealed with an arbitrary root (the refusal
+        /// comes before the root check), offered to the real import path.
+        fn import_refused(&self, txs: Vec<TxV1>) -> String {
+            let n = &self.node;
+            let before = self.fingerprint();
+            let t = n.tip_height().unwrap() + 1;
+            let b = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs, Some("00".repeat(32)), t);
+            let e = n.import_block(b).expect_err("the node must refuse this block");
+            assert_eq!(self.fingerprint(), before, "a refused block changes nothing");
+            e
+        }
+        fn fingerprint(&self) -> (u64, String, Option<Vec<u8>>, u64, u64) {
+            let n = &self.node;
+            (n.tip_height().unwrap(), n.get_state_root().unwrap(), n.shield_v2_store.meta().unwrap(),
+             n.shield_v2_store.nullifier_count().unwrap(), n.shield_v2_store.leaf_count().unwrap())
+        }
+        fn pool(&self) -> PoolState { self.node.shield_v2_pool().unwrap().state().unwrap() }
+        /// What a wallet reads from `GET /api/shield-v2/stats` — through the node's own handler
+        /// function and its JSON — as the plain values the builders take.
+        fn ctx(&self) -> TxContext {
+            let stats = self.node.shield_v2_stats().unwrap();
+            assert_eq!(stats["active"], true);
+            assert_eq!(stats["min_fee_quanta"].as_u64().unwrap(), FEE);
+            // before the first block from A the pool record does not exist yet: the tree is empty
+            let anchor = match stats["pool"]["latest_anchor"].as_str() {
+                Some(a) => hex::decode(a).unwrap().try_into().unwrap(),
+                None => empty_tree_root(),
+            };
+            // the default expiry: the anchor's height + 64 (REVIEW_WALLET_1 F-7)
+            TxContext::new(&self.node.chain_id(), anchor, stats["tip_height"].as_u64().unwrap())
+        }
+        /// What this node reports about the pool — one entry of `WalletState::confirm_state`
+        /// (REVIEW_WALLET_1 F-1, REVIEW_WALLET_2 RW2-2 / RW2-6): the `report` object of the stats
+        /// handler, exactly as a client reads it, under the id the CALLER gives the node.
+        ///
+        /// A node id is an http(s) origin (REVIEW_WALLET_3 RW3-8): `node_id` is the host label.
+        fn state_report(&self, node_id: &str) -> wallet::StateReport {
+            let stats = self.node.shield_v2_stats().unwrap();
+            let r = &stats["report"];
+            let b32 = |k: &str| -> [u8; 32] { hex::decode(r[k].as_str().expect("the report has this digest")).unwrap().try_into().unwrap() };
+            assert_eq!(r["height"], stats["tip_height"], "between blocks the report is the tip's");
+            wallet::StateReport {
+                node_id: Self::origin(node_id),
+                height: r["height"].as_u64().unwrap(),
+                tree_root: b32("tree_root"),
+                nullifier_acc: b32("nullifier_acc"),
+                note_count: r["note_count"].as_u64().unwrap(),
+                nullifier_count: r["nullifier_count"].as_u64().unwrap(),
+                // RW3-2: the node-local hash over the ciphertexts, as this node reports it
+                ciphertext_acc: b32("ciphertext_acc"),
+            }
+        }
+        fn origin(node_id: &str) -> String { format!("https://{node_id}.example") }
+        /// Configures a wallet with these nodes (host labels). A wallet needs two for anything to
+        /// be confirmed; where a test has ONE real node, that node stands in for two operators
+        /// that hold the same chain (`own-1`, `own-2`).
+        ///
+        /// The wallets of these tests are NEW wallets: the user's statement that no other copy
+        /// has a payment in flight is recorded, without which a state made by
+        /// `WalletState::new` is under the restore embargo (REVIEW_WALLET_4 RW4-1).
+        fn configure(state: &mut WalletState, ids: &[&str]) {
+            state.set_nodes(&ids.iter().map(|id| Self::origin(id)).collect::<Vec<_>>()).unwrap();
+            let _ = state.assert_no_other_copy_has_a_pending_payment();
+        }
+        /// This node's report under the two names `configure(state, &["own-1", "own-2"])` set.
+        fn own_reports(&self) -> [wallet::StateReport; 2] { [self.state_report("own-1"), self.state_report("own-2")] }
+        fn new_wallet(pk: [u8; 32]) -> WalletState {
+            let mut s = WalletState::new(pk);
+            Self::configure(&mut s, &["own-1", "own-2"]);
+            s
+        }
+        /// One page of `GET /api/shield-v2/notes` — the node's JSON, parsed by the wallet.
+        fn page(&self, since: u64, blocks: u64) -> ListingPage {
+            let v = self.node.shield_v2_notes_since(since, blocks).unwrap();
+            ListingPage::from_json(&v.to_string()).expect("the wallet reads the node's listing")
+        }
+        /// Scans to the tip in pages of `blocks` blocks.
+        fn sync(&self, state: &mut WalletState, key: &wallet::ScanKey, blocks: u64) {
+            loop {
+                let r = state.scan(&self.page(state.next_height(), blocks), key).expect("scan");
+                if r.at_tip { break; }
+            }
+            assert_eq!(state.anchor(), self.pool().tree_root, "the wallet's tree root is the node's");
+            assert_eq!(state.tree().note_count(), self.pool().note_count);
+            assert_eq!(state.tree().frontier(), self.pool().frontier.to_vec(), "and its frontier is the node's (spec §4.8)");
+            // RW2-2: the other half of the state. The wallet's running nullifier hash, rebuilt
+            // from the node's listing, is the node's consensus `nullifier_acc` (spec §4.5, §4.8)
+            assert_eq!(state.nullifier_acc(), self.pool().nullifier_acc, "the wallet's nullifier hash is the node's");
+            assert_eq!(state.nullifier_count(), self.pool().nullifier_count);
+            // RW3-2: the wallet's running hash over the listed ciphertexts is the hash the node
+            // keeps over the same outputs — two implementations (this daemon's and the wallet
+            // core's), one value
+            assert_eq!(Some(state.ciphertext_acc()), shield_v2::current_ciphertext_acc(&self.node.shield_v2_store).unwrap(), "the wallet's ciphertext hash is the node's");
+            if let Some(h) = state.scanned_height() {
+                let (mine, node) = (state.state_at(h).expect("the scanned height"), self.state_report("n"));
+                assert_eq!((h, mine.tree_root, mine.nullifier_acc, mine.note_count, mine.nullifier_count, mine.ciphertext_acc),
+                    (node.height, node.tree_root, node.nullifier_acc, node.note_count, node.nullifier_count, node.ciphertext_acc));
+            }
+        }
+    }
+
+    /// Checks 1–12 and 20 of spec §3.6 with the node's own functions, for a transaction judged at
+    /// `height`. `Ok(parsed)` iff the node accepts both.
+    fn node_accepts(tx: &TxV1, height: u64) -> Result<shield_v2::ShieldV2Tx, String> {
+        let parsed = shield_v2::shield_v2_tx_rule(tx, height, CHAIN)?.ok_or("not a V2 transaction")?;
+        shield_v2::verify_proof(&VerifyCache::default(), &compute_single_tx_hash(tx), &parsed)?;
+        Ok(parsed)
+    }
+
+    fn dg(b: &[u8; 32]) -> Digest { digest_from_bytes(b).unwrap() }
+
+    /// Every unspent note of `state` with a path: the path leads to the node's root, and its
+    /// nullifier is not in the node's set; every spent note's nullifier is.
+    fn check_notes_against_node(h: &Harness, state: &WalletState) {
+        let pool = h.node.shield_v2_pool().unwrap();
+        let root = dg(&h.pool().tree_root);
+        for n in state.notes() {
+            let nf = n.nullifier.expect("scanned with nk").0;
+            assert_eq!(pool.is_spent(&nf).unwrap(), n.spent, "note at {}: spent flag vs the node's nullifier set", n.position);
+            assert_eq!(h.node.shield_v2_store.leaf(n.position).unwrap(), Some(n.cm.0), "the node stores this commitment at this leaf");
+            if !n.spent && n.value > 0 {
+                let path = state.tree().path(n.position).expect("a path for every unspent note");
+                let mut arr = [ZERO_DIGEST; 32];
+                for (a, s) in arr.iter_mut().zip(&path) { *a = dg(s); }
+                assert_eq!(root_from_path(&dg(&n.cm.0), n.position as u32, &arr), root, "note at {}: Merkle path vs the node's root", n.position);
+            }
+        }
+    }
+
+    /// The three transactions, built by the wallet core against a real node and accepted by it,
+    /// for the tests that replay them on fresh nodes.
+    struct Flow {
+        user: PQKeypair,
+        recv: PQKeypair,
+        alice_seed: [u8; 64],
+        bob_seed: [u8; 64],
+        shield: TxV1,
+        transfer: TxV1,
+        unshield: TxV1,
+        /// the payment output of the transfer (to Bob), as the sender recorded it
+        payment_cm: [u8; 32],
+        payment_r: [u8; 32],
+        /// the wallet states at the end of the flow, built incrementally
+        alice: WalletState,
+        bob: WalletState,
+    }
+
+    /// (a) of the cross-checks: shield → transfer → unshield, each built with the wallet crate
+    /// and its production prover, each passing `shield_v2_tx_rule` and `verify_proof`, each
+    /// imported in a block by a real `L1Node`; after every block the wallets scan the node's own
+    /// listing and their balances, nullifiers and Merkle paths are checked against the node.
+    fn flow() -> &'static Flow {
+        static F: OnceLock<Flow> = OnceLock::new();
+        F.get_or_init(|| {
+            let (user, recv) = (pqc_keygen(), pqc_keygen());
+            let h = Harness::new(&[&user]);
+            let (alice_seed, bob_seed) = ([0xa1u8; 64], [0xb0u8; 64]);
+            let alice = ShieldedKeys::from_seed(&alice_seed).unwrap();
+            let bob = ShieldedKeys::from_seed(&bob_seed).unwrap();
+            let user_pk = hex::decode(&user.public_key_hex).unwrap();
+            let user_addr = canon_addr(&user.public_key_hex);
+            let balance = |addr: &str| h.node.balances.lock().unwrap().get(addr).copied().unwrap_or(0);
+            let funded = balance(&user_addr);
+
+            // ── shield: 10 XRGE from the account, fee 1, a 9 XRGE note for Alice ──
+            let built = wallet::build_shield(&wallet::ShieldRequest {
+                ctx: h.ctx(), from_pub_key: &user_pk, nonce: 1, v_in: 10 * Q, fee: FEE, recipient: &alice.address(),
+                max_fee: None,
+            }).expect("build_shield");
+            // the bytes the wallet asks the account key to sign are the node's signing encoding
+            assert_eq!(built.signing_bytes.as_deref(), Some(encode_tx_for_signing(&built.envelope).as_slice()));
+            // this test holds the account key; the wallet crate never saw it
+            let sig = pqc_sign(&user.secret_key_hex, built.signing_bytes.as_ref().unwrap()).unwrap();
+            let shield = built.signed_envelope(&sig).unwrap();
+            let parsed = node_accepts(&shield, A).expect("the node accepts the wallet's shield");
+            assert_eq!(parsed.body_bytes, built.body, "the node decodes the body the wallet wrote");
+            assert_eq!(parsed.public_inputs().to_bytes(), built.public_inputs, "and derives the same public inputs");
+            assert_eq!(parsed.body.account, <[u8; 32]>::try_from(sha256(&user_pk)).unwrap());
+            h.import(vec![shield.clone()]).expect("the shield block is accepted");
+            assert_eq!(balance(&user_addr), funded - 10 * Q as u128, "the account is debited exactly v_in");
+            assert_eq!(h.pool().pool_total, 9 * Q as u128);
+
+            let mut a = Harness::new_wallet(alice.address().pk);
+            h.sync(&mut a, &alice.scan_key(), 256);
+            assert_eq!(a.balance(), 9 * Q as u128);
+            // (c) the same listing through another wallet's keys: nothing decrypts, nothing is kept
+            let mut b = Harness::new_wallet(bob.address().pk);
+            h.sync(&mut b, &bob.scan_key(), 256);
+            assert!(b.notes().is_empty() && b.balance() == 0, "a note encrypted to another address is ignored");
+            check_notes_against_node(&h, &a);
+
+            // ── F-1: a note from one node's listing is unverified until the root check passes ──
+            assert_eq!((a.confirmed_balance(), a.unverified_balance()), (0, 9 * Q as u128));
+            assert!(matches!(wallet::select_inputs(&a, 5 * Q, FEE), Err(wallet::WalletError::InsufficientFunds { have: 0, .. })));
+            // one of the two configured nodes is not a quorum (the check against independent
+            // nodes is in the test below) …
+            let c = a.confirm_state(&h.own_reports()[..1]).unwrap();
+            assert!(c.matched_height.is_none() && a.confirmed_balance() == 0 && (c.configured, c.quorum) == (2, 2));
+            assert!(matches!(a.spend_input(a.notes()[0].position), Err(wallet::WalletError::NoteUnverified)));
+            // … both are (REVIEW_WALLET_3: the quorum is a strict majority of the configured set)
+            let c = a.confirm_state(&h.own_reports()).unwrap();
+            assert_eq!((c.matched_height, a.confirmed_balance()), (h.node.tip_height().ok(), 9 * Q as u128));
+
+            // ── transfer: Alice pays Bob 5, fee 1, change 3 ──
+            let sel = wallet::select_inputs(&a, 5 * Q, FEE).unwrap();
+            // build AND lock in one call (REVIEW_WALLET_3 RW3-5): the anchor is the wallet's
+            // confirmed root, the expiry the confirmed height + 64 — no height comes from the caller
+            let chain_id = h.node.chain_id();
+            let spend = wallet::SpendOptions { chain_id: &chain_id, inputs: &sel.positions, expiry_height: None, allow_unverified: false, max_fee: None };
+            let wallet::LockedTx { tx: built, state: locked } = wallet::build_transfer(&a, a.revision(), &alice, &wallet::TransferParams {
+                spend, recipient: &bob.address(), amount: 5 * Q, fee: FEE,
+            }).expect("build_transfer");
+            let transfer = built.envelope.clone();
+            assert!(built.signing_bytes.is_none());
+            assert_eq!((transfer.version, transfer.nonce, transfer.from_pub_key.as_str(), transfer.sig.as_str(), transfer.fee.to_bits()), (1, 0, "", "", 0.0f64.to_bits()));
+            let height = h.node.tip_height().unwrap() + 1;
+            let parsed = node_accepts(&transfer, height).expect("the node accepts the wallet's transfer");
+            assert_eq!(parsed.public_inputs().to_bytes(), built.public_inputs);
+            // ── F-7: the pending record, and the node rule its release depends on ──
+            // the default expiry is the anchor's height + 64; the NODE accepts the transaction up
+            // to and including that height and refuses it above — which is why the wallet may
+            // release the inputs once its scan has reached the expiry height without the nullifiers
+            assert_eq!((built.expiry_height, parsed.body.expiry_height), (height - 1 + wallet::DEFAULT_EXPIRY_OFFSET, built.expiry_height));
+            assert!(node_accepts(&transfer, built.expiry_height).is_ok(), "still valid at its expiry height");
+            assert!(node_accepts(&transfer, built.expiry_height + 1).is_err(), "never above it");
+            let record = built.pending().expect("a transfer has a pending record");
+            assert_eq!(record.nullifiers.iter().map(|n| n.0).collect::<Vec<_>>(), parsed.body.nf.to_vec(), "the wallet's record names the nullifiers the node reads");
+            assert_eq!(record.outputs.iter().map(|c| c.0).collect::<Vec<_>>(), parsed.body.cm_out.to_vec(), "and the output commitments the node appends");
+            // the returned state holds the record and the lock: persist it, then submit
+            assert!(a.pending().is_empty() && locked.pending().len() == 1 && locked.pending()[0].outputs == record.outputs);
+            a = locked;
+            assert!(matches!(a.spend_input(sel.positions[0]), Err(wallet::WalletError::NoteLocked)));
+            assert!(matches!(wallet::select_inputs_with(&a, Q, FEE, true), Err(wallet::WalletError::InsufficientFunds { .. })), "the only note is locked");
+            assert_eq!(a.resolve().still_pending, 1, "nothing is settled before the chain shows it");
+            let payment = built.outputs.iter().find(|o| o.role == wallet::OutputRole::Payment).unwrap();
+            let (payment_cm, payment_r) = (payment.cm, payment.r);
+            h.import(vec![transfer.clone()]).expect("the transfer block is accepted");
+            assert_eq!(h.pool().pool_total, 8 * Q as u128);
+            h.sync(&mut a, &alice.scan_key(), 256);
+            h.sync(&mut b, &bob.scan_key(), 256);
+            // the node's listing shows both nullifiers with both outputs: seen, the inputs spent,
+            // the change arrived — and settled once the height is confirmed (here by the wallet's
+            // own node: quorum 1), not before
+            assert_eq!(a.resolve().still_pending, 1, "listed is not settled");
+            assert_eq!(a.confirm_state(&h.own_reports()).unwrap().matched_height, h.node.tip_height().ok());
+            let settled = a.resolve();
+            assert_eq!((settled.mined.len(), settled.superseded.len(), settled.expired.len(), settled.still_pending), (1, 0, 0, 0));
+            assert_eq!(settled.mined[0].seen_height, h.node.tip_height().ok());
+            assert!(a.unspent().any(|n| Some(n.cm) == settled.mined[0].change.as_ref().map(|c| c.cm)));
+            assert_eq!((a.balance(), b.balance()), (3 * Q as u128, 5 * Q as u128));
+            assert_eq!(b.notes()[0].cm.0, payment_cm);
+            check_notes_against_node(&h, &a);
+            check_notes_against_node(&h, &b);
+
+            // ── unshield: Bob pays 3 to a public account, fee 1, change 1 ──
+            let to = pub_key_to_address(&recv.public_key_hex).unwrap();
+            let to_account = wallet::account_from_address(&to).expect("the wallet decodes the node's rouge1 address");
+            assert_eq!(wallet::address_from_account(&to_account), to, "and encodes it the same way");
+            assert!(b.confirm_state(&h.own_reports()).unwrap().matched_height.is_some());
+            let positions = [b.notes()[0].position];
+            let spend = wallet::SpendOptions { chain_id: &chain_id, inputs: &positions, expiry_height: None, allow_unverified: false, max_fee: None };
+            let wallet::LockedTx { tx: built, state: locked } = wallet::build_unshield(&b, b.revision(), &bob, &wallet::UnshieldParams {
+                spend, to_account, v_out: 3 * Q, fee: FEE,
+            }).expect("build_unshield");
+            let unshield = built.envelope.clone();
+            assert!(locked.is_locked(positions[0]) && built.pending().is_some_and(|p| p.outputs == locked.pending()[0].outputs));
+            b = locked;
+            let height = h.node.tip_height().unwrap() + 1;
+            let parsed = node_accepts(&unshield, height).expect("the node accepts the wallet's unshield");
+            assert_eq!(parsed.unshield_recipient().as_deref(), Some(to.as_str()));
+            let recv_addr = canon_addr(&recv.public_key_hex);
+            assert_eq!(balance(&recv_addr), 0);
+            h.import(vec![unshield.clone()]).expect("the unshield block is accepted");
+            assert_eq!(balance(&recv_addr), 3 * Q as u128, "the public account is credited v_out");
+            h.sync(&mut a, &alice.scan_key(), 256);
+            h.sync(&mut b, &bob.scan_key(), 256);
+            assert!(b.confirm_state(&h.own_reports()).unwrap().matched_height.is_some());
+            assert_eq!(b.resolve().mined.len(), 1);
+            assert_eq!((a.balance(), b.balance()), (3 * Q as u128, Q as u128));
+            assert_eq!(h.pool().pool_total, a.balance() + b.balance(), "the pool total is exactly what the wallets hold");
+            assert_eq!((h.pool().note_count, h.pool().nullifier_count), (6, 6));
+            check_notes_against_node(&h, &a);
+            check_notes_against_node(&h, &b);
+
+            // replay: the node refuses each accepted transaction a second time (nullifiers)
+            for tx in [&transfer, &unshield] {
+                let e = h.import_refused(vec![tx.clone()]);
+                assert!(e.contains("shield_v2"), "{e}");
+            }
+            Flow { user, recv, alice_seed, bob_seed, shield, transfer, unshield, payment_cm, payment_r, alice: a, bob: b }
+        })
+    }
+
+    /// A fresh node that has imported the first `n` transactions of the flow, one per block.
+    fn replayed(n: usize) -> Harness {
+        let f = flow();
+        let h = Harness::new(&[&f.user]);
+        for tx in [&f.shield, &f.transfer, &f.unshield].into_iter().take(n) {
+            h.import(vec![tx.clone()]).expect("replay on a fresh node");
+        }
+        h
+    }
+
+    #[test]
+    fn wallet_built_transactions_are_accepted_by_the_node_and_the_wallet_reads_the_node_listing() {
+        activate();
+        let f = flow();
+        // the same three transactions on a second, independent node give the same state
+        let h = replayed(3);
+        let mut a = WalletState::new(f.alice.pk());
+        Harness::configure(&mut a, &["node-1", "node-2", "node-3"]);
+        h.sync(&mut a, &ShieldedKeys::from_seed(&f.alice_seed).unwrap().scan_key(), 256);
+        // F-1 with two INDEPENDENT nodes (a third replay): both report the wallet's root,
+        // nullifier hash and ciphertext hash at the tip — two of the three configured nodes, the
+        // quorum — and every note is confirmed
+        let h2 = replayed(3);
+        let reports = [h.state_report("node-1"), h2.state_report("node-2")];
+        assert_eq!(a.unverified_balance(), 3 * Q as u128);
+        let c = a.confirm_state(&reports).unwrap();
+        assert_eq!((c.matched_height, c.agreeing, c.diverged, c.configured, c.quorum), (h.node.tip_height().ok(), 2, false, 3, 2));
+        assert_eq!((a.confirmed_balance(), a.unverified_balance()), (3 * Q as u128, 0));
+        // … and a node on another chain (one transaction short) does not vouch for it
+        let short = replayed(2);
+        let mut lone = WalletState::new(f.alice.pk());
+        Harness::configure(&mut lone, &["node-1", "node-2", "node-3"]);
+        h.sync(&mut lone, &ShieldedKeys::from_seed(&f.alice_seed).unwrap().scan_key(), 256);
+        let mut other = short.state_report("node-3");
+        other.height = h.node.tip_height().unwrap();
+        let c = lone.confirm_state(&[h.state_report("node-1"), other.clone()]).unwrap();
+        assert!(c.matched_height.is_none() && c.diverged, "one of three is no quorum");
+        assert_eq!(c.dissenting.iter().map(|d| d.node_id.as_str()).collect::<Vec<_>>(), [Harness::origin("node-3")], "and the node that disagrees is named");
+        // … also when its tree root is the right one and only its nullifier hash differs (RW2-2),
+        // or only its ciphertext hash (RW3-2)
+        for field in ["nullifier_acc", "ciphertext_acc"] {
+            let mut half = h.state_report("node-3");
+            if field == "nullifier_acc" { half.nullifier_acc = other.nullifier_acc } else { half.ciphertext_acc = other.ciphertext_acc }
+            let c = lone.confirm_state(&[h.state_report("node-1"), half]).unwrap();
+            assert!(c.matched_height.is_none() && c.diverged && lone.confirmed_balance() == 0, "{field}: the root alone is not the state");
+        }
+        // … and it does not block the two that agree (RW3-1)
+        let c = lone.confirm_state(&[h.state_report("node-1"), h2.state_report("node-2"), other]).unwrap();
+        assert_eq!((c.matched_height, c.dissenting.len(), lone.confirmed_balance()), (h.node.tip_height().ok(), 1, 3 * Q as u128));
+        // the original wallet (it resolved its pending transaction) under the same check is the same state
+        let mut original = f.alice.clone();
+        Harness::configure(&mut original, &["node-1", "node-2", "node-3"]);
+        original.confirm_state(&reports).unwrap();
+        assert!(a.content_eq(&original));
+        assert_eq!(h.node.balances.lock().unwrap().get(&canon_addr(&f.recv.public_key_hex)).copied(), Some(3 * Q as u128));
+    }
+
+    /// (b) A wallet restored from its keys alone, scanning the node's listing from height 0 one
+    /// block per page, recovers every note, the spent flags, the balance and working Merkle
+    /// paths — the state the original wallet built incrementally — and no outgoing history
+    /// (spec §5.4).
+    #[test]
+    fn restored_wallet_recovers_notes_and_balance_from_the_node_and_no_outgoing_history() {
+        activate();
+        let f = flow();
+        let h = replayed(3);
+        for (seed, original, balance) in [(&f.alice_seed, &f.alice, 3 * Q), (&f.bob_seed, &f.bob, Q)] {
+            let keys = ShieldedKeys::from_seed(seed).unwrap();
+            let mut restored = Harness::new_wallet(keys.address().pk);
+            assert_eq!(restored.next_height(), 0);
+            h.sync(&mut restored, &keys.scan_key(), 1);
+            // (the confirmation status is not chain data: both are confirmed against this node first)
+            let own = h.own_reports();
+            let mut original = original.clone();
+            assert!(restored.confirm_state(&own).unwrap().matched_height.is_some());
+            original.confirm_state(&own).unwrap();
+            assert!(original.pending().is_empty() && restored.pending().is_empty());
+            assert!(restored.content_eq(&original), "restore = the incrementally built state");
+            assert_eq!(restored.balance(), balance as u128);
+            check_notes_against_node(&h, &restored);
+            // a restored note is spendable at once: its path leads to the node's latest anchor
+            let n = restored.unspent().find(|n| n.value > 0).unwrap();
+            assert!(restored.spend_input(n.position).is_ok());
+        }
+        // Alice paid Bob; nothing in her restored state says so
+        let keys = ShieldedKeys::from_seed(&f.alice_seed).unwrap();
+        let mut restored = WalletState::new(keys.address().pk);
+        h.sync(&mut restored, &keys.scan_key(), 256);
+        // (the payment's COMMITMENT is public chain data and may sit in her tree as the Merkle
+        // sibling of her change note; what a restore cannot know is the note behind it — its
+        // value and r — or that it was hers to send)
+        let json = restored.to_json().unwrap();
+        assert!(!json.contains(&hex::encode(f.payment_r)), "the payment to Bob is not in Alice's restored state");
+        assert!(restored.notes().iter().all(|n| n.cm.0 != f.payment_cm && n.r.0 != f.payment_r));
+        assert_eq!(f.bob.notes()[0].r.0, f.payment_r, "(Bob, the recipient, does hold it)");
+        assert_eq!(restored.notes().iter().map(|n| n.value).collect::<Vec<_>>(), vec![9 * Q, 3 * Q], "only notes sent TO Alice");
+        // the viewing key alone sees the same notes but cannot tell which are spent
+        let mut view = WalletState::new(keys.address().pk);
+        h.sync(&mut view, &keys.incoming_viewing_key(), 256);
+        assert_eq!(view.notes().len(), 2);
+        assert!(view.notes().iter().all(|n| n.nullifier.is_none() && !n.spent));
+    }
+
+    /// (e) After proving, no field of the body can be changed: for every field of spec §3.2, one
+    /// flipped bit makes the node refuse — by a stateless rule where one applies, by the proof
+    /// (the binding) everywhere else. Includes the fields no rule constrains: the expiry height,
+    /// the unshield's recipient account, and all four ciphertexts.
+    #[test]
+    fn any_change_of_a_body_field_after_proving_is_refused_by_the_node() {
+        activate();
+        let f = flow();
+        // (offset, bit, name): one bit inside every field of the body
+        let fields: [(usize, u8, &str); 17] = [
+            (0, 1, "body_version"), (1, 4, "kind"), (2, 1, "chain"), (34, 1, "expiry_height"), (42, 1, "anchor"),
+            (74, 1, "nf1"), (106, 1, "nf2"), (138, 1, "cm_out1"), (170, 1, "cm_out2"), (202, 1, "v_in"), (210, 1, "v_out"),
+            (218, 1, "fee"), (226, 1, "account"), (258, 1, "kem_ct1"), (1_346, 1, "note_ct1"), (1_402, 1, "kem_ct2"), (2_545, 0x80, "note_ct2"),
+        ];
+        for (i, original) in [&f.shield, &f.transfer, &f.unshield].into_iter().enumerate() {
+            let height = A + i as u64;
+            let body = hex::decode(original.payload.shield_v2_body.as_ref().unwrap()).unwrap();
+            node_accepts(original, height).expect("untouched");
+            let mut by_proof = 0;
+            for (off, bit, name) in fields {
+                let mut b = body.clone();
+                b[off] ^= bit;
+                let mut tx = original.clone();
+                tx.payload.shield_v2_body = Some(hex::encode(&b));
+                if i == 0 {
+                    // a shield is signed: re-sign the changed envelope with the real account key,
+                    // so that only the proof stands between the change and acceptance
+                    tx.sig = pqc_sign(&f.user.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+                }
+                match shield_v2::shield_v2_tx_rule(&tx, height, CHAIN) {
+                    Err(_) => {}
+                    Ok(Some(parsed)) => {
+                        let e = shield_v2::verify_proof(&VerifyCache::default(), &compute_single_tx_hash(&tx), &parsed)
+                            .expect_err(&format!("{}: a changed {name} must not verify", original.tx_type));
+                        assert!(e.contains("proof refused"), "{e}");
+                        by_proof += 1;
+                    }
+                    Ok(None) => panic!("a V2 type is always judged from activation"),
+                }
+            }
+            // fields the stateless rules cannot judge are caught by the binding: the expiry height
+            // and the four ciphertexts for every type, and more per type
+            assert!(by_proof >= 5, "{}: {by_proof} changes reached the proof", original.tx_type);
+            // a changed proof byte, and a proof from another transaction
+            let mut tx = original.clone();
+            let mut p = hex::decode(tx.payload.shield_v2_proof.as_ref().unwrap()).unwrap();
+            let mid = p.len() / 2;
+            p[mid] ^= 1;
+            tx.payload.shield_v2_proof = Some(hex::encode(&p));
+            assert!(node_accepts(&tx, height).is_err());
+        }
+        let mut tx = f.transfer.clone();
+        tx.payload.shield_v2_proof = f.unshield.payload.shield_v2_proof.clone();
+        assert!(node_accepts(&tx, A + 1).is_err(), "a proof is bound to its own body");
+
+        // the same through the real import path, on a node at the right height for each type
+        let import_changed = |n_before: usize, original: &TxV1, off: usize, resign: bool| {
+            let h = replayed(n_before);
+            let mut b = hex::decode(original.payload.shield_v2_body.as_ref().unwrap()).unwrap();
+            b[off] ^= 1;
+            let mut tx = original.clone();
+            tx.payload.shield_v2_body = Some(hex::encode(&b));
+            if resign { tx.sig = pqc_sign(&f.user.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap(); }
+            let e = h.import_refused(vec![tx]);
+            assert!(e.contains("shield_v2"), "{e}");
+            // the untouched transaction is still accepted afterwards
+            h.import(vec![original.clone()]).expect("the original is accepted on the same node");
+        };
+        import_changed(0, &f.shield, 258, true); // a ciphertext of a re-signed shield
+        import_changed(1, &f.transfer, 34, false); // the expiry height of a transfer
+        import_changed(2, &f.unshield, 226, false); // the recipient account of an unshield: no theft in flight
+        import_changed(2, &f.unshield, 1_402, false); // a ciphertext of an unshield
+    }
+
+    /// Spec §8.4: the committed wallet vectors, read by the NODE's parser and applied through the
+    /// node's persistent pool store. Every body parses to the fields the file states, the node
+    /// derives the stated binding and public inputs, the listing yields the stated ciphertexts,
+    /// and after each transaction the pool state and its state-root section are the stated ones.
+    #[test]
+    fn committed_wallet_vectors_agree_with_the_node_parser_and_the_state_root_section() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../shield-v2/vectors/wallet");
+        let read = |name: &str| -> serde_json::Value { serde_json::from_str(&std::fs::read_to_string(format!("{dir}/{name}")).unwrap()).unwrap() };
+        let txs = read("transactions.json");
+        let roots = read("state_root.json");
+        // keys.json: the shielded address in its current textual form (version 2, with the
+        // integrity value) decodes to the stated pk and encapsulation key; the first form (bech32m
+        // of the bare 1,216 bytes) is refused by name
+        for w in read("keys.json")["wallets"].as_array().unwrap() {
+            let text = w["address"].as_str().unwrap();
+            let addr = wallet::ShieldedAddress::decode(text).expect("the committed address decodes");
+            assert_eq!((hex::encode(addr.pk), hex::encode(addr.ek)), (w["pk"].as_str().unwrap().to_string(), w["ml_kem_768_ek"].as_str().unwrap().to_string()));
+            assert_eq!((addr.encode().as_str(), text.len(), w["address_version"].as_u64()), (text, 1_974, Some(2)));
+            assert_eq!(addr.fingerprint(), w["address_fingerprint"].as_str().unwrap());
+            let old_form = wallet::bech32m::encode("rshield", &addr.to_bytes());
+            assert!(matches!(wallet::ShieldedAddress::decode(&old_form), Err(wallet::WalletError::Address(m)) if m.contains("old address format")));
+        }
+        let chain_id = txs["chain_id"].as_str().unwrap();
+        let a = txs["activation_height"].as_u64().unwrap();
+        assert_eq!(hex::encode(shield_v2::chain_tag(chain_id)), txs["chain"].as_str().unwrap());
+        let s = |v: &serde_json::Value| v.as_str().unwrap().to_string();
+        let amount = |v: &serde_json::Value| v.as_str().unwrap().parse::<u64>().unwrap();
+
+        // a node whose pool store starts at the vectors' activation height
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_shield_v2(Some(a));
+        let (_d, node, _) = node_with_store();
+        let mut pool = node.shield_v2_pool().unwrap();
+        let states = roots["states"].as_array().unwrap();
+        let check_state = |st: &PoolState, want: &serde_json::Value| {
+            assert_eq!(st.pool_total.to_string(), s(&want["pool_total"]));
+            assert_eq!(st.note_count, want["note_count"].as_u64().unwrap());
+            assert_eq!(hex::encode(st.tree_root), s(&want["tree_root"]));
+            assert_eq!(st.frontier.iter().map(hex::encode).collect::<Vec<_>>(), want["frontier"].as_array().unwrap().iter().map(s).collect::<Vec<_>>());
+            assert_eq!(st.nullifier_count, want["nullifier_count"].as_u64().unwrap());
+            assert_eq!(hex::encode(st.nullifier_acc), s(&want["nullifier_acc"]));
+            assert_eq!(st.window.iter().map(hex::encode).collect::<Vec<_>>(), want["window"].as_array().unwrap().iter().map(s).collect::<Vec<_>>());
+            assert_eq!(st.state_root_section(want["root_before"].as_str().unwrap()).unwrap(), s(&want["root_after"]), "spec §4.8");
+        };
+        check_state(&pool.state().unwrap(), &states[0]["state"]);
+
+        let list = txs["transactions"].as_array().unwrap();
+        assert_eq!(list.iter().map(|t| s(&t["tx_type"])).collect::<Vec<_>>(), shield_v2::SHIELD_V2_TX_TYPES.to_vec());
+        for (i, t) in list.iter().enumerate() {
+            let ty = t["tx_type"].as_str().unwrap();
+            let height = t["height"].as_u64().unwrap();
+            let body_bytes = hex::decode(t["body"].as_str().unwrap()).unwrap();
+            // the node's parser (spec §3.6 checks 6–11)
+            let body = shield_v2::parse_body(&body_bytes, ty, height, &shield_v2::chain_tag(chain_id)).expect("the node parses the vector body");
+            assert_eq!(body_bytes[1] as u64, t["kind"].as_u64().unwrap());
+            assert_eq!(body.expiry_height, t["expiry_height"].as_u64().unwrap());
+            assert_eq!(hex::encode(body.anchor), s(&t["anchor"]));
+            assert_eq!([hex::encode(body.nf[0]), hex::encode(body.nf[1])], [s(&t["nf1"]), s(&t["nf2"])]);
+            assert_eq!([hex::encode(body.cm_out[0]), hex::encode(body.cm_out[1])], [s(&t["cm_out1"]), s(&t["cm_out2"])]);
+            assert_eq!((body.v_in, body.v_out, body.fee), (amount(&t["v_in"]), amount(&t["v_out"]), amount(&t["fee"])));
+            assert_eq!(hex::encode(body.account), s(&t["account"]));
+            // a wrong chain, a wrong type and an expired height are refused by the same parser
+            assert!(shield_v2::parse_body(&body_bytes, ty, height, &shield_v2::chain_tag("another-chain")).is_err());
+            assert!(shield_v2::parse_body(&body_bytes, "transfer", height, &shield_v2::chain_tag(chain_id)).is_err());
+            assert!(shield_v2::parse_body(&body_bytes, ty, body.expiry_height + 1, &shield_v2::chain_tag(chain_id)).is_err());
+            // the node's binding and public inputs (spec §3.6 check 20)
+            let parsed = shield_v2::ShieldV2Tx { body: body.clone(), body_bytes: body_bytes.clone(), proof: Vec::new() };
+            let public: PublicInputs = parsed.public_inputs();
+            assert_eq!(hex::encode(public.to_bytes()), s(&t["public_inputs"]));
+            assert_eq!(hex::encode(digest_to_bytes(&public.binding)), s(&t["binding"]));
+            match ty {
+                "shield_v2" => assert_eq!(hex::encode(body.account), s(&t["from_pub_key_sha256"])),
+                "shielded_transfer_v2" => assert_eq!(body.account, [0u8; 32]),
+                _ => assert_eq!(address_from_hash(&body.account).unwrap(), s(&t["recipient_address"])),
+            }
+            // the wallet listing's view of the same body
+            let env = TxV1 { version: 1, tx_type: ty.into(), from_pub_key: String::new(), nonce: 0,
+                payload: TxPayload { shield_v2_body: Some(hex::encode(&body_bytes)), shield_v2_proof: Some("00".into()), ..Default::default() },
+                fee: 0.0, sig: String::new(), signed_payload: None };
+            let lf = shield_v2::listing_fields(&env).unwrap();
+            assert_eq!(lf.cm_out, body.cm_out);
+            assert_eq!((lf.kem_ct[0].as_slice(), lf.note_ct[1].as_slice()), (&body_bytes[258..1_346], &body_bytes[2_490..]));
+            // through the node's persistent pool store: the state and its root section
+            assert_eq!(height, a + i as u64);
+            pool.apply_block(height, &[parsed.pool_tx()]).expect("the pool rules accept the vector transaction");
+            let want = &states[i + 1];
+            assert_eq!(want["height"].as_u64().unwrap(), height);
+            check_state(&pool.state().unwrap(), &want["state"]);
+            assert_eq!(shield_v2::decode_stored_pool(&node.shield_v2_store.meta().unwrap().unwrap()).unwrap().state, pool.state().unwrap(), "persisted");
+        }
+        set_test_shield_v2(None);
+    }
+}
+
+/// CHAIN_ID_BINDING (consensus) and the node rule on the mempool / producer path: the activation
+/// boundary on the real import path, scheduled vs unscheduled nodes below activation, and that
+/// node-signed transactions switch to the network-bound format exactly at activation.
+#[cfg(test)]
+mod chain_id_binding_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, signed, TmpDir};
+    use crate::chain_binding::{set_test_chain_id_binding, set_test_require, MISMATCH_CODE, REQUIRED_CODE};
+    use quantum_vault_crypto::pqc_keygen;
+    use quantum_vault_types::encode_tx_for_signing_chain;
+
+    const CHAIN: &str = "test"; // node_with_store's chain id
+    const OTHER: &str = "rougechain-devnet-1";
+
+    struct Net { _d: Vec<TmpDir>, x: L1Node, y: L1Node, user: PQKeypair, proposer: PQKeypair, nonce: std::cell::Cell<u64> }
+
+    fn net() -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let (dx, x, _) = node_with_store();
+        let (dy, y, _) = node_with_store();
+        let (user, proposer) = (pqc_keygen(), pqc_keygen());
+        for n in [&x, &y] { fund_xrge(n, &user.public_key_hex, 1_000.0); }
+        Net { _d: vec![dx, dy], x, y, user, proposer, nonce: std::cell::Cell::new(0) }
+    }
+
+    fn at<T>(activation: Option<u64>, f: impl FnOnce() -> T) -> T {
+        set_test_chain_id_binding(activation);
+        let out = f();
+        set_test_chain_id_binding(None);
+        out
+    }
+
+    impl Net {
+        fn next(&self) -> u64 { self.nonce.set(self.nonce.get() + 1); self.nonce.get() }
+        fn raw(&self) -> TxV1 {
+            TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: self.user.public_key_hex.clone(), nonce: self.next(),
+                payload: TxPayload { to_pub_key_hex: Some("aa".repeat(32)), amount: Some(1), ..Default::default() },
+                fee: 0.1, sig: String::new(), signed_payload: None }
+        }
+        /// V1, plain encoding (the only V1 format before activation).
+        fn v1_plain(&self) -> TxV1 { signed(self.raw(), &self.user.secret_key_hex) }
+        /// V1, network-bound encoding for `chain`.
+        fn v1_bound(&self, chain: &str) -> TxV1 {
+            let mut t = self.raw();
+            t.sig = pqc_sign(&self.user.secret_key_hex, &encode_tx_for_signing_chain(&t, chain)).unwrap();
+            t
+        }
+        /// `/api/v2` transfer whose signed JSON carries `chainId` = `chain` (or none).
+        fn v2(&self, chain: Option<&str>) -> TxV1 {
+            let n = self.next();
+            let mut p = serde_json::json!({"type": "transfer", "from": self.user.public_key_hex, "to": "aa".repeat(32),
+                "amount": 1, "token": "XRGE", "timestamp": n, "nonce": format!("nonce-{n}")});
+            if let Some(c) = chain { p["chainId"] = c.into(); }
+            let sp = serde_json::to_string(&p).unwrap();
+            let sig = pqc_sign(&self.user.secret_key_hex, sp.as_bytes()).unwrap();
+            crate::v2_binding::build_v2_tx("transfer", self.user.public_key_hex.clone(), n, &p, sig, sp).unwrap()
+        }
+        /// `rougechain` CLI envelope with an optional network field `(name, value)`.
+        fn envelope(&self, field: Option<(&str, &str)>) -> TxV1 {
+            let mut t = self.raw();
+            t.fee = 1.0;
+            let mut e = serde_json::json!({"tx_type": "transfer", "from": t.from_pub_key, "nonce": t.nonce, "fee": 1.0,
+                "payload": serde_json::to_value(&t.payload).unwrap()});
+            if let Some((k, v)) = field { e[k] = v.into(); }
+            let sp = serde_json::to_string(&e).unwrap();
+            t.sig = pqc_sign(&self.user.secret_key_hex, sp.as_bytes()).unwrap();
+            t.signed_payload = Some(sp);
+            t
+        }
+        fn block(&self, n: &L1Node, txs: Vec<TxV1>) -> BlockV1 {
+            let t = n.tip_height().unwrap() + 1;
+            let probe = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs.clone(), None, t);
+            let snap = n.capture_pre_apply_snapshot(&probe).unwrap();
+            let _ = n.apply_balance_block(&probe).unwrap();
+            let root = n.compute_state_root_for_height(probe.header.height).unwrap();
+            n.restore_pre_apply_snapshot(snap).unwrap();
+            let b = sealed_block(n, &self.proposer.public_key_hex, &self.proposer.secret_key_hex, txs, Some(root), t);
+            serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()
+        }
+        fn fingerprint(n: &L1Node) -> (u64, String, String) {
+            let h = n.tip_height().unwrap();
+            (h, n.get_block(h).unwrap().unwrap().hash, n.get_state_root().unwrap())
+        }
+        /// Every format history contains, including signed payloads naming no or another network.
+        fn historical_shapes(&self) -> Vec<TxV1> {
+            vec![self.v1_plain(), self.v2(None), self.v2(Some(OTHER)), self.v2(Some(CHAIN)),
+                 self.envelope(None), self.envelope(Some(("chain_id", OTHER)))]
+        }
+    }
+
+    #[test]
+    fn unscheduled_on_every_network() {
+        assert_eq!(crate::chain_binding::CHAIN_ID_BINDING_ACTIVATION_HEIGHT, None);
+        assert_eq!((crate::upgrades::MAINNET.chain_id_binding, crate::upgrades::TESTNET.chain_id_binding), (None, None));
+        for h in [0, 1, 245, u64::MAX] { assert!(!crate::chain_binding::chain_id_binding_active(h)); }
+    }
+
+    /// Below activation a node with the rule scheduled and a node without it accept exactly the
+    /// same blocks (every historical format, including payloads naming no or another network) and
+    /// reach the same tip, block hash and state root. The network-bound V1 format is NOT accepted
+    /// before activation (an old node would refuse it), so the rule adds nothing early.
+    #[test]
+    fn scheduled_and_unscheduled_nodes_agree_below_activation() {
+        const H: u64 = 4;
+        let n = net(); // x = scheduled at H, y = not scheduled
+        for _ in 1..H {
+            let b = n.block(&n.y, n.historical_shapes());
+            at(Some(H), || n.x.import_block(b.clone())).expect("scheduled node accepts below activation");
+            at(None, || n.y.import_block(b.clone())).expect("unscheduled node accepts");
+            assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        }
+        let before = Net::fingerprint(&n.x);
+        let early = n.block(&n.y, vec![n.v1_bound(CHAIN)]);
+        assert!(at(Some(H + 1), || n.x.import_block(early.clone())).unwrap_err().contains("invalid tx signatures"));
+        assert!(at(None, || n.y.import_block(early)).unwrap_err().contains("invalid tx signatures"));
+        assert_eq!((Net::fingerprint(&n.x), Net::fingerprint(&n.y)), (before.clone(), before));
+    }
+
+    /// From activation, on the real import path, on two nodes with the same verdicts.
+    #[test]
+    fn activation_boundary_on_the_import_path() {
+        const H: u64 = 2;
+        let n = net();
+        let b1 = n.block(&n.x, n.historical_shapes());
+        for node in [&n.x, &n.y] { at(Some(H), || node.import_block(b1.clone())).expect("below activation"); }
+        let before = Net::fingerprint(&n.x);
+        let refused: Vec<(TxV1, &str)> = vec![
+            (n.v1_plain(), "invalid tx signatures"),
+            (n.v1_bound(OTHER), "invalid tx signatures"),
+            (n.v2(None), REQUIRED_CODE),
+            (n.v2(Some(OTHER)), MISMATCH_CODE),
+            (n.envelope(None), REQUIRED_CODE),
+            (n.envelope(Some(("chainId", CHAIN))), REQUIRED_CODE), // an envelope names its network as `chain_id`
+            (n.envelope(Some(("chain_id", OTHER))), MISMATCH_CODE),
+        ];
+        for (bad, why) in refused {
+            for txs in [vec![bad.clone()], vec![n.v2(Some(CHAIN)), bad.clone()]] {
+                let b = n.block(&n.x, txs);
+                let ex = at(Some(H), || n.x.import_block(b.clone())).unwrap_err();
+                let ey = at(Some(H), || n.y.import_block(b.clone())).unwrap_err();
+                assert!(ex.contains(why), "{ex}");
+                assert_eq!(ex, ey);
+                assert_eq!((Net::fingerprint(&n.x), Net::fingerprint(&n.y)), (before.clone(), before.clone()), "a refused block changes nothing");
+            }
+        }
+        let ok = n.block(&n.x, vec![n.v1_bound(CHAIN), n.v2(Some(CHAIN)), n.envelope(Some(("chain_id", CHAIN)))]);
+        for node in [&n.x, &n.y] { at(Some(H), || node.import_block(ok.clone())).expect("network-bound block at activation"); }
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        assert_eq!(n.x.tip_height().unwrap(), H);
+    }
+
+    /// Node rule on admission (no fork): another network is always refused; none is accepted
+    /// with REQUIRE_SIGNED_CHAIN_ID off and refused with it on. From activation admission also
+    /// applies the consensus rule, and the producer leaves out what the next block would refuse.
+    #[test]
+    fn mempool_and_producer() {
+        const H: u64 = 2;
+        let n = net();
+        set_test_require(Some(false));
+        at(None, || {
+            assert!(n.x.add_tx_to_mempool(n.v2(Some(OTHER))).unwrap_err().starts_with(MISMATCH_CODE));
+            assert!(n.x.add_tx_to_mempool_verified(n.v2(Some(OTHER))).unwrap_err().starts_with(MISMATCH_CODE));
+            assert!(n.x.add_tx_to_mempool(n.envelope(Some(("chain_id", OTHER)))).unwrap_err().starts_with(MISMATCH_CODE));
+            n.x.add_tx_to_mempool(n.v2(Some(CHAIN))).expect("matching");
+            n.x.add_tx_to_mempool(n.v2(None)).expect("missing, flag off");
+            n.x.add_tx_to_mempool(n.envelope(None)).expect("missing, flag off");
+            n.x.add_tx_to_mempool(n.v1_plain()).expect("V1 before activation");
+        });
+        set_test_require(Some(true));
+        at(None, || {
+            assert!(n.x.add_tx_to_mempool(n.v2(None)).unwrap_err().starts_with(REQUIRED_CODE));
+            assert!(n.x.add_tx_to_mempool(n.envelope(None)).unwrap_err().starts_with(REQUIRED_CODE));
+            n.x.add_tx_to_mempool(n.v2(Some(CHAIN))).expect("matching, flag on");
+            n.x.add_tx_to_mempool(n.envelope(Some(("chain_id", CHAIN)))).expect("matching envelope, flag on");
+            n.x.add_tx_to_mempool(n.v1_plain()).expect("V1 is bound by the consensus rule only");
+        });
+        set_test_require(None);
+        n.x.mempool.lock().unwrap().clear();
+        n.x.verified_tx_ids.lock().unwrap().clear();
+
+        // block 1 (below H): a node-signed (V1) tx uses the plain format and an old node accepts it
+        let t1 = at(Some(H), || n.x.submit_user_tx(&n.user.secret_key_hex, &n.user.public_key_hex, &"aa".repeat(32), 1.0, Some(0.1), None)).unwrap();
+        assert!(pqc_verify(&n.user.public_key_hex, &encode_tx_for_signing(&t1), &t1.sig).unwrap());
+        let b1 = at(Some(H), || n.x.mine_pending()).unwrap().expect("produced");
+        at(None, || n.y.import_block(serde_json::from_str(&serde_json::to_string(&b1).unwrap()).unwrap())).expect("old rules accept");
+        // next block = H: admission refuses what the rule refuses
+        at(Some(H), || {
+            assert!(n.x.add_tx_to_mempool(n.v1_plain()).unwrap_err().contains("invalid signature"));
+            assert!(n.x.add_tx_to_mempool(n.v2(None)).unwrap_err().starts_with(REQUIRED_CODE));
+            assert!(n.x.add_tx_to_mempool_verified(n.v2(None)).unwrap_err().starts_with(REQUIRED_CODE));
+            // a pre-verified entry admitted before activation is not produced
+            let stale = n.v1_plain();
+            let id = compute_single_tx_hash(&stale);
+            n.x.verified_tx_ids.lock().unwrap().insert(id.clone());
+            n.x.mempool.lock().unwrap().insert(id, stale);
+            assert!(n.x.mine_pending().unwrap().is_none(), "nothing valid to produce");
+            n.x.mempool.lock().unwrap().clear();
+            // node-signed txs switch to the network-bound format; the block imports on another node
+            let t2 = n.x.submit_user_tx(&n.user.secret_key_hex, &n.user.public_key_hex, &"aa".repeat(32), 1.0, Some(0.1), None).unwrap();
+            assert!(pqc_verify(&n.user.public_key_hex, &encode_tx_for_signing_chain(&t2, CHAIN), &t2.sig).unwrap());
+            n.x.add_tx_to_mempool(n.v2(Some(CHAIN))).expect("network-bound V2");
+            let b2 = n.x.mine_pending().unwrap().expect("produced at activation");
+            assert_eq!(b2.txs.len(), 2);
+            n.y.import_block(serde_json::from_str(&serde_json::to_string(&b2).unwrap()).unwrap()).expect("imported at activation");
+        });
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+    }
+}
+
+/// Node-local AMM guards (mempool admission + the block producer). Block validity is unchanged:
+/// every block the guarded producer makes is imported by a plain importer, and a block carrying
+/// what the producer now leaves out is still accepted on import.
+#[cfg(test)]
+mod amm_producer_guard_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, signed, TmpDir};
+    use quantum_vault_crypto::pqc_keygen;
+
+    const TOK: &str = "QTOK";
+
+    /// `x` produces (guarded producer); `y` only imports what `x` produces (the import path, which
+    /// has no AMM guard). Both start from the same funded state.
+    struct Net { _d: Vec<TmpDir>, x: L1Node, y: L1Node, user: PQKeypair, other: PQKeypair, nonce: std::cell::Cell<u64> }
+
+    fn net() -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0))); // header state root committed + verified
+        let (dx, x, _) = node_with_store();
+        let (dy, y, _) = node_with_store();
+        let (user, other) = (pqc_keygen(), pqc_keygen());
+        for n in [&x, &y] {
+            for k in [&user, &other] {
+                fund_xrge(n, &k.public_key_hex, 1_000_000.0);
+                n.token_balances.lock().unwrap().insert((canon_addr(&k.public_key_hex), TOK.to_string()), 10_000_000);
+            }
+        }
+        Net { _d: vec![dx, dy], x, y, user, other, nonce: std::cell::Cell::new(0) }
+    }
+
+    impl Net {
+        fn tx(&self, who: &PQKeypair, ty: &str, payload: TxPayload) -> TxV1 {
+            self.nonce.set(self.nonce.get() + 1);
+            signed(TxV1 { version: 1, tx_type: ty.into(), from_pub_key: who.public_key_hex.clone(), nonce: self.nonce.get(),
+                payload, fee: 1.0, sig: String::new(), signed_payload: None }, &who.secret_key_hex)
+        }
+        fn transfer(&self) -> TxV1 {
+            self.tx(&self.user, "transfer", TxPayload { to_pub_key_hex: Some(self.other.public_key_hex.clone()), amount: Some(1), ..Default::default() })
+        }
+        fn create(&self, a: &str, b: &str, x: u64, y: u64) -> TxV1 {
+            self.tx(&self.user, "create_pool", TxPayload { pool_id: Some(LiquidityPool::make_pool_id(a, b)), token_a_symbol: Some(a.into()),
+                token_b_symbol: Some(b.into()), amount_a: Some(x), amount_b: Some(y), ..Default::default() })
+        }
+        fn add(&self, x: u64, y: u64) -> TxV1 {
+            self.tx(&self.user, "add_liquidity", TxPayload { pool_id: Some(pool_id()), amount_a: Some(x), amount_b: Some(y), ..Default::default() })
+        }
+        fn remove(&self, lp: u64) -> TxV1 {
+            self.tx(&self.user, "remove_liquidity", TxPayload { pool_id: Some(pool_id()), lp_amount: Some(lp), ..Default::default() })
+        }
+        fn swap(&self, who: &PQKeypair, amount_in: u64, min_out: u64, path: Option<Vec<String>>) -> TxV1 {
+            self.tx(who, "swap", TxPayload { pool_id: Some(pool_id()), token_a_symbol: Some("XRGE".into()), token_b_symbol: Some(TOK.into()),
+                amount: Some(amount_in), amount_a: Some(amount_in), min_amount_out: Some(min_out), swap_path: path, ..Default::default() })
+        }
+        /// Queue on the producer as an entry admitted by older software (no admission check).
+        fn queue(&self, tx: &TxV1) {
+            let id = compute_single_tx_hash(tx);
+            self.x.verified_tx_ids.lock().unwrap().insert(id.clone());
+            self.x.mempool.lock().unwrap().insert(id, tx.clone());
+        }
+        /// `x` produces a block from what is queued; `y` imports it (as relayed).
+        fn produce(&self) -> BlockV1 {
+            let b = self.x.mine_pending().expect("production does not fail").expect("a block is produced");
+            self.y.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()).expect("a plain importer accepts it");
+            assert_eq!(Self::fingerprint(&self.x), Self::fingerprint(&self.y));
+            b
+        }
+        fn fingerprint(n: &L1Node) -> (u64, String, String) {
+            let h = n.tip_height().unwrap();
+            (h, n.get_block(h).unwrap().unwrap().hash, n.get_state_root().unwrap())
+        }
+        /// A pool QTOK/XRGE with reserves (QTOK 1,000,000 ; XRGE 1,000) made in its own block.
+        fn with_pool(&self) {
+            self.queue(&self.create("XRGE", TOK, 1_000, 1_000_000));
+            self.produce();
+            assert!(self.x.pool_store.get_pool(&pool_id()).unwrap().is_some());
+        }
+    }
+    fn pool_id() -> String { LiquidityPool::make_pool_id("XRGE", TOK) }
+    fn hashes(b: &BlockV1) -> Vec<String> { b.txs.iter().map(compute_single_tx_hash).collect() }
+    fn h(tx: &TxV1) -> String { compute_single_tx_hash(tx) }
+
+    #[test]
+    fn a_failing_transaction_is_left_out_and_the_others_are_produced() {
+        let n = net();
+        n.with_pool();
+        // 1 LP returns 32 QTOK and 0 XRGE: its application fails (the whole block used to fail
+        // and be requeued, every time).
+        let failing = n.remove(1);
+        let (t1, t2) = (n.transfer(), n.transfer());
+        for tx in [&t1, &failing, &t2] { n.queue(tx); }
+        let b = n.produce();
+        let mut got = hashes(&b); got.sort();
+        let mut want = vec![h(&t1), h(&t2)]; want.sort();
+        assert_eq!(got, want, "the failing transaction is left out, the others are included");
+        assert!(n.x.get_mempool_snapshot().is_empty(), "the failing transaction is dropped, not requeued");
+    }
+
+    #[test]
+    fn the_bisection_finds_the_failing_transaction() {
+        let n = net();
+        n.with_pool();
+        let mut txs: Vec<TxV1> = (0..6).map(|_| n.transfer()).collect();
+        txs.insert(4, n.remove(1));
+        let probe = BlockV1 { version: 1, header: BlockHeaderV1 { version: 1, chain_id: "test".into(), height: n.x.tip_height().unwrap() + 1, time: 9,
+            prev_hash: String::new(), tx_hash: String::new(), proposer_pub_key: String::new(), state_root: None, parent_commit: None },
+            txs, proposer_sig: String::new(), hash: String::new() };
+        let root = n.x.get_state_root().unwrap();
+        assert_eq!(n.x.producer_first_failing_tx(&probe).unwrap(), Some(4));
+        assert_eq!(n.x.get_state_root().unwrap(), root, "every probe is rolled back");
+        let ok = BlockV1 { txs: probe.txs[..4].to_vec(), ..probe.clone() };
+        assert_eq!(n.x.producer_first_failing_tx(&ok).unwrap(), None);
+    }
+
+    #[test]
+    fn a_swap_below_its_minimum_at_its_position_is_left_out() {
+        let n = net();
+        n.with_pool();
+        // Each swap alone meets its minimum against the current reserves; the second one no longer
+        // does after the first moved the price. The producer judges it at its position.
+        let expect = amm::get_amount_out(100, 1_000, 1_000_000).unwrap();
+        let first = n.swap(&n.user, 100, expect, None);
+        let second = n.swap(&n.other, 100, expect, None);
+        let hopeless = n.swap(&n.other, 1, 1_000_000, None);
+        let bal = |k: &PQKeypair| (n.x.get_balance(&k.public_key_hex).unwrap(), n.x.get_token_balance(&k.public_key_hex, TOK).unwrap());
+        let (u0, o0) = (bal(&n.user), bal(&n.other));
+        for tx in [&first, &second, &hopeless] { n.queue(tx); }
+        let b = n.produce();
+        // Whichever of the two equal swaps comes first (the mempool has no order) is produced;
+        // the other, and the hopeless one, are left out — and their senders pay nothing.
+        let got = hashes(&b);
+        assert_eq!(got.len(), 1, "exactly one swap is produced");
+        assert!(got[0] == h(&first) || got[0] == h(&second));
+        let (left_out, before) = if got[0] == h(&first) { (&n.other, o0) } else { (&n.user, u0) };
+        assert_eq!(bal(left_out), before, "nothing was charged for the swaps left out");
+        assert!(n.x.get_mempool_snapshot().is_empty());
+    }
+
+    #[test]
+    fn multi_hop_swaps_are_refused_at_admission_and_left_out_by_the_producer() {
+        let n = net();
+        n.with_pool();
+        let hop = n.swap(&n.user, 10, 0, Some(vec!["XRGE".into(), TOK.into()]));
+        assert!(n.x.add_tx_to_mempool(hop.clone()).unwrap_err().starts_with(AMM_REFUSED));
+        n.queue(&hop);
+        let t = n.transfer();
+        n.queue(&t);
+        assert_eq!(hashes(&n.produce()), vec![h(&t)]);
+    }
+
+    #[test]
+    fn pool_creation_for_an_existing_pair_is_left_out() {
+        let n = net();
+        n.with_pool();
+        let reversed = n.create(TOK, "XRGE", 5, 5_000_000);
+        let lower = n.create("xrge", TOK, 5_000, 5_000);
+        let t = n.transfer();
+        for tx in [&reversed, &lower, &t] { n.queue(tx); }
+        assert_eq!(hashes(&n.produce()), vec![h(&t)]);
+        let pool = n.x.pool_store.get_pool(&pool_id()).unwrap().unwrap();
+        assert_eq!((pool.reserve_a, pool.reserve_b), (1_000_000, 1_000), "the pool is untouched");
+        // Two creations of one new pair in the same block: only the first is produced.
+        for n2 in [&n.x, &n.y] { n2.token_balances.lock().unwrap().insert((canon_addr(&n.user.public_key_hex), "BTOK".into()), 1_000_000); }
+        let (c1, c2) = (n.create("BTOK", "XRGE", 100_000, 100), n.create("XRGE", "BTOK", 7, 70_000));
+        n.queue(&c1); n.queue(&c2);
+        let got = hashes(&n.produce()); // the mempool has no order: whichever comes first
+        assert!(got == vec![h(&c1)] || got == vec![h(&c2)], "{got:?}");
+    }
+
+    #[test]
+    fn liquidity_that_would_mint_or_return_nothing_is_left_out() {
+        let n = net();
+        n.with_pool();
+        let zero_lp = n.add(1, 1); // 1 QTOK / 1 XRGE mints 0 LP against these reserves
+        let t = n.transfer();
+        for tx in [&zero_lp, &t] { n.queue(tx); }
+        assert_eq!(hashes(&n.produce()), vec![h(&t)]);
+        let good = n.add(1_000, 1);
+        n.queue(&good);
+        assert_eq!(hashes(&n.produce()), vec![h(&good)], "a well-formed add is produced");
+    }
+
+    /// Mempool admission — the path every `/api/v2` AMM handler, the batch route and P2P relay take
+    /// (`add_tx_to_mempool_verified` is the handlers' last step; their transactions come from
+    /// `v2_binding::build_v2_tx`, as here).
+    #[test]
+    fn admission_refuses_malformed_liquidity_and_swap_requests() {
+        let n = net();
+        n.with_pool();
+        let pk = n.user.public_key_hex.clone();
+        let v2 = |ty: &str, p: serde_json::Value| -> Result<(), String> {
+            let tx = crate::v2_binding::build_v2_tx(ty, pk.clone(), chrono::Utc::now().timestamp_millis() as u64 + n.nonce.get(), &p,
+                "00".into(), p.to_string())?;
+            n.nonce.set(n.nonce.get() + 1);
+            n.x.add_tx_to_mempool_verified(tx)
+        };
+        let refused = |r: Result<(), String>, what: &str| assert!(r.as_ref().is_err_and(|e| e.starts_with(AMM_REFUSED)), "{what}: {r:?}");
+        refused(v2("create_pool", serde_json::json!({"token_a": "XRGE", "token_b": TOK, "amount_a": 10, "amount_b": 10_000_000})), "existing pool");
+        refused(v2("create_pool", serde_json::json!({"token_a": TOK, "token_b": "XRGE", "amount_a": 10, "amount_b": 10})), "existing pool, other order");
+        refused(v2("create_pool", serde_json::json!({"token_a": "xrge", "token_b": "qtok", "amount_a": 10_000, "amount_b": 10_000})), "existing pool, other case");
+        refused(v2("create_pool", serde_json::json!({"token_a": "ATOK", "token_b": "atok", "amount_a": 10_000, "amount_b": 10_000})), "same token");
+        refused(v2("create_pool", serde_json::json!({"token_a": "ATOK", "token_b": "XRGE", "amount_a": 0, "amount_b": 10_000})), "zero amount");
+        refused(v2("create_pool", serde_json::json!({"token_a": "ATOK", "token_b": "XRGE", "amount_a": 1_000, "amount_b": 1_000})), "zero LP");
+        refused(v2("add_liquidity", serde_json::json!({"pool_id": pool_id(), "amount_a": 0, "amount_b": 5})), "zero amount");
+        refused(v2("add_liquidity", serde_json::json!({"pool_id": pool_id(), "amount_a": 1, "amount_b": 1})), "zero LP");
+        refused(v2("add_liquidity", serde_json::json!({"pool_id": "NOPE-XRGE", "amount_a": 1_000, "amount_b": 1_000})), "no pool");
+        refused(v2("remove_liquidity", serde_json::json!({"pool_id": pool_id(), "lp_amount": 1})), "nothing on one side");
+        refused(v2("remove_liquidity", serde_json::json!({"pool_id": pool_id(), "lp_amount": 0})), "zero LP");
+        refused(v2("swap", serde_json::json!({"token_in": "XRGE", "token_out": "XRGE", "amount_in": 5, "min_amount_out": 0})), "same token");
+        refused(v2("swap", serde_json::json!({"token_in": "XRGE", "token_out": TOK, "amount_in": 0, "min_amount_out": 0})), "zero amount");
+        assert!(n.x.get_mempool_snapshot().is_empty());
+        // well-formed requests are admitted
+        v2("create_pool", serde_json::json!({"token_a": "ATOK", "token_b": "XRGE", "amount_a": 100_000, "amount_b": 100})).expect("new pool");
+        v2("add_liquidity", serde_json::json!({"pool_id": pool_id(), "amount_a": 1_000, "amount_b": 1})).expect("add");
+        v2("remove_liquidity", serde_json::json!({"pool_id": pool_id(), "lp_amount": 1_000})).expect("remove");
+        v2("swap", serde_json::json!({"token_in": "XRGE", "token_out": TOK, "amount_in": 5, "min_amount_out": 1})).expect("swap");
+    }
+
+    /// Consensus is unchanged: a block that carries what the producer now leaves out (a swap below
+    /// its minimum, charged its fee without output, and a pool creation for an existing pair) is
+    /// still valid for every node, exactly as before.
+    #[test]
+    fn blocks_carrying_left_out_shapes_are_still_valid_on_import() {
+        let n = net();
+        n.with_pool();
+        let proposer = pqc_keygen();
+        let txs = vec![n.swap(&n.other, 1, 1_000_000, None), n.create(TOK, "XRGE", 5, 5_000_000), n.transfer()];
+        let t = n.y.tip_height().unwrap() + 1;
+        let probe = sealed_block(&n.y, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), None, t);
+        let snap = n.y.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = n.y.apply_balance_block(&probe).unwrap();
+        let root = n.y.compute_state_root_for_height(probe.header.height).unwrap();
+        n.y.restore_pre_apply_snapshot(snap).unwrap();
+        let b = sealed_block(&n.y, &proposer.public_key_hex, &proposer.secret_key_hex, txs, Some(root), t);
+        n.y.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()).expect("valid as before");
+        n.x.import_block(serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap()).expect("valid for the guarded node too");
+        assert_eq!(Net::fingerprint(&n.x), Net::fingerprint(&n.y));
+        assert!(n.x.amm_outcomes.lock().unwrap().is_none(), "nothing is recorded outside production");
     }
 }

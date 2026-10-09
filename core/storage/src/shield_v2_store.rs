@@ -26,12 +26,20 @@
 //   "l" ‖ idx(8 BE) → nf(32)                            — the nullifier LOG (insertion order)
 //   "t" ‖ pos(8 BE) → leaf(32)                          — the commitment tree's leaves
 //   "h" ‖ height(8) → first_leaf(8 BE) ‖ leaf_count_after(8 BE) — per-block leaf range (wallet scan)
+//   "x"             → NODE-LOCAL side record (opaque bytes; the daemon keeps its running
+//                     ciphertext hash here). Written in the SAME batch as "m", rolled back by
+//                     the same snapshot / restore, cleared by `clear`. It is NOT part of the
+//                     metadata record and therefore not of anything the state root reads.
+//   "r"             → NODE-LOCAL record of the last ACCEPTED block's report (opaque bytes),
+//                     written by the daemon only after a block was stored on its chain.
 // ============================================================================
 
 use std::path::Path;
 
 const K_META: &[u8] = b"m";
 const K_COUNTERS: &[u8] = b"c";
+const K_SIDE: &[u8] = b"x";
+const K_ACCEPTED: &[u8] = b"r";
 const P_NF_SET: u8 = b'n';
 const P_NF_LOG: u8 = b'l';
 const P_LEAF: u8 = b't';
@@ -45,6 +53,9 @@ pub struct ShieldV2Snapshot {
     leaf_count: u64,
     /// Heights that had a per-block record at snapshot time are kept; later ones are removed.
     max_height_record: Option<u64>,
+    /// The node-local side record and accepted-report record as they were.
+    side: Option<Vec<u8>>,
+    accepted: Option<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -84,6 +95,32 @@ impl ShieldV2Store {
     /// The daemon's metadata record, `None` until the first commit.
     pub fn meta(&self) -> Result<Option<Vec<u8>>, String> {
         Ok(self.tree.get(K_META).map_err(|e| e.to_string())?.map(|v| v.to_vec()))
+    }
+
+    /// The node-local side record (see the key layout), `None` if never written. Not consensus.
+    pub fn side(&self) -> Result<Option<Vec<u8>>, String> {
+        Ok(self.tree.get(K_SIDE).map_err(|e| e.to_string())?.map(|v| v.to_vec()))
+    }
+
+    /// Overwrites the node-local side record outside a block commit (the daemon's one-time
+    /// rebuild of it from the stored blocks). Not consensus.
+    pub fn put_side(&self, side: &[u8]) -> Result<(), String> {
+        self.tree.insert(K_SIDE, side).map_err(|e| format!("shield-v2 store: side record: {}", e))?;
+        self.tree.flush().map_err(|e| format!("shield-v2 store: flush: {}", e))?;
+        Ok(())
+    }
+
+    /// The node-local record of the last accepted block's report, `None` if never written.
+    pub fn accepted(&self) -> Result<Option<Vec<u8>>, String> {
+        Ok(self.tree.get(K_ACCEPTED).map_err(|e| e.to_string())?.map(|v| v.to_vec()))
+    }
+
+    /// Records the report of the last ACCEPTED block (the daemon calls this after the block was
+    /// stored on its chain, never during a speculative apply). Not consensus.
+    pub fn put_accepted(&self, record: &[u8]) -> Result<(), String> {
+        self.tree.insert(K_ACCEPTED, record).map_err(|e| format!("shield-v2 store: accepted record: {}", e))?;
+        self.tree.flush().map_err(|e| format!("shield-v2 store: flush: {}", e))?;
+        Ok(())
     }
 
     fn counters(&self) -> Result<(u64, u64), String> {
@@ -167,6 +204,20 @@ impl ShieldV2Store {
         first_leaf: u64,
         leaves: &[[u8; 32]],
     ) -> Result<(), String> {
+        self.commit_with_side(height, meta, nullifiers, first_leaf, leaves, None)
+    }
+
+    /// [`ShieldV2Store::commit`] that also writes the node-local side record in the same atomic
+    /// batch (`None`: the side record is left as it is).
+    pub fn commit_with_side(
+        &self,
+        height: Option<u64>,
+        meta: &[u8],
+        nullifiers: &[[u8; 32]],
+        first_leaf: u64,
+        leaves: &[[u8; 32]],
+        side: Option<&[u8]>,
+    ) -> Result<(), String> {
         let (mut nf_count, leaf_count) = self.counters()?;
         if first_leaf != leaf_count {
             return Err(format!("shield-v2 store: leaves start at {} but the tree has {} leaves", first_leaf, leaf_count));
@@ -197,6 +248,9 @@ impl ShieldV2Store {
         c.extend_from_slice(&pos.to_be_bytes());
         batch.insert(K_COUNTERS, c);
         batch.insert(K_META, meta);
+        if let Some(side) = side {
+            batch.insert(K_SIDE, side);
+        }
         self.tree.apply_batch(batch).map_err(|e| format!("shield-v2 store: commit: {}", e))?;
         self.tree.flush().map_err(|e| format!("shield-v2 store: flush: {}", e))?;
         Ok(())
@@ -205,7 +259,14 @@ impl ShieldV2Store {
     /// The rollback point: the metadata record and the two counters. O(1).
     pub fn snapshot(&self) -> Result<ShieldV2Snapshot, String> {
         let (nullifier_count, leaf_count) = self.counters()?;
-        Ok(ShieldV2Snapshot { meta: self.meta()?, nullifier_count, leaf_count, max_height_record: self.max_height_record()? })
+        Ok(ShieldV2Snapshot {
+            meta: self.meta()?,
+            nullifier_count,
+            leaf_count,
+            max_height_record: self.max_height_record()?,
+            side: self.side()?,
+            accepted: self.accepted()?,
+        })
     }
 
     /// Undo everything committed since `snap` was taken, atomically: nullifiers with an insertion
@@ -235,6 +296,12 @@ impl ShieldV2Store {
         match &snap.meta {
             Some(m) => batch.insert(K_META, m.as_slice()),
             None => batch.remove(K_META),
+        }
+        for (k, v) in [(K_SIDE, &snap.side), (K_ACCEPTED, &snap.accepted)] {
+            match v {
+                Some(v) => batch.insert(k, v.as_slice()),
+                None => batch.remove(k),
+            }
         }
         if snap.meta.is_none() && snap.nullifier_count == 0 && snap.leaf_count == 0 {
             batch.remove(K_COUNTERS);
@@ -337,6 +404,23 @@ mod tests {
         // the undone nullifiers can be inserted again (a reorg's other fork)
         s.commit(Some(6), b"m6b", &[b(3)], 2, &[b(0x20), b(0x21)]).unwrap();
         assert_eq!((s.nullifier_count().unwrap(), s.leaf_count().unwrap()), (3, 4));
+        // the node-local records: written with a commit or on their own, rolled back with it
+        let before = s.snapshot().unwrap();
+        assert_eq!((s.side().unwrap(), s.accepted().unwrap()), (None, None));
+        s.commit_with_side(Some(7), b"m7c", &[], 4, &[b(0x30)], Some(b"side-7")).unwrap();
+        s.put_accepted(b"accepted-7").unwrap();
+        assert_eq!((s.side().unwrap(), s.accepted().unwrap()), (Some(b"side-7".to_vec()), Some(b"accepted-7".to_vec())));
+        let with_side = s.snapshot().unwrap();
+        s.commit(Some(8), b"m8", &[], 5, &[]).unwrap();
+        assert_eq!(s.side().unwrap(), Some(b"side-7".to_vec()), "a commit without a side record leaves it");
+        s.commit_with_side(Some(9), b"m9", &[], 5, &[], Some(b"side-9")).unwrap();
+        s.put_accepted(b"accepted-9").unwrap();
+        s.restore(&with_side).unwrap();
+        assert_eq!(s.snapshot().unwrap(), with_side);
+        assert_eq!((s.side().unwrap(), s.accepted().unwrap()), (Some(b"side-7".to_vec()), Some(b"accepted-7".to_vec())));
+        s.restore(&before).unwrap();
+        assert_eq!((s.side().unwrap(), s.accepted().unwrap()), (None, None));
+        assert_eq!(s.snapshot().unwrap(), before);
         // back to nothing
         s.restore(&empty).unwrap();
         assert!(s.is_empty(), "restore to the pre-init snapshot leaves an empty tree");

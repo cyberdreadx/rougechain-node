@@ -38,6 +38,7 @@ Contracts import these from the `env` module:
 | `host_log(ptr, len)` | Debug logging |
 | `host_get_caller(buf, len)` | Caller's public key (the signer of the call) |
 | `host_get_self_addr(buf, len)` | The contract's own address |
+| `host_get_chain_id(buf, len) → i32` | **CONTRACT_CHAIN_ID** (available from the upgrade; not scheduled yet): writes the chain id (`rougechain-mainnet-1` / `rougechain-devnet-1`) and returns its length; `-1` if `len` is too small. See [Binding signed messages to the network](#chain-id) |
 | `host_get_args_len() → i32` | Length in bytes of the call's JSON arguments (`{}` when none) |
 | `host_read_args(buf, len) → i32` | Copy the JSON arguments into memory; bytes written, or `-1` if `buf` is too small |
 | `host_get_block_height()` | Current block height |
@@ -189,6 +190,60 @@ For a 1.234567891 XRGE sale (1,234,567,891 quanta) of a 3% collection, the artis
 quanta and the seller 1,197,530,855 — the node test
 `nft_marketplace_example_pays_royalty_and_seller_exactly_across_json_relay` checks those exact numbers
 on two nodes.
+
+<a id="chain-id"></a>
+
+## Binding signed messages to the network (CONTRACT_CHAIN_ID)
+
+> **Status: available from the CONTRACT_CHAIN_ID upgrade, which is not scheduled on any network yet**
+> (`GET /api/stats` → `upgrade_schedule.contract_chain_id` is `null`). Until it activates the function
+> does not exist: a contract importing it can be published, but every call to it fails, exactly like a
+> contract importing any unknown function. The height will be announced in advance.
+
+| Function | Returns |
+|---|---|
+| `host_get_chain_id(buf, len) → i32` | Writes the chain id (UTF-8) to `buf` and returns its length; `-1` if `len` is too small. 64 bytes is ample. |
+
+A contract that checks a signature itself with `host_pqc_verify` — an allowlist admission, a voucher,
+an off-chain order — should make the signed message name the network, the contract and an expiry, so
+a signature made for one network, one contract or one time window is not accepted anywhere else.
+Build the message with a fixed domain tag and length-prefixed fields:
+
+```rust
+extern "C" {
+    fn host_get_chain_id(buf: *mut u8, len: u32) -> i32;
+    fn host_get_self_addr(buf: *mut u8, len: u32) -> i32;
+    fn host_get_block_height() -> i64;
+    fn host_pqc_verify(pk: *const u8, pklen: u32, msg: *const u8, msglen: u32, sig: *const u8, siglen: u32) -> i32;
+}
+
+/// "myapp/admit/v1" ‖ len‖chain id ‖ len‖contract address ‖ len‖player ‖ expiry height (u64 BE)
+fn admission_message(player: &[u8], expiry_height: u64) -> Vec<u8> {
+    let (mut chain, mut me) = ([0u8; 64], [0u8; 64]);
+    let c = unsafe { host_get_chain_id(chain.as_mut_ptr(), 64) };
+    let a = unsafe { host_get_self_addr(me.as_mut_ptr(), 64) };
+    if c <= 0 || a <= 0 { revert(); }
+    let mut m = b"myapp/admit/v1".to_vec();
+    for part in [&chain[..c as usize], &me[..a as usize], player] {
+        m.extend_from_slice(&(part.len() as u32).to_be_bytes());
+        m.extend_from_slice(part);
+    }
+    m.extend_from_slice(&expiry_height.to_be_bytes());
+    m
+}
+
+fn admit(player: &[u8], expiry_height: u64, issuer_pk: &[u8], sig: &[u8]) {
+    if unsafe { host_get_block_height() } as u64 > expiry_height { revert(); } // expired
+    let msg = admission_message(player, expiry_height);
+    let ok = unsafe { host_pqc_verify(issuer_pk.as_ptr(), issuer_pk.len() as u32,
+        msg.as_ptr(), msg.len() as u32, sig.as_ptr(), sig.len() as u32) };
+    if ok != 1 { revert(); }
+    // …and record that this admission was used, if it must be single-use.
+}
+```
+
+The issuer signs the same bytes off-chain, with the chain id of the network it means
+(`GET /api/health` → `chain_id`).
 
 <a id="payable-calls"></a>
 

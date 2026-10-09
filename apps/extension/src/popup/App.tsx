@@ -33,6 +33,9 @@ export default function App() {
     useEffect(() => {
         (async () => {
             await initStorage();
+            // Network binding: check the selected network's chain id against its node once per
+            // session; a mismatch makes every signer refuse (see lib/chain-binding.ts).
+            import("../lib/network").then((n) => n.ensureNodeChainId()).catch((e) => console.warn("[chain-id]", e?.message || e));
             const w = loadUnifiedWallet();
             const isLocked = isWalletLocked();
             setWallet(w);

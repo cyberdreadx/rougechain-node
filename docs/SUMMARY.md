@@ -24,6 +24,7 @@
 - [Signed releases](running-a-node/releases.md)
 - [Automatic updates](running-a-node/auto-update.md)
 - [Network upgrade schedule (mainnet / testnet)](running-a-node/upgrade-schedule.md)
+- [Release 1.6.4 (2026-10): signatures commit to the network](running-a-node/release-1.6.4.md)
 - [Release 1.6.3 (2026-10): messenger and mail hardening](running-a-node/release-1.6.3.md)
 - [Mandatory upgrade (2026-10): release 1.6.2, monetary-integrity rule, block 245](running-a-node/mandatory-upgrade-2026-10-245.md)
 - [Mandatory upgrade (2026-10): mintable tokens + royalty-aware contracts, block 235](running-a-node/mandatory-upgrade-2026-10.md)
@@ -107,6 +108,8 @@
 - [Multi-Sig Wallets](advanced/multi-sig.md)
 - [MCP Server (AI Agents)](advanced/mcp-server.md)
 - [Browser Extensions](advanced/browser-extensions.md)
+- [Wallet Authentication (Sign a Message)](advanced/wallet-authentication.md)
+- [Verifying Finality](advanced/verifying-finality.md)
 - [SDK](advanced/sdk.md)
 
 ---

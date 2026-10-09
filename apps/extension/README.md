@@ -22,6 +22,38 @@ Quantum-safe cryptocurrency wallet & encrypted messenger browser extension for R
 
 ## Release notes
 
+### 1.9.0
+
+- **Signatures now commit to the network.** Everything the wallet signs for a RougeChain node —
+  transactions and signed messenger / mail / name requests — carries `chainId`, the exact chain id
+  of the network selected in the wallet (`rougechain-mainnet-1` or `rougechain-devnet-1`), inside
+  the signed bytes. Once per session the wallet checks that chain id against the node's
+  `GET /api/health` `chain_id` and refuses to sign if they differ.
+- **dApp requests show their network.** The `signTransaction` / `sendTransaction` approval shows
+  the network the payload is signed for. A request naming another network than the one selected
+  in the wallet is refused before any approval opens (`CHAIN_ID_MISMATCH: …`); switch networks to
+  sign it. A plain payload without `chainId` gets the selected network's (returned in
+  `result.payload`). A pre-serialized request (`{ payload, serializedHex }`) without `chainId` is
+  still signable for now but shows a "No network specified" warning — dApps should add `chainId`.
+- The service worker now talks to the selected network's node (it used mainnet's unless a custom
+  node URL was set).
+
+### 1.8.0
+
+- **Sign a message to prove you control your wallet.** dApps can call
+  `window.rougechain.signMessage({ message })` for logins and token gating; it returns
+  `{ signature, publicKey, address }`. The signature is over
+  `"\x19RougeChain Signed Message:\n" + decimal(byte length) + "\n" + message`, which the chain can
+  never accept as a transaction, and it is verified with `verifyMessage` / `verifySignIn` from
+  `@rougechain/sdk` 1.13.0. The site must be connected and **every request asks for approval**
+  (nothing is remembered). The approval shows the requesting site and the whole message
+  (scrollable, never truncated, invisible characters shown as symbols, at most 4,096 bytes). A
+  sign-in message also shows its domain, address, nonce and expiry, with a red warning when the
+  domain in the message is not the site asking. A message that looks like a transaction payload
+  is refused with a pointer to `signTransaction`. `signTransaction` / `sendTransaction` are
+  unchanged. dApps should feature-detect:
+  `typeof window.rougechain.signMessage === "function"`.
+
 ### 1.7.0
 
 - **One recovery phrase restores your messages everywhere.** New wallets and recovery-phrase
@@ -43,7 +75,7 @@ Quantum-safe cryptocurrency wallet & encrypted messenger browser extension for R
 npm ci                                   # from the monorepo root
 npm run dev -w rougechain-wallet-ext     # Vite dev server
 npm run typecheck -w rougechain-wallet-ext
-npm test -w rougechain-wallet-ext        # vitest: messaging-key vectors + wallet storage paths
+npm test -w rougechain-wallet-ext        # vitest: messaging keys, wallet storage, dApp signMessage
 npm run build -w rougechain-wallet-ext   # Production build → apps/extension/dist/
 ```
 

@@ -1,18 +1,21 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { Shield, Link2, FileSignature, Send, AlertTriangle, Code2, Upload } from "lucide-react";
 import type { ContractTxDetails } from "../lib/contract-tx";
+import { MISSING_CHAIN_ID_WARNING, type NetworkReview } from "../lib/chain-binding";
+import type { SignMessageReview } from "@rougechain/core/message-signing";
+import SignMessageView, { signMessageHasDanger } from "./SignMessageView";
 
 /**
  * Approval popup — opened by the service worker when a dApp
- * requests connect / signTransaction / sendTransaction.
+ * requests connect / signTransaction / signMessage / sendTransaction.
  *
  * URL params:
  *   id     — unique request ID stored in chrome.storage.session
- *   type   — "connect" | "sign" | "send"
+ *   type   — "connect" | "sign" | "sign-message" | "send"
  *   origin — requesting site origin
  */
 
-type ApprovalType = "connect" | "sign" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send";
+type ApprovalType = "connect" | "sign" | "sign-message" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send";
 
 interface PendingRequest {
     id: string;
@@ -21,6 +24,8 @@ interface PendingRequest {
     favicon?: string;
     payload?: Record<string, unknown>;
     details?: ContractTxDetails;
+    /** RougeChain network the payload is signed for (sign / send), from the service worker. */
+    network?: NetworkReview;
 }
 
 const isEvm = (t: ApprovalType) => t.startsWith("evm-");
@@ -125,6 +130,33 @@ function ContractTxView({ details, sending }: { details: ContractTxDetails; send
     );
 }
 
+/** Which network this signature is valid on (the payload's `chainId`), or a warning if none. */
+function NetworkBanner({ network }: { network?: NetworkReview }) {
+    if (!network) {
+        return <p className="text-xs text-red-400 text-center">Network information is missing. Deny this request.</p>;
+    }
+    if (network.missing) {
+        return (
+            <div className="rounded-xl border-2 border-amber-500/60 bg-amber-500/10 p-3 space-y-1">
+                <div className="flex items-center gap-2 text-amber-300 text-sm font-semibold">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>No network specified</span>
+                </div>
+                <p className="text-[11px] text-amber-200/90">{MISSING_CHAIN_ID_WARNING}</p>
+                <p className="text-[11px] text-muted-foreground">Wallet network: {network.selectedName}</p>
+            </div>
+        );
+    }
+    return (
+        <div className="rounded-xl border border-border bg-card/30 px-4 py-2.5">
+            <Row label="Network" title={network.chainId ?? undefined}>
+                <span className="font-semibold">{network.name}</span>
+                <span className="block text-[10px] font-mono text-muted-foreground">{network.chainId}</span>
+            </Row>
+        </div>
+    );
+}
+
 export default function ApprovalApp() {
     const [request, setRequest] = useState<PendingRequest | null>(null);
     const [closing, setClosing] = useState(false);
@@ -146,6 +178,7 @@ export default function ApprovalApp() {
                 favicon,
                 payload: stored?.payload,
                 details: stored?.details,
+                network: stored?.network,
             });
         });
     }, []);
@@ -181,7 +214,12 @@ export default function ApprovalApp() {
 
     const kind = request.type;
     const isConnect = kind === "connect" || kind === "evm-connect";
-    const isSign = kind === "sign" || kind === "evm-personal-sign";
+    const isSign = kind === "sign" || kind === "sign-message" || kind === "evm-personal-sign";
+    // signMessage: the service worker stores its review of the message as the payload.
+    const messageReview = kind === "sign-message" && request.payload && typeof request.payload.display === "string"
+        ? (request.payload as unknown as SignMessageReview)
+        : null;
+    const messageDanger = !!messageReview && signMessageHasDanger(messageReview);
     const isSend = kind === "send" || kind === "evm-send";
     const evm = isEvm(kind);
     const p = request.payload || {};
@@ -212,7 +250,9 @@ export default function ApprovalApp() {
                     </div>
                     <h2 className="text-lg font-semibold">
                         {isConnect && "Connection Request"}
-                        {isSign && (request.details ? "Contract Signature" : "Signature Request")}
+                        {isSign && (kind === "sign-message"
+                            ? (messageReview?.signIn ? "Sign-In Request" : "Message Signature")
+                            : request.details ? "Contract Signature" : "Signature Request")}
                         {isSend && (request.details ? "Contract Transaction" : "Transaction Request")}
                     </h2>
                     {evm && (
@@ -237,6 +277,11 @@ export default function ApprovalApp() {
                     </div>
                 </div>
 
+                {/* RougeChain network the signature is bound to */}
+                {(request.type === "sign" || request.type === "send") && (
+                    <NetworkBanner network={request.network} />
+                )}
+
                 {/* Type-specific content */}
                 {request.type === "connect" && (
                     <div className="space-y-3">
@@ -259,6 +304,12 @@ export default function ApprovalApp() {
 
                 {(request.type === "sign" || request.type === "send") && request.details && (
                     <ContractTxView details={request.details} sending={request.type === "send"} />
+                )}
+
+                {kind === "sign-message" && (
+                    messageReview
+                        ? <SignMessageView review={messageReview} />
+                        : <p className="text-sm text-red-400 text-center">The message could not be loaded. Deny this request.</p>
                 )}
 
                 {request.type === "sign" && !request.details && (
@@ -382,8 +433,8 @@ export default function ApprovalApp() {
                 </button>
                 <button
                     onClick={() => respond(true)}
-                    disabled={closing}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 ${isSend
+                    disabled={closing || (kind === "sign-message" && !messageReview) || ((kind === "sign" || kind === "send") && !request.network)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 ${isSend || messageDanger
                         ? "bg-red-500 hover:bg-red-600"
                         : isSign
                             ? "bg-amber-500 hover:bg-amber-600"
@@ -391,7 +442,7 @@ export default function ApprovalApp() {
                         }`}
                 >
                     {isConnect && "Connect"}
-                    {isSign && "Sign"}
+                    {isSign && (messageDanger ? "Sign anyway" : "Sign")}
                     {isSend && "Approve & Send"}
                 </button>
             </div>

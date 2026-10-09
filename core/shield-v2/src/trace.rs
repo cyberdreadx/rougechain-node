@@ -14,7 +14,11 @@ use p3_matrix::dense::RowMajorMatrix;
 use crate::Felt;
 use crate::air::apply_row;
 use crate::layout::*;
-use crate::reference::{Digest, JoinSplit, PublicInputs, ZERO_DIGEST, limbs};
+#[cfg(feature = "test-prover")]
+use crate::reference::{JoinSplit, PublicInputs};
+use crate::reference::{Digest, ZERO_DIGEST};
+#[cfg(feature = "test-prover")]
+use crate::reference::limbs;
 
 /// Low-level trace inputs; every value the AIR links appears once here.
 #[derive(Clone, Debug)]
@@ -128,6 +132,7 @@ pub fn carries(
     }))
 }
 
+#[cfg(feature = "test-prover")]
 impl TraceInputs {
     pub fn honest(js: &JoinSplit) -> Self {
         let a = [limbs(js.inputs[0].value), limbs(js.inputs[1].value)];
@@ -282,6 +287,7 @@ pub fn build_trace_with(inp: &TraceInputs, ov: &Overrides, sched: &Schedule, n_r
 }
 
 /// The honest trace of a join-split.
+#[cfg(feature = "test-prover")]
 pub fn honest_trace(js: &JoinSplit) -> RowMajorMatrix<Felt> {
     build_trace(&TraceInputs::honest(js), &Overrides::default())
 }
@@ -308,6 +314,7 @@ pub fn root_at(trace: &RowMajorMatrix<Felt>, i: usize) -> Digest {
 /// Public inputs that make the nullifier and output-commitment assertions hold for THIS
 /// (honest-schedule) trace, whatever it contains; the anchor is the root input block
 /// `anchor_from` computes. Used by negative tests to isolate a single violated constraint.
+#[cfg(feature = "test-prover")]
 pub fn public_inputs_from_trace(trace: &RowMajorMatrix<Felt>, anchor_from: usize, js: &JoinSplit) -> PublicInputs {
     PublicInputs {
         anchor: root_at(trace, anchor_from),

@@ -51,8 +51,76 @@ export {
   BURN_ADDRESS,
   isBurnAddress,
   signRequest,
+  MAINNET_CHAIN_ID,
+  TESTNET_CHAIN_ID,
+  ChainIdMismatchError,
+  bindWalletToChain,
+  applyChainId,
 } from "./signer.js";
 export type { TokenCreationOptions } from "./signer.js";
+
+export {
+  signMessage,
+  verifyMessage,
+  messageSigningBytes,
+  createSignInMessage,
+  parseSignInMessage,
+  verifySignIn,
+  claimedSignInDomain,
+  looksLikeTransactionPayload,
+  visibleMessageText,
+  reviewSignMessageRequest,
+  SIGNED_MESSAGE_PREFIX,
+  MAX_SIGN_MESSAGE_BYTES,
+  SIGN_IN_MIN_NONCE_LENGTH,
+  ML_DSA_65_PUBLIC_KEY_BYTES,
+  ML_DSA_65_SIGNATURE_BYTES,
+} from "./message-signing.js";
+export type {
+  SignInFields,
+  SignInFailure,
+  VerifySignInParams,
+  VerifySignInResult,
+  SignMessageReview,
+} from "./message-signing.js";
+
+// Finality verification: prove a tx is in a FINALIZED block without trusting a node's "success".
+export {
+  verifyTxFinalized,
+  fetchAndVerifyBlock,
+  verifyBlock,
+  verifyFinalityCertificate,
+  computeSingleTxHash,
+  computeTxListHash,
+  computeBlockHash,
+  encodeTxV1,
+  encodeHeaderV1,
+  encodeFinalityProof,
+  voteSigningMessage,
+  finalityQuorum,
+  formatF64,
+  parseJsonLossless,
+  stringifyLossless,
+  JsonNumber,
+  FINALITY_VOTE_DOMAIN_V2,
+  FINALITY_ONLY_ROUND,
+  FINALITY_MAX_PROOF_VOTES,
+  MAINNET_FINALITY_V2_HEIGHT,
+} from "./finality-verify.js";
+export type {
+  VerifyTxFinalizedOptions,
+  VerifyTxFinalizedResult,
+  FinalityStatus,
+  FinalityCheck,
+  ValidatorSetTrust,
+  TrustedValidatorSet,
+  VerifiedCertificate,
+  VerifiedBlock,
+  FetchAndVerifyBlockOptions,
+  FetchAndVerifyBlockResult,
+  FetchLike,
+  LosslessJson,
+} from "./finality-verify.js";
 
 export { generateNonce, hexToBytes, bytesToHex } from "./utils.js";
 

@@ -4,7 +4,7 @@
 //! Every upgrade check in the node (`tx_uniqueness_rule_active`, `proposer_selection_active`,
 //! `finality_v2_active`, `game_ready_active`, `game_ready_2_active`, `game_ready_3_active`,
 //! `payable_calls_active`, `token_minting_active`, `contract_nft_royalty_active`, `monetary_integrity_active`,
-//! `shield_v2::shield_v2_active`) reads its height from the schedule selected here at startup by chain id.
+//! `shield_v2::shield_v2_active`, `chain_binding::chain_id_binding_active`, `contract_chain_id_active`) reads its height from the schedule selected here at startup by chain id.
 //!
 //! * **Mainnet** (`rougechain-mainnet-1`) keeps the heights it activated at. They are history now:
 //!   changing any of them would make a node reject mainnet's own blocks. `mainnet_schedule_is_pinned`
@@ -49,6 +49,13 @@ pub struct UpgradeSchedule {
     /// activation a block carrying a `*_v2` transaction or either `shield_v2_*` payload field is
     /// invalid. The height is a compiled constant, never an operator setting.
     pub shield_v2: Option<u64>,
+    /// CHAIN_ID_BINDING (`chain_binding`): from this height every transaction's signed bytes must
+    /// commit to the chain id. **Not scheduled on any network** — clients must ship `chainId`
+    /// first (rollout in `docs/running-a-node/upgrade-schedule.md`).
+    pub chain_id_binding: Option<u64>,
+    /// CONTRACT_CHAIN_ID (`host_get_chain_id`): contracts can read the chain id. **Not scheduled
+    /// on any network**; before it a module importing the function fails like any unknown import.
+    pub contract_chain_id: Option<u64>,
     /// Whether this network has a faucet (a mint signed by a genesis validator key). Judged in
     /// consensus from MONETARY_INTEGRITY; mainnet has none.
     pub faucet_mint: bool,
@@ -83,6 +90,8 @@ pub const MAINNET: UpgradeSchedule = UpgradeSchedule {
     contract_nft_royalty: crate::node::CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT,
     monetary_integrity: crate::node::MONETARY_INTEGRITY_ACTIVATION_HEIGHT,
     shield_v2: crate::shield_v2::SHIELD_V2_ACTIVATION_HEIGHT,
+    chain_id_binding: crate::chain_binding::CHAIN_ID_BINDING_ACTIVATION_HEIGHT,
+    contract_chain_id: crate::node::CONTRACT_CHAIN_ID_ACTIVATION_HEIGHT,
     faucet_mint: false,
     validator_retirement: None,
 };
@@ -103,6 +112,8 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     contract_nft_royalty: Some(1360),
     monetary_integrity: Some(1390),
     shield_v2: None,
+    chain_id_binding: None,
+    contract_chain_id: None,
     faucet_mint: true,
     validator_retirement: Some(ValidatorRetirement { height: 1240, validators: &[TESTNET_RETIRED_VALIDATOR] }),
 };
@@ -158,6 +169,8 @@ mod tests {
             contract_nft_royalty: Some(235),
             monetary_integrity: Some(245),
             shield_v2: None,
+            chain_id_binding: None,
+            contract_chain_id: None,
             faucet_mint: false,
             validator_retirement: None,
         });
@@ -190,6 +203,20 @@ mod tests {
             assert_eq!(schedule_for(id).shield_v2, None, "{id}");
         }
         assert!(!crate::shield_v2::shield_v2_active(0) && !crate::shield_v2::shield_v2_active(u64::MAX));
+    }
+
+    /// CHAIN_ID_BINDING and CONTRACT_CHAIN_ID are `None` on every network until the owner
+    /// schedules them (clients must ship `chainId` first).
+    #[test]
+    fn chain_id_upgrades_are_unscheduled_everywhere() {
+        assert_eq!(crate::chain_binding::CHAIN_ID_BINDING_ACTIVATION_HEIGHT, None);
+        assert_eq!(crate::node::CONTRACT_CHAIN_ID_ACTIVATION_HEIGHT, None);
+        for id in [MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, "test", ""] {
+            assert_eq!(schedule_for(id).chain_id_binding, None, "{id}");
+            assert_eq!(schedule_for(id).contract_chain_id, None, "{id}");
+        }
+        assert!(!crate::chain_binding::chain_id_binding_active(u64::MAX));
+        assert!(!crate::node::contract_chain_id_active(u64::MAX));
     }
 
     #[test]

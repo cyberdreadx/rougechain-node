@@ -127,7 +127,7 @@ describe("compose", () => {
     await waitFor(() => expect(node.postsTo("/v2/mail/send")).toHaveLength(1), WAIT);
     const sent = node.postsTo("/v2/mail/send")[0].body;
     expect(sent.valid).toBe(true);
-    expect(Object.keys(sent.payload).sort()).toEqual(["bodyEncrypted", "contentSignature", "from", "fromWalletId", "hasAttachment", "nonce", "subjectEncrypted", "timestamp", "toWalletIds"]);
+    expect(Object.keys(sent.payload).sort()).toEqual(["bodyEncrypted", "chainId", "contentSignature", "from", "fromWalletId", "hasAttachment", "nonce", "subjectEncrypted", "timestamp", "toWalletIds"]);
     expect(sent.payload).toMatchObject({ fromWalletId: me.id, toWalletIds: [bob.id], hasAttachment: false });
     expect(qwallaDecryptV2(String(sent.payload.subjectEncrypted), bob.encryptionPrivateKey, bob.encryptionPublicKey)).toBe("Lunch?");
     expect(qwallaDecryptV2(String(sent.payload.bodyEncrypted), bob.encryptionPrivateKey, bob.encryptionPublicKey)).toBe("Noon at the usual place.");

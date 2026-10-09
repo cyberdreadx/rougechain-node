@@ -1,5 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
-import { signTransaction, serializePayload } from "./signer.js";
+import { signTransaction, serializePayload, applyChainId } from "./signer.js";
 import { bytesToHex, generateNonce } from "./utils.js";
 import type { RougeChain } from "./client.js";
 import type {
@@ -221,7 +221,8 @@ function normAddr(addr: string): string {
 
 /** Sign a payload and attach the exact signed bytes so the node verifies those bytes. */
 function signWithBytes(wallet: WalletKeys, payload: Record<string, unknown>) {
-  const tx = signTransaction(payload as unknown as TransactionPayload, wallet.privateKey, wallet.publicKey);
+  const bound = applyChainId(wallet, payload);
+  const tx = signTransaction(bound as unknown as TransactionPayload, wallet.privateKey, wallet.publicKey);
   return { ...tx, payload_bytes_hex: bytesToHex(serializePayload(tx.payload)) };
 }
 
@@ -419,7 +420,7 @@ export class ContractsClient {
     wasm: Uint8Array | ArrayBuffer | string,
     opts: PublishContractOptions = {}
   ): Promise<PublishContractResult> {
-    const { signed, predictedAddress, nonce } = createSignedContractPublish(wallet, wasm, opts);
+    const { signed, predictedAddress, nonce } = createSignedContractPublish(await this.rc.bind(wallet), wasm, opts);
     const r = await this.send("/v2/contract/publish", signed);
     return {
       success: r.success === true,
@@ -469,7 +470,7 @@ export class ContractsClient {
     }
     let signed;
     try {
-      signed = createSignedContractCall(wallet, contractAddr, method, args, gasLimit, opts.accountNonce, attach);
+      signed = createSignedContractCall(await this.rc.bind(wallet), contractAddr, method, args, gasLimit, opts.accountNonce, attach);
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e), gasLimit, attach };
     }

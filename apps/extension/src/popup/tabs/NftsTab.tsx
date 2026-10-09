@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Image, Plus, RefreshCw, Send, Loader2, ArrowLeft, Flame, Lock, Unlock } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
-import { getCoreApiBaseUrl, getCoreApiHeaders } from "../../lib/network";
+import { getCoreApiBaseUrl, getCoreApiHeaders, ensureNodeChainId, bindToSelectedNetwork } from "../../lib/network";
 import {
     getNftOwned,
     getNftCollections,
@@ -98,7 +98,9 @@ export default function NftsTab({ wallet }: Props) {
     // the same sorted-key bytes, so signing sortKeysDeep(payload) is required.
     const signAndPost = async (endpoint: string, payload: Record<string, unknown>) => {
         if (!baseUrl) throw new Error("No node configured");
-        const sorted = sortKeysDeep(payload);
+        // Network binding: check the node's chain id once, then sign the selected network's.
+        await ensureNodeChainId(baseUrl);
+        const sorted = sortKeysDeep(bindToSelectedNetwork(payload));
         const payloadBytes = new TextEncoder().encode(JSON.stringify(sorted));
         const signature = bytesToHex(ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey)));
         const res = await fetch(`${baseUrl}${endpoint}`, {
