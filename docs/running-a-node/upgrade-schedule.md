@@ -19,10 +19,11 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Monetary-integrity rule (MONETARY_INTEGRITY) | 245 | 1390 |
 | Signatures commit to the chain id (CHAIN_ID_BINDING) | not scheduled | not scheduled |
 | Contracts read the chain id (CONTRACT_CHAIN_ID) | not scheduled | not scheduled |
-| Pool transactions apply all-or-nothing (AMM_INTEGRITY) | not scheduled | not scheduled |
+| Pool transactions apply all-or-nothing (AMM_INTEGRITY) | not scheduled | 1440 |
 
-**Every height in this table has been reached** (except the `not scheduled` rows) on both networks (mainnet height 251, testnet past
-1390, on 2026-10-06). Nothing is scheduled beyond them; the next consensus changes — restoring the
+**Every height in this table has been reached** (except the `not scheduled` rows and AMM_INTEGRITY
+on testnet, set to 1440 on 2026-10-09 with testnet at 1427) on both networks (mainnet height 251,
+testnet past 1390, on 2026-10-06). Nothing else is scheduled beyond them; the next consensus changes — restoring the
 types suspended at 245, the shielded pool V2, and the consensus redesign decided on 2026-10-06 — have
 no heights yet and will be announced in advance (see [Status & Roadmap](../status.md)).
 
@@ -145,11 +146,12 @@ their own V1 transactions in the network-bound encoding at `H` automatically.
 
 <a id="amm-integrity"></a>
 
-## Upgrade notice: AMM_INTEGRITY (not scheduled)
+## Upgrade notice: AMM_INTEGRITY (testnet 1440, mainnet not scheduled)
 
 **What it is.** A hard fork that changes how the four pool transaction types — `create_pool`,
-`add_liquidity`, `remove_liquidity`, `swap` — are executed. It has **no height on any network**
-(`upgrade_schedule.amm_integrity` is `null`). Source: `core/daemon/src/amm_integrity.rs`.
+`add_liquidity`, `remove_liquidity`, `swap` — are executed. It activates on **testnet at height 1440**
+(release 1.6.6; `upgrade_schedule.amm_integrity` is `1440` there) and has **no height on mainnet**
+(`null`). Testnet nodes must run release 1.6.6 or later before block 1440. Source: `core/daemon/src/amm_integrity.rs`.
 
 Node release 1.6.4 already keeps pool transactions that cannot take effect out of the blocks a node
 produces. That protects a network only while every block producer runs it. AMM_INTEGRITY makes the

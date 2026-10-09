@@ -280,7 +280,8 @@ mod tests {
     }
 
     #[test]
-    fn unscheduled_on_every_network() {
+    fn unscheduled_on_mainnet() {
+        // The mainnet constant; testnet's height lives in `upgrades::TESTNET`.
         assert_eq!(AMM_INTEGRITY_ACTIVATION_HEIGHT, None);
         assert!(!amm_integrity_active(0) && !amm_integrity_active(u64::MAX));
     }
