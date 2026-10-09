@@ -4,6 +4,18 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.5: AMM_INTEGRITY included, not scheduled — 2026-10-09
+
+- The node carries the consensus rule AMM_INTEGRITY with no activation height on any network
+  (`upgrade_schedule.amm_integrity` is `null`). From its height, pool transactions (`create_pool`,
+  `add_liquidity`, `remove_liquidity`, `swap`) apply all-or-nothing: one that cannot take effect
+  changes nothing, pays no fee and does not make the block invalid; swap routes are validated; a
+  pair has one pool; amounts use checked integer arithmetic; the fee of a token-to-XRGE swap is
+  counted as collected.
+- Until the height is set, nodes on 1.6.5 validate and produce exactly as on 1.6.4.
+- See the [upgrade schedule](running-a-node/upgrade-schedule.md#amm-integrity) and the
+  [release notes](running-a-node/release-1.6.5.md).
+
 ## Node release 1.6.4: signatures commit to the network — 2026-10-08
 
 - Every payload a wallet signs for a node now names the network it is for: `chainId` (the exact chain
