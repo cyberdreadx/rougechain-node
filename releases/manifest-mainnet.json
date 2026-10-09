@@ -2,24 +2,24 @@
   "schema": 1,
   "network": "mainnet",
   "chain_id": "rougechain-mainnet-1",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "released": "2026-10-09",
-  "source_commit": "e433489",
+  "source_commit": "b7bf14b",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-amm-integrity-e433489",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-amm-integrity-e433489",
+    "name": "quantum-vault-daemon-amm-testnet-1440-b7bf14b",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-amm-testnet-1440-b7bf14b",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.5/quantum-vault-daemon-amm-integrity-e433489"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.6/quantum-vault-daemon-amm-testnet-1440-b7bf14b"
     ],
-    "sha256": "d4ac78ef1082a0ff12af71734d67dab1caf9c5e267a7530c2264bd00f2a7da8f",
-    "size": 29404488
+    "sha256": "bdcfefda3db51fbfc8a100c5c6228c42e8836c96d4bec18dbf82e47d1c59f6db",
+    "size": 29405144
   },
   "cli": {
-    "name": "rougechain-e433489",
-    "url": "https://api.rougechain.io/releases/rougechain-e433489",
+    "name": "rougechain-b7bf14b",
+    "url": "https://api.rougechain.io/releases/rougechain-b7bf14b",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.5/rougechain-e433489"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.6/rougechain-b7bf14b"
     ],
     "sha256": "0df5a526a120eeb12ac77a5a86b6b448bbdf80b371c63db0a4c1427ef22f6870",
     "size": 5294304
@@ -91,6 +91,6 @@
       "height": 245
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.5.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.6.html",
   "min_installer_version": "2.0.0"
 }

@@ -119,7 +119,7 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     shield_v2: None,
     chain_id_binding: None,
     contract_chain_id: None,
-    amm_integrity: None,
+    amm_integrity: Some(1440),
     faucet_mint: true,
     validator_retirement: Some(ValidatorRetirement { height: 1240, validators: &[TESTNET_RETIRED_VALIDATOR] }),
 };
@@ -198,6 +198,7 @@ mod tests {
         assert_eq!(TESTNET.token_minting, Some(1360), "TOKEN_MINTING activates on testnet at 1360");
         assert_eq!(TESTNET.contract_nft_royalty, Some(1360), "CONTRACT_NFT_ROYALTY activates on testnet at 1360");
         assert_eq!(TESTNET.shield_v2, None, "SHIELD_V2 is not scheduled on testnet (spec §1.3)");
+        assert_eq!(TESTNET.amm_integrity, Some(1440), "AMM_INTEGRITY activates on testnet at 1440");
     }
 
     /// Spec §1.3: SHIELD_V2 is `None` on every network until the owner schedules it.
@@ -226,14 +227,15 @@ mod tests {
         assert!(!crate::node::contract_chain_id_active(u64::MAX));
     }
 
-    /// AMM_INTEGRITY is `None` on every network until the owner schedules it.
+    /// AMM_INTEGRITY: testnet 1440; `None` on mainnet (and on every chain that uses the mainnet
+    /// schedule) until the owner schedules it.
     #[test]
-    fn amm_integrity_is_unscheduled_everywhere() {
+    fn amm_integrity_is_scheduled_on_testnet_only() {
         assert_eq!(crate::amm_integrity::AMM_INTEGRITY_ACTIVATION_HEIGHT, None);
-        for id in [MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, "test", ""] {
+        assert_eq!(schedule_for(TESTNET_CHAIN_ID).amm_integrity, Some(1440));
+        for id in [MAINNET_CHAIN_ID, "test", ""] {
             assert_eq!(schedule_for(id).amm_integrity, None, "{id}");
         }
-        assert!(!crate::amm_integrity::amm_integrity_active(0) && !crate::amm_integrity::amm_integrity_active(u64::MAX));
     }
 
     #[test]
