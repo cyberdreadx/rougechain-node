@@ -2,24 +2,24 @@
   "schema": 1,
   "network": "mainnet",
   "chain_id": "rougechain-mainnet-1",
-  "version": "1.6.6",
-  "released": "2026-10-09",
-  "source_commit": "b7bf14b",
+  "version": "1.6.7",
+  "released": "2026-10-10",
+  "source_commit": "c64c90c",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-amm-testnet-1440-b7bf14b",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-amm-testnet-1440-b7bf14b",
+    "name": "quantum-vault-daemon-amm-mainnet-260-c64c90c",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-amm-mainnet-260-c64c90c",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.6/quantum-vault-daemon-amm-testnet-1440-b7bf14b"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.7/quantum-vault-daemon-amm-mainnet-260-c64c90c"
     ],
-    "sha256": "bdcfefda3db51fbfc8a100c5c6228c42e8836c96d4bec18dbf82e47d1c59f6db",
-    "size": 29405144
+    "sha256": "e9b4fbf188e28ac3d963f35b28589442d2062890508c47c0b403bbab74aa1626",
+    "size": 29405112
   },
   "cli": {
-    "name": "rougechain-b7bf14b",
-    "url": "https://api.rougechain.io/releases/rougechain-b7bf14b",
+    "name": "rougechain-c64c90c",
+    "url": "https://api.rougechain.io/releases/rougechain-c64c90c",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.6/rougechain-b7bf14b"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.7/rougechain-c64c90c"
     ],
     "sha256": "0df5a526a120eeb12ac77a5a86b6b448bbdf80b371c63db0a4c1427ef22f6870",
     "size": 5294304
@@ -43,8 +43,8 @@
     "sha256": "280e02a935554e843666dfc768fb79ee2b207af716a48735b0e174ac1765a2d0",
     "size": 106826
   },
-  "mandatory": false,
-  "upgrade_before_height": null,
+  "mandatory": true,
+  "upgrade_before_height": 260,
   "activations": [
     {
       "name": "canonical_ledger_fork",
@@ -89,8 +89,12 @@
     {
       "name": "monetary_integrity",
       "height": 245
+    },
+    {
+      "name": "amm_integrity",
+      "height": 260
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.6.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.7.html",
   "min_installer_version": "2.0.0"
 }
