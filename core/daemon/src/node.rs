@@ -11314,9 +11314,18 @@ mod bridge_store_hardening_tests {
     use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, withdraw_tx, signed, sealed_block, TmpDir, DEST};
 
     fn set_readonly(path: &std::path::Path, ro: bool) {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = if ro { 0o444 } else { 0o644 };
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if ro { 0o444 } else { 0o644 };
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_readonly(ro);
+            std::fs::set_permissions(path, perms).unwrap();
+        }
     }
 
     /// Accept a solvent XRGE withdrawal block while the store file is unwritable.
