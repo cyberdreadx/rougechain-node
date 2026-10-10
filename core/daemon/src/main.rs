@@ -26,6 +26,7 @@ mod regen_votes;
 mod shield_v2;
 mod upgrades;
 mod chain_binding;
+mod amm_integrity;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -430,11 +431,11 @@ async fn main() -> Result<(), String> {
     };
     // Protocol upgrade heights for this network (mainnet / testnet), before any block is applied.
     let schedule = upgrades::select(&chain.chain_id)?;
-    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}, token minting {:?}, contract NFT royalty {:?}, monetary integrity {:?}, shield v2 {:?}, chain id binding {:?}, contract chain id {:?}",
+    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}, token minting {:?}, contract NFT royalty {:?}, monetary integrity {:?}, shield v2 {:?}, chain id binding {:?}, contract chain id {:?}, AMM integrity {:?}",
         schedule.network, chain.chain_id, schedule.tx_uniqueness, schedule.proposer_selection, schedule.finality_v2,
         schedule.game_ready, schedule.game_ready_2, schedule.game_ready_3, schedule.payable_calls, schedule.token_minting,
         schedule.contract_nft_royalty, schedule.monetary_integrity, schedule.shield_v2, schedule.chain_id_binding,
-        schedule.contract_chain_id);
+        schedule.contract_chain_id, schedule.amm_integrity);
     // Signatures commit to the network: the API refuses a signed payload naming another chain id,
     // and with REQUIRE_SIGNED_CHAIN_ID one naming none (node rule, no fork; see chain_binding.rs).
     chain_binding::init(&chain.chain_id, args.require_signed_chain_id);
