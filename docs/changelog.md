@@ -4,6 +4,12 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.7: AMM_INTEGRITY on mainnet at block 260 — 2026-10-10
+
+- AMM_INTEGRITY activates on **mainnet at height 260** (active on testnet since 1440). Mainnet
+  nodes must run 1.6.7 before that block. On testnet the release behaves as 1.6.6.
+- See the [release notes](running-a-node/release-1.6.7.md).
+
 ## Node release 1.6.6: AMM_INTEGRITY on testnet at block 1440 — 2026-10-09
 
 - AMM_INTEGRITY activates on **testnet at height 1440**; mainnet stays unscheduled. Testnet nodes
