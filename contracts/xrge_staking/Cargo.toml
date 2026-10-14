@@ -1,0 +1,15 @@
+[package]
+name = "rougechain-xrge-staking"
+version = "0.1.0"
+edition = "2021"
+
+# RougeChain XRGE staking contract: holders stake XRGE (payable calls) and share a funded reward
+# pot that streams over time. No admin and no minting; withdrawals wait out a fixed delay.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
