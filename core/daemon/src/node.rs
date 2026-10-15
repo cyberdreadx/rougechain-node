@@ -5443,6 +5443,7 @@ impl L1Node {
             let before_nft = balances.values().sum::<u128>();
             self.apply_nft_tx_inner(
                 &mut balances,
+                &token_balances,
                 tx,
                 block.header.time,
                 block.header.height,
@@ -8757,6 +8758,10 @@ impl L1Node {
     fn apply_nft_tx_inner(
         &self,
         balances: &mut HashMap<String, u128>,
+        // Read-only view of token balances. The block executor already holds `self.token_balances`,
+        // so this function must never lock it (std Mutex is not re-entrant: a gated public mint
+        // deadlocked the producer).
+        token_balances: &HashMap<TokenBalanceKey, u128>,
         tx: &TxV1,
         block_time: u64,
         block_height: u64,
@@ -8837,7 +8842,10 @@ impl L1Node {
                         mint_cost = price;
                         // Apply token-gate discount
                         if let (Some(ref gate_sym), Some(gate_amt)) = (&col.token_gate_symbol, col.token_gate_amount) {
-                            let holder_bal = self.get_token_balance(&tx.from_pub_key, gate_sym).unwrap_or(0.0);
+                            let holder_bal = token_balances
+                                .get(&(canon_addr(&tx.from_pub_key), gate_sym.to_string()))
+                                .copied()
+                                .unwrap_or(0) as f64;
                             if holder_bal >= gate_amt {
                                 let disc = col.discount_pct.unwrap_or(100) as f64 / 100.0;
                                 mint_cost *= 1.0 - disc;
@@ -9076,6 +9084,7 @@ impl L1Node {
         }
 
         self.nft_store.clear_all()?;
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?.clone();
 
         let mut col_count = 0u32;
         let mut token_count = 0u32;
@@ -9097,7 +9106,7 @@ impl L1Node {
                         }
                         // Ensure sender has enough balance for fee checks during rebuild
                         *dummy_balances.entry(tx.from_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(tx.fee + 1.0);
-                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time, block.header.height);
+                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, &token_balances, tx, block.header.time, block.header.height);
                     }
                     _ => {}
                 }
@@ -14108,6 +14117,33 @@ mod game_ready_tests {
         assert_eq!((q("1111111111111111111111111111111111111111"), q("2222222222222222222222222222222222222222"), q(&splitter)),
             (300_000_000, 200_000_000, 0));
         royalty_forks_off();
+    }
+
+    /// A public mint from a priced, token-gated collection used to lock `token_balances` a second
+    /// time inside block execution (std Mutex, not re-entrant) and froze the producer and the API.
+    /// Now the gate is read from the map the executor already holds.
+    #[test]
+    fn gated_public_mint_by_a_non_creator_is_mined_and_charged_the_discounted_price() {
+        let e = setup(Some(1));
+        let creator = &e.player;
+        let cpk = creator.public_key_hex.clone();
+        let holder = pqc_keygen();
+        let outsider = pqc_keygen();
+        fund_xrge(&e.node, &holder.public_key_hex, 100.0);
+        fund_xrge(&e.node, &outsider.public_key_hex, 100.0);
+        e.node.token_balances.lock().unwrap().insert((canon_addr(&holder.public_key_hex), "GATE".to_string()), 5);
+        let ts = |n: u64| 1_790_000_000_000u64 + n;
+        mine(&e, v2(creator, "nft_create_collection", &json!({ "from": cpk, "symbol": "GTD", "name": "Gated",
+            "publicMint": true, "mintPrice": 2.0, "tokenGateSymbol": "GATE", "tokenGateAmount": 1.0, "discountPct": 50,
+            "timestamp": ts(1) }), 1)).unwrap();
+        let col = crate::nft_store::NftCollection::make_collection_id(&cpk, "GTD");
+        let q = |k: &str| *e.node.balances.lock().unwrap().get(&canon_addr(k)).unwrap_or(&0);
+        let c0 = q(&cpk);
+        mine(&e, v2(&holder, "nft_mint", &json!({ "from": holder.public_key_hex, "collectionId": col, "name": "H", "timestamp": ts(2) }), 1)).expect("holder mint");
+        assert_eq!(q(&cpk) - c0, 1_000_000_000, "token holder pays half of 2 XRGE");
+        mine(&e, v2(&outsider, "nft_mint", &json!({ "from": outsider.public_key_hex, "collectionId": col, "name": "O", "timestamp": ts(3) }), 1)).expect("outsider mint");
+        assert_eq!(q(&cpk) - c0, 3_000_000_000, "non-holder pays the full 2 XRGE");
+        assert_eq!(e.node.nft_store.get_collection(&col).unwrap().unwrap().minted, 2);
     }
 }
 
