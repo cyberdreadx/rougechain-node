@@ -21,9 +21,8 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Contracts read the chain id (CONTRACT_CHAIN_ID) | not scheduled | not scheduled |
 | Pool transactions apply all-or-nothing (AMM_INTEGRITY) | 260 | 1440 |
 
-**Every height in this table has been reached** (except the `not scheduled` rows and AMM_INTEGRITY
-on mainnet, set to 260 on 2026-10-09 with mainnet at 252; testnet passed 1440 the same day) on both networks (mainnet height 251,
-testnet past 1390, on 2026-10-06). Nothing else is scheduled beyond them; the next consensus changes — restoring the
+**Every height in this table has been reached** on both networks, except the `not scheduled` rows
+(mainnet passed 260 on 2026-10-10; testnet passed 1440 on 2026-10-09). Nothing else is scheduled beyond them; the next consensus changes — restoring the
 types suspended at 245, the shielded pool V2, and the consensus redesign decided on 2026-10-06 — have
 no heights yet and will be announced in advance (see [Status & Roadmap](../status.md)).
 
