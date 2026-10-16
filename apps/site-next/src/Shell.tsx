@@ -148,6 +148,7 @@ export function Footer() {
             <p>{t("footer.tagline")}</p>
           </div>
           <div className="footer-links">
+            <Link to="/learn/what-is-rougechain">{t("footer.learn")}</Link>
             <TextLink href={DOCS}>{t("footer.docs")}</TextLink>
             <TextLink href={GITHUB}>GitHub</TextLink>
             <TextLink href="https://x.com/rougecoin">
