@@ -4,6 +4,12 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.8: NFT mint stability fix — 2026-10-15
+
+- Fixes a bug that could make a node stop producing and importing blocks while processing certain
+  public NFT mints. Recommended for every node; no consensus change.
+- See the [release notes](running-a-node/release-1.6.8.md).
+
 ## Node release 1.6.7: AMM_INTEGRITY on mainnet at block 260 — 2026-10-10
 
 - AMM_INTEGRITY activates on **mainnet at height 260** (active on testnet since 1440). Mainnet

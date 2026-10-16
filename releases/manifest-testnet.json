@@ -2,24 +2,24 @@
   "schema": 1,
   "network": "testnet",
   "chain_id": "rougechain-devnet-1",
-  "version": "1.6.7",
-  "released": "2026-10-10",
-  "source_commit": "c64c90c",
+  "version": "1.6.8",
+  "released": "2026-10-15",
+  "source_commit": "290d4a2",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-amm-mainnet-260-c64c90c",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-amm-mainnet-260-c64c90c",
+    "name": "quantum-vault-daemon-nftfix-290d4a2",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-nftfix-290d4a2",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.7/quantum-vault-daemon-amm-mainnet-260-c64c90c"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.8/quantum-vault-daemon-nftfix-290d4a2"
     ],
-    "sha256": "e9b4fbf188e28ac3d963f35b28589442d2062890508c47c0b403bbab74aa1626",
-    "size": 29405112
+    "sha256": "b8c11945ef9c94017e2b1cb46472a4855f609b0ef16cb2fa1532d7a7dabf36e2",
+    "size": 29400544
   },
   "cli": {
-    "name": "rougechain-c64c90c",
-    "url": "https://api.rougechain.io/releases/rougechain-c64c90c",
+    "name": "rougechain-290d4a2",
+    "url": "https://api.rougechain.io/releases/rougechain-290d4a2",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.7/rougechain-c64c90c"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.8/rougechain-290d4a2"
     ],
     "sha256": "0df5a526a120eeb12ac77a5a86b6b448bbdf80b371c63db0a4c1427ef22f6870",
     "size": 5294304
@@ -86,6 +86,6 @@
       "height": 1440
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.7.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.8.html",
   "min_installer_version": "2.0.0"
 }

@@ -5443,6 +5443,7 @@ impl L1Node {
             let before_nft = balances.values().sum::<u128>();
             self.apply_nft_tx_inner(
                 &mut balances,
+                &token_balances,
                 tx,
                 block.header.time,
                 block.header.height,
@@ -8757,6 +8758,10 @@ impl L1Node {
     fn apply_nft_tx_inner(
         &self,
         balances: &mut HashMap<String, u128>,
+        // Read-only view of token balances. The block executor already holds `self.token_balances`,
+        // so this function must never lock it (std Mutex is not re-entrant: a gated public mint
+        // deadlocked the producer).
+        token_balances: &HashMap<TokenBalanceKey, u128>,
         tx: &TxV1,
         block_time: u64,
         block_height: u64,
@@ -8837,7 +8842,10 @@ impl L1Node {
                         mint_cost = price;
                         // Apply token-gate discount
                         if let (Some(ref gate_sym), Some(gate_amt)) = (&col.token_gate_symbol, col.token_gate_amount) {
-                            let holder_bal = self.get_token_balance(&tx.from_pub_key, gate_sym).unwrap_or(0.0);
+                            let holder_bal = token_balances
+                                .get(&(canon_addr(&tx.from_pub_key), gate_sym.to_string()))
+                                .copied()
+                                .unwrap_or(0) as f64;
                             if holder_bal >= gate_amt {
                                 let disc = col.discount_pct.unwrap_or(100) as f64 / 100.0;
                                 mint_cost *= 1.0 - disc;
@@ -9076,6 +9084,7 @@ impl L1Node {
         }
 
         self.nft_store.clear_all()?;
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?.clone();
 
         let mut col_count = 0u32;
         let mut token_count = 0u32;
@@ -9097,7 +9106,7 @@ impl L1Node {
                         }
                         // Ensure sender has enough balance for fee checks during rebuild
                         *dummy_balances.entry(tx.from_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(tx.fee + 1.0);
-                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time, block.header.height);
+                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, &token_balances, tx, block.header.time, block.header.height);
                     }
                     _ => {}
                 }
@@ -13878,6 +13887,160 @@ mod game_ready_tests {
         royalty_forks_off();
     }
 
+    /// The shipped example (contracts/xrge_staking) through block production: stake and fund with
+    /// attached XRGE, a refused stake is refunded, rewards stream by block time and are paid by
+    /// `claim`, unstaking waits out the delay, and the contract's XRGE always equals the three
+    /// balances it tracks. Every block is relayed to a second node as JSON; the roots must match.
+    #[test]
+    fn xrge_staking_example_holds_principal_streams_rewards_and_delays_unstake() {
+        use base64::Engine as _;
+        let a = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let b = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        let staker = &a.player;
+        let funder = pqc_keygen();
+        let spk = staker.public_key_hex.clone();
+        for n in [&a.node, &b.node] {
+            fund_xrge(n, &spk, 1_000.0);
+            fund_xrge(n, &b.player.public_key_hex, 1_000.0);
+            fund_xrge(n, &funder.public_key_hex, 2_000.0);
+        }
+        let relay = |blk: BlockV1| b.node.import_block(serde_json::from_str(&serde_json::to_string(&blk).unwrap()).unwrap());
+        let mine_relay = |tx: TxV1| -> Result<String, String> {
+            let h = compute_single_tx_hash(&tx);
+            a.node.add_tx_to_mempool_verified(tx)?;
+            relay(a.node.mine_pending()?.ok_or("no block")?)?;
+            Ok(h)
+        };
+        let status = |h: &str| a.node.get_receipt(h).unwrap().unwrap().status;
+        let ok = |h: &str| assert!(matches!(status(h), TxStatus::Success), "{:?}", status(h));
+        let q = |n: &L1Node, k: &str| *n.balances.lock().unwrap().get(&canon_addr(k)).unwrap_or(&0);
+        const X: u64 = 1_000_000_000;
+        let gas_fee: u128 = 1_000_000 * 1_000; // gasLimit × 0.000001 XRGE, in quanta
+
+        let wasm = include_bytes!("../../../contracts/xrge_staking/xrge_staking.wasm");
+        let d = v2(staker, "contract_deploy", &deploy_payload(&spk, &base64::engine::general_purpose::STANDARD.encode(wasm)), 1);
+        let pool = d.payload.contract_addr.clone().unwrap();
+        mine_relay(d).expect("deploy");
+        let addr = canon_addr(&spk); // accounts are keyed by the wallet's rouge1 address
+        assert!(addr.starts_with("rouge1"));
+
+        // Read-only views at a chosen time (the query endpoint passes the wall clock).
+        let view_at = |n: &L1Node, method: &str, args: Value, t: u64| -> Value {
+            let h = n.get_tip_height().unwrap() + 1;
+            let r = n.wasm_runtime.as_ref().unwrap().query_contract_ext(n.contract_store.as_ref().unwrap(), &pool, method, &args, "",
+                n.native_balances_quanta(), h, t, n.game_ext_for_preview(h)).unwrap();
+            assert!(r.success, "{method}: {:?}", r.error);
+            assert!(r.events.is_empty(), "{method} emits nothing");
+            assert!(r.storage_writes.as_ref().map_or(true, |w| w.is_empty()) && r.storage_deletes.as_ref().map_or(true, |d| d.is_empty()));
+            r.return_data.expect("return data")
+        };
+        let wall = || chrono::Utc::now().timestamp() as u64;
+        let view = |method: &str, args: Value, t: u64| -> Value {
+            let (va, vb) = (view_at(&a.node, method, args.clone(), t), view_at(&b.node, method, args, t));
+            assert_eq!(va, vb, "both nodes agree");
+            va
+        };
+        let u = |v: &Value, k: &str| v[k].as_u64().unwrap_or_else(|| panic!("{k} in {v}"));
+        // The contract's XRGE is exactly principal earning + principal pending + unclaimed rewards.
+        let solvent = || {
+            let i = view("info", Value::Null, wall());
+            assert_eq!(q(&a.node, &pool), (u(&i, "total_staked") + u(&i, "total_pending") + u(&i, "reserve")) as u128, "{i}");
+            i
+        };
+        let ev = |h: &str| -> (String, Value) {
+            let ev = a.node.contract_store.as_ref().unwrap().get_events_page(&pool, 1, None, Some(h)).unwrap();
+            (ev[0].topic.clone(), serde_json::from_str(&ev[0].data).unwrap())
+        };
+        let xrge = |amount: u64| json!({ "symbol": "XRGE", "amount": amount });
+        let i = solvent();
+        assert_eq!((u(&i, "total_staked"), u(&i, "reserve"), u(&i, "min_stake"), u(&i, "unstake_delay"), i["streaming"].clone()),
+            (0, 0, X, 3 * 86_400, json!(false)));
+
+        // A stake below 1 XRGE, and a stake with nothing attached, fail: only gas is paid.
+        let s0 = q(&a.node, &spk);
+        let h = mine_relay(call_tx(staker, &pool, "stake", json!({}), xrge(X - 1), 2)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        let h = mine_relay(call_tx(staker, &pool, "stake", json!({}), Value::Null, 3)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        assert_eq!(s0 - q(&a.node, &spk), 2 * gas_fee, "only gas; the payment is refunded");
+        assert_eq!(q(&a.node, &pool), 0);
+
+        // Stake 100 XRGE: the contract holds it and the account is keyed by the rouge1 address.
+        let h = mine_relay(call_tx(staker, &pool, "stake", json!({}), xrge(100 * X), 4)).unwrap(); ok(&h);
+        assert_eq!(ev(&h), ("staked".to_string(), json!({ "address": addr, "amount": 100 * X, "staked": 100 * X, "pending": 0,
+            "unlock_at": 0, "total_staked": 100 * X })));
+        assert_eq!(s0 - q(&a.node, &spk), 3 * gas_fee + (100 * X) as u128);
+        assert_eq!(q(&a.node, &pool), (100 * X) as u128);
+        let acct = |t: u64| view("account", json!({ "address": addr }), t);
+        assert_eq!(acct(wall()), json!({ "address": addr, "staked": 100 * X, "earned": 0, "pending": 0, "unlock_at": 0, "withdrawable": false }));
+        // Nothing funded yet: nothing to claim. A method that takes no payment refuses one.
+        let h = mine_relay(call_tx(staker, &pool, "claim", json!({}), Value::Null, 5)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        let h = mine_relay(call_tx(staker, &pool, "claim", json!({}), xrge(X), 6)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+
+        // Anyone funds: 864 XRGE over one day = 0.01 XRGE a second. A bad duration is refused.
+        let f0 = q(&a.node, &funder.public_key_hex);
+        let h = mine_relay(call_tx(&funder, &pool, "fund", json!({ "duration": 3_600 }), xrge(864 * X), 1)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        let h = mine_relay(call_tx(&funder, &pool, "fund", json!({ "duration": 86_400 }), xrge(864 * X), 2)).unwrap(); ok(&h);
+        let (topic, funded) = ev(&h);
+        assert_eq!((topic.as_str(), u(&funded, "amount"), u(&funded, "reward_rate"), u(&funded, "reserve")), ("funded", 864 * X, 10_000_000, 864 * X));
+        assert_eq!(f0 - q(&a.node, &funder.public_key_hex), 2 * gas_fee + (864 * X) as u128);
+        let i = solvent();
+        assert_eq!((u(&i, "reward_rate"), i["streaming"].clone(), u(&i, "period_end")), (10_000_000, json!(true), u(&funded, "period_end")));
+        let t_fund = u(&funded, "period_end") - 86_400;
+        // The view projects the stream: after 100 s the only staker has earned 100 × the rate, and
+        // after the period the whole pot (the stake is a multiple of the rate's precision here).
+        assert_eq!(u(&acct(t_fund + 100), "earned"), 100 * 10_000_000);
+        assert_eq!(u(&acct(t_fund + 10 * 86_400), "earned"), 864 * X);
+
+        // Block time moves on; `claim` pays what streamed since the funding, to the rouge1 address.
+        std::thread::sleep(std::time::Duration::from_millis(2_100));
+        let s1 = q(&a.node, &spk);
+        let h = mine_relay(call_tx(staker, &pool, "claim", json!({}), Value::Null, 7)).unwrap(); ok(&h);
+        let (topic, claimed) = ev(&h);
+        let paid = u(&claimed, "amount");
+        assert_eq!(topic, "claimed");
+        assert!(paid >= 2 * 10_000_000 && paid % 10_000_000 == 0 && paid < 864 * X, "whole seconds of the stream: {paid}");
+        assert_eq!(q(&a.node, &spk) + gas_fee - s1, paid as u128);
+        assert_eq!(u(&solvent(), "reserve"), 864 * X - paid);
+
+        // Unstake 40: it stops earning, is locked for the delay, and can't be withdrawn yet.
+        let h = mine_relay(call_tx(staker, &pool, "request_unstake", json!({ "amount": 40 * X }), Value::Null, 8)).unwrap(); ok(&h);
+        let (topic, req) = ev(&h);
+        let unlock = u(&req, "unlock_at");
+        assert_eq!((topic.as_str(), u(&req, "staked"), u(&req, "pending"), u(&req, "total_staked")), ("unstake_requested", 60 * X, 40 * X, 60 * X));
+        assert!(unlock >= t_fund + 3 * 86_400);
+        let h = mine_relay(call_tx(staker, &pool, "withdraw", json!({}), Value::Null, 9)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)), "still locked");
+        assert_eq!(acct(unlock - 1)["withdrawable"], json!(false));
+        assert_eq!(acct(unlock)["withdrawable"], json!(true));
+        let i = solvent();
+        assert_eq!((u(&i, "total_staked"), u(&i, "total_pending")), (60 * X, 40 * X));
+        // Leaving 0.5 XRGE staked is refused; someone else can't unstake or withdraw this stake.
+        let h = mine_relay(call_tx(staker, &pool, "request_unstake", json!({ "amount": 60 * X - X / 2 }), Value::Null, 10)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        for (k, method, args) in [(3u64, "request_unstake", json!({ "amount": X })), (4, "withdraw", json!({})), (5, "cancel_unstake", json!({}))] {
+            let h = mine_relay(call_tx(&funder, &pool, method, args, Value::Null, k)).unwrap();
+            assert!(matches!(status(&h), TxStatus::Failed(_)), "{method} by a stranger");
+        }
+        // Cancelling puts the 40 back to work.
+        let h = mine_relay(call_tx(staker, &pool, "cancel_unstake", json!({}), Value::Null, 11)).unwrap(); ok(&h);
+        let (topic, c) = ev(&h);
+        assert_eq!((topic.as_str(), u(&c, "amount"), u(&c, "staked"), u(&c, "pending"), u(&c, "unlock_at")), ("unstake_cancelled", 40 * X, 100 * X, 0, 0));
+        let i = solvent();
+        assert_eq!((u(&i, "total_staked"), u(&i, "total_pending")), (100 * X, 0));
+
+        // The peer received every block as JSON and agrees on everything.
+        assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        assert_eq!(q(&b.node, &pool), q(&a.node, &pool));
+        royalty_forks_off();
+    }
+
     /// Mainnet history (fixture 0–137) replays to the same blocks and root with CONTRACT_NFT_ROYALTY
     /// unscheduled and scheduled from block 1 (nothing before activation can depend on it).
     #[test]
@@ -13954,6 +14117,33 @@ mod game_ready_tests {
         assert_eq!((q("1111111111111111111111111111111111111111"), q("2222222222222222222222222222222222222222"), q(&splitter)),
             (300_000_000, 200_000_000, 0));
         royalty_forks_off();
+    }
+
+    /// A public mint from a priced, token-gated collection used to lock `token_balances` a second
+    /// time inside block execution (std Mutex, not re-entrant) and froze the producer and the API.
+    /// Now the gate is read from the map the executor already holds.
+    #[test]
+    fn gated_public_mint_by_a_non_creator_is_mined_and_charged_the_discounted_price() {
+        let e = setup(Some(1));
+        let creator = &e.player;
+        let cpk = creator.public_key_hex.clone();
+        let holder = pqc_keygen();
+        let outsider = pqc_keygen();
+        fund_xrge(&e.node, &holder.public_key_hex, 100.0);
+        fund_xrge(&e.node, &outsider.public_key_hex, 100.0);
+        e.node.token_balances.lock().unwrap().insert((canon_addr(&holder.public_key_hex), "GATE".to_string()), 5);
+        let ts = |n: u64| 1_790_000_000_000u64 + n;
+        mine(&e, v2(creator, "nft_create_collection", &json!({ "from": cpk, "symbol": "GTD", "name": "Gated",
+            "publicMint": true, "mintPrice": 2.0, "tokenGateSymbol": "GATE", "tokenGateAmount": 1.0, "discountPct": 50,
+            "timestamp": ts(1) }), 1)).unwrap();
+        let col = crate::nft_store::NftCollection::make_collection_id(&cpk, "GTD");
+        let q = |k: &str| *e.node.balances.lock().unwrap().get(&canon_addr(k)).unwrap_or(&0);
+        let c0 = q(&cpk);
+        mine(&e, v2(&holder, "nft_mint", &json!({ "from": holder.public_key_hex, "collectionId": col, "name": "H", "timestamp": ts(2) }), 1)).expect("holder mint");
+        assert_eq!(q(&cpk) - c0, 1_000_000_000, "token holder pays half of 2 XRGE");
+        mine(&e, v2(&outsider, "nft_mint", &json!({ "from": outsider.public_key_hex, "collectionId": col, "name": "O", "timestamp": ts(3) }), 1)).expect("outsider mint");
+        assert_eq!(q(&cpk) - c0, 3_000_000_000, "non-holder pays the full 2 XRGE");
+        assert_eq!(e.node.nft_store.get_collection(&col).unwrap().unwrap().minted, 2);
     }
 }
 
