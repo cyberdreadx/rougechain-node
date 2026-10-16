@@ -32,7 +32,7 @@ it("classifies user-facing apps for global navigation", () => {
     "Validators",
   ]);
   expect(globalAppGroups).toEqual(["Hold", "Trade", "Play", "Talk", "Explore"]);
-  expect(apps.filter((a) => a.kind === "developer-resource")).toHaveLength(5);
+  expect(apps.filter((a) => a.kind === "developer-resource")).toHaveLength(6);
   expect(appById("liquidity")?.kind).toBe("utility");
   expect(appById("network")?.kind).toBe("utility");
 });

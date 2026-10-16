@@ -2627,6 +2627,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantum-vault-vm-wasm"
+version = "0.1.0"
+dependencies = [
+ "bech32",
+ "fips204",
+ "getrandom 0.2.17",
+ "hex",
+ "quantum-vault-vm",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "quantum-vault-wasm-prover"
 version = "0.1.0"
 dependencies = [

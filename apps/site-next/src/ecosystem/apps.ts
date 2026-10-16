@@ -249,6 +249,18 @@ export const apps: EcosystemApp[] = [
     workspaceView: "Build",
   },
   {
+    id: "ide",
+    kind: "developer-resource",
+    name: "Contract IDE",
+    group: "Build",
+    description: "Write, test and deploy WASM contracts in the browser.",
+    proposedHost: "rougechain.io/ide",
+    icon: "code",
+    status: "live",
+    pocRoute: "/ide",
+    workspaceView: "Build",
+  },
+  {
     id: "docs",
     kind: "developer-resource",
     name: "Documentation",

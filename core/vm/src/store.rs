@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+
+// The node stores contracts in sled. A browser build (wasm32, the IDE's local test chain) has no
+// file system, so there the same store runs over an in-memory map with the operations it uses.
+#[cfg(not(target_arch = "wasm32"))]
+type Tree = sled::Tree;
+#[cfg(target_arch = "wasm32")]
+type Tree = mem::MemTree;
 
 /// Metadata for a deployed contract
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,18 +63,19 @@ pub struct ContractCallResult {
 #[derive(Clone)]
 pub struct ContractStore {
     /// Contract metadata: address → ContractMetadata JSON
-    contracts: sled::Tree,
+    contracts: Tree,
     /// Contract WASM bytecode: address → raw bytes
-    code: sled::Tree,
+    code: Tree,
     /// Contract key-value storage: "addr:key" → raw bytes
-    state: sled::Tree,
+    state: Tree,
     /// Contract events: sequential ID → ContractEvent JSON
-    events: sled::Tree,
+    events: Tree,
     /// Event counter for sequential IDs
-    event_counter: sled::Tree,
+    event_counter: Tree,
 }
 
 impl ContractStore {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(data_dir: impl AsRef<Path>) -> Result<Self, String> {
         let path = data_dir.as_ref().join("contracts-db");
         let db = sled::open(path).map_err(|e| e.to_string())?;
@@ -78,7 +87,20 @@ impl ContractStore {
         Ok(Self { contracts, code, state, events, event_counter })
     }
 
+    /// An empty store held in memory (browser builds only).
+    #[cfg(target_arch = "wasm32")]
+    pub fn in_memory() -> Self {
+        Self {
+            contracts: Tree::default(),
+            code: Tree::default(),
+            state: Tree::default(),
+            events: Tree::default(),
+            event_counter: Tree::default(),
+        }
+    }
+
     /// Every sled tree this store writes to (rollback snapshot/restore).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn trees(&self) -> Vec<&sled::Tree> {
         vec![&self.contracts, &self.code, &self.state, &self.events, &self.event_counter]
     }
@@ -268,5 +290,61 @@ impl ContractStore {
             }
         }
         Ok(map)
+    }
+}
+
+/// In-memory stand-in for the subset of `sled::Tree` the store uses (sorted keys, same results).
+#[cfg(target_arch = "wasm32")]
+mod mem {
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    type Entry = Result<(Vec<u8>, Vec<u8>), String>;
+
+    #[derive(Clone, Default)]
+    pub struct MemTree(Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>);
+
+    impl MemTree {
+        fn map(&self) -> std::sync::MutexGuard<'_, BTreeMap<Vec<u8>, Vec<u8>>> {
+            self.0.lock().unwrap_or_else(|e| e.into_inner())
+        }
+        pub fn insert(&self, k: impl AsRef<[u8]>, v: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.map().insert(k.as_ref().to_vec(), v.as_ref().to_vec()))
+        }
+        pub fn get(&self, k: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.map().get(k.as_ref()).cloned())
+        }
+        pub fn remove(&self, k: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.map().remove(k.as_ref()))
+        }
+        pub fn flush(&self) -> Result<usize, String> {
+            Ok(0)
+        }
+        pub fn iter(&self) -> std::vec::IntoIter<Entry> {
+            self.map().iter().map(|(k, v)| Ok((k.clone(), v.clone()))).collect::<Vec<_>>().into_iter()
+        }
+        pub fn scan_prefix(&self, prefix: impl AsRef<[u8]>) -> std::vec::IntoIter<Entry> {
+            let p = prefix.as_ref();
+            self.map()
+                .range(p.to_vec()..)
+                .take_while(|(k, _)| k.starts_with(p))
+                .map(|(k, v)| Ok((k.clone(), v.clone())))
+                .collect::<Vec<_>>()
+                .into_iter()
+        }
+        pub fn update_and_fetch(
+            &self,
+            k: impl AsRef<[u8]>,
+            mut f: impl FnMut(Option<&[u8]>) -> Option<Vec<u8>>,
+        ) -> Result<Option<Vec<u8>>, String> {
+            let mut map = self.map();
+            let key = k.as_ref().to_vec();
+            let next = f(map.get(&key).map(|v| v.as_slice()));
+            match &next {
+                Some(v) => map.insert(key, v.clone()),
+                None => map.remove(&key),
+            };
+            Ok(next)
+        }
     }
 }

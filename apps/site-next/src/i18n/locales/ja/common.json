@@ -161,6 +161,10 @@
       "name": "開発者ポータル",
       "description": "RougeChain で開発するためのツール。"
     },
+    "ide": {
+      "name": "コントラクト IDE",
+      "description": "ブラウザで WASM コントラクトを作成・テスト・デプロイ。"
+    },
     "docs": {
       "name": "ドキュメント",
       "description": "最新のドキュメントをお読みください。"
