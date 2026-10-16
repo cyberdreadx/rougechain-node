@@ -161,6 +161,10 @@
       "name": "Developer Portal",
       "description": "Tools to build on RougeChain."
     },
+    "ide": {
+      "name": "Contract IDE",
+      "description": "Write, test and deploy WASM contracts in the browser."
+    },
     "docs": {
       "name": "Documentation",
       "description": "Read the current documentation."

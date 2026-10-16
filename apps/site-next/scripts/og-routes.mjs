@@ -21,6 +21,7 @@ export const ROUTES = [
   { slug: "blockchain", path: "/blockchain", label: "Explorer", title: "RougeChain Explorer.", subtitle: "Blocks, transactions and live network stats.", accent: "violet" },
   { slug: "messenger", path: "/messenger", label: "Messenger", title: "Encrypted messaging.", subtitle: "End-to-end encrypted, quantum-safe chat.", accent: "magenta" },
   { slug: "mail", path: "/mail", label: "Mail", title: "Encrypted mail.", subtitle: "On-chain, post-quantum encrypted mail.", accent: "violet" },
+  { slug: "ide", path: "/ide", label: "IDE", title: "Build contracts in the browser.", subtitle: "Edit Rust templates, test on a local chain, deploy with your wallet.", accent: "violet" },
   { slug: "privacy", path: "/privacy", label: "Privacy", title: "Privacy policy.", subtitle: "Keys stay on your device. Messages are end-to-end encrypted.", accent: "red" },
   { slug: "learn-what-is-rougechain", path: "/learn/what-is-rougechain", label: "Learn", title: "What is RougeChain?", subtitle: "Post-quantum signatures, what XRGE does, and native XRGE vs XRGE on Base.", accent: "violet" },
 ];

@@ -161,6 +161,10 @@
       "name": "Portal para desarrolladores",
       "description": "Herramientas para construir en RougeChain."
     },
+    "ide": {
+      "name": "IDE de contratos",
+      "description": "Escribe, prueba y despliega contratos WASM en el navegador."
+    },
     "docs": {
       "name": "Documentación",
       "description": "Lee la documentación actual."

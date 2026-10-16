@@ -161,6 +161,10 @@
       "name": "开发者门户",
       "description": "在 RougeChain 上构建的工具。"
     },
+    "ide": {
+      "name": "合约 IDE",
+      "description": "在浏览器中编写、测试和部署 WASM 合约。"
+    },
     "docs": {
       "name": "文档",
       "description": "阅读最新文档。"
