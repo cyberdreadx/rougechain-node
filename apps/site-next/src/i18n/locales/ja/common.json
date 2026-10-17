@@ -30,6 +30,7 @@
   },
   "footer": {
     "learn": "学ぶ",
+    "playground": "プレイグラウンド",
     "tagline": "次の時代のために。",
     "docs": "ドキュメント",
     "community": "コミュニティ",
@@ -163,7 +164,7 @@
       "description": "RougeChain で開発するためのツール。"
     },
     "ide": {
-      "name": "コントラクト IDE",
+      "name": "プレイグラウンド",
       "description": "ブラウザで WASM コントラクトを作成・テスト・デプロイ。"
     },
     "docs": {

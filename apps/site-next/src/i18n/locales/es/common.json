@@ -30,6 +30,7 @@
   },
   "footer": {
     "learn": "Aprende",
+    "playground": "Playground",
     "tagline": "Construida para lo que viene.",
     "docs": "Documentación",
     "community": "Comunidad",
@@ -163,7 +164,7 @@
       "description": "Herramientas para construir en RougeChain."
     },
     "ide": {
-      "name": "IDE de contratos",
+      "name": "Playground de contratos",
       "description": "Escribe, prueba y despliega contratos WASM en el navegador."
     },
     "docs": {
