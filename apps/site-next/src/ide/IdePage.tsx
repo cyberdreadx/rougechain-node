@@ -4,7 +4,7 @@
  * node's own contract VM compiled to WebAssembly — and deploy / call it on testnet or mainnet with
  * the connected wallet. Nothing is compiled here: Rust builds happen on your machine.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   CONTRACT_DEPLOY_FEE_XRGE,
@@ -18,6 +18,7 @@ import {
 } from "@rougechain/core/contracts";
 import { useWallet, useWalletIdentity } from "../wallet/WalletProvider";
 import { useRouteSeo } from "../pages/common";
+import { DOCS_URL, SOURCE_URL } from "../ecosystem/apps";
 import { analyzeWasm, type WasmAnalysis } from "./analyze";
 import { Editor } from "./Editor";
 import { TEMPLATES, fillPlaceholders, templateById, type MethodHint, type Template } from "./templates";
@@ -119,12 +120,23 @@ export default function IdePage() {
   // ── Source ─────────────────────────────────────────────────────────────────────────────────
   const [templateId, setTemplateId] = useState(TEMPLATES[0].id);
   const template = templateById(templateId) ?? TEMPLATES[0];
-  const [filePath, setFilePath] = useState(template.files[0].path);
+  const [tabs, setTabs] = useState<string[]>([template.files[0].path]);
+  const [activeTab, setActiveTab] = useState<string>(HOME);
+  const filePath = activeTab === HOME ? template.files[0].path : activeTab;
   const [edits, setEdits] = useState<Record<string, string>>(readEdits);
   const fileKey = `${template.id}/${filePath}`;
   const file = template.files.find((f) => f.path === filePath) ?? template.files[0];
   const content = edits[fileKey] ?? file.content;
   const edited = edits[fileKey] !== undefined && edits[fileKey] !== file.content;
+  const isEdited = (path: string) => {
+    const v = edits[`${template.id}/${path}`];
+    return v !== undefined && v !== template.files.find((f) => f.path === path)?.content;
+  };
+
+  function openFile(path: string) {
+    setTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
+    setActiveTab(path);
+  }
 
   const onEdit = useCallback(
     (v: string) => {
@@ -251,7 +263,8 @@ export default function IdePage() {
     const t = templateById(id);
     if (!t) return;
     setTemplateId(id);
-    setFilePath(t.files[0].path);
+    setTabs([t.files[0].path]);
+    setActiveTab(t.files[0].path);
   }
 
   async function onUpload(f: File | undefined) {
@@ -437,243 +450,616 @@ export default function IdePage() {
   const placeholders = useMemo(() => ({ me, ...demo }), [me, demo]);
   const visibleDeployed = deployed.filter((d) => (env === "local" ? d.env === "local" : d.env === "network" && d.network === wallet.network));
   const myBalance = env === "local" && account && snap ? snap.xrge.find((x) => x.address === account.address)?.quanta ?? "0" : null;
-  const [bottomTab, setBottomTab] = useState<"console" | "chain">("console");
+
+  // ── Workbench layout (Remix-style: icon rail, side panel, tabs, terminal, status bar) ───────
+  const [panel, setPanel] = useState<Panel | null>("files");
+  const [showTerminal, setShowTerminal] = useState(true);
+  const [fontSize, setFontSize] = useState(13);
+  const rootRef = useRef<HTMLElement>(null);
+  const [top, setTop] = useState(0);
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (rootRef.current) setTop(rootRef.current.getBoundingClientRect().top + window.scrollY);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  function togglePanel(p: Panel) {
+    setPanel((cur) => (cur === p ? null : p));
+  }
+
+  function closeTab(path: string) {
+    setTabs((prev) => {
+      const next = prev.filter((p) => p !== path);
+      if (activeTab === path) setActiveTab(next[next.length - 1] ?? HOME);
+      return next;
+    });
+  }
+
+  function deployFromToolbar() {
+    if (env === "local") {
+      deployLocal();
+      return;
+    }
+    setPanel("deploy");
+    if (wasm && signerKey) setConfirming(true);
+  }
+
+  const envLabel = env === "local" ? "Local test chain" : networkName;
+  const workspace = template.dir.split("/").pop() ?? template.id;
+  const tree = buildTree(template.files.map((f) => f.path));
+
+  const uploadLabel = (
+    <label className="ide-create">
+      <input type="file" accept=".wasm,application/wasm" onChange={(e) => void onUpload(e.target.files?.[0])} />
+      <Icon name="plus" /> Load your .wasm
+    </label>
+  );
 
   return (
-    <main id="main" className="ide">
-      <div className="ide-bar">
-        <div className="ide-title">
+    <main
+      id="main"
+      ref={rootRef}
+      className={`ide${panel ? "" : " no-panel"}${showTerminal ? "" : " no-terminal"}`}
+      style={{ "--ide-top": `${top}px`, "--ide-font": `${fontSize}px` } as CSSProperties}
+    >
+      {/* ── Top bar ── */}
+      <header className="ide-top">
+        <div className="ide-brand">
+          <img src="/xrge-logo.webp" alt="" />
           <h1>RougeChain IDE</h1>
           <span className="ide-badge">Preview</span>
         </div>
+        <label className="ide-workspace">
+          <span className="sr-only">Workspace</span>
+          <select value={templateId} onChange={(e) => pickTemplate(e.target.value)} aria-label="Workspace">
+            {TEMPLATES.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.dir.split("/").pop()}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="ide-seg" role="radiogroup" aria-label="Where to run">
           <button type="button" role="radio" aria-checked={env === "local"} className={env === "local" ? "on" : undefined} onClick={() => setEnv("local")}>
-            Local test chain
+            <Icon name="chain" /> Local
           </button>
           <button type="button" role="radio" aria-checked={env === "network"} className={env === "network" ? "on" : undefined} onClick={() => setEnv("network")}>
-            {networkName} <span className="muted">· wallet</span>
+            <Icon name="globe" /> {networkName}
           </button>
         </div>
-      </div>
+        <div className="ide-layout" aria-label="Layout">
+          <button type="button" className={panel ? "on" : undefined} aria-pressed={!!panel} title="Side panel" aria-label="Show side panel" onClick={() => setPanel(panel ? null : "files")}>
+            <Icon name="layoutSide" />
+          </button>
+          <button type="button" className={showTerminal ? "on" : undefined} aria-pressed={showTerminal} title="Terminal" aria-label="Show terminal" onClick={() => setShowTerminal(!showTerminal)}>
+            <Icon name="layoutBottom" />
+          </button>
+        </div>
+      </header>
 
-      <div className="ide-grid">
-        {/* ── Files ── */}
-        <aside className="ide-side" aria-label="Contracts">
-          <section>
-            <h2 className="ide-h">Templates</h2>
-            <ul className="ide-templates">
-              {TEMPLATES.map((t) => (
-                <li key={t.id}>
-                  <button type="button" className={t.id === templateId ? "on" : undefined} aria-pressed={t.id === templateId} onClick={() => pickTemplate(t.id)}>
-                    <strong>{t.name}</strong>
-                    <span>{t.summary}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-          <section className="ide-build">
-            <h2 className="ide-h">Build it yourself</h2>
-            <p>Edit the source, then compile on your machine and load the result here.</p>
-            <pre className="ide-cmd">
-              <code>{`git clone https://github.com/cyberdreadx/rougechain-node
+      {/* ── Icon rail ── */}
+      <nav className="ide-rail" aria-label="Tools">
+        {RAIL.map((r) => (
+          <button key={r.id} type="button" className={panel === r.id ? "on" : undefined} aria-pressed={panel === r.id} aria-label={r.title} title={r.title} onClick={() => togglePanel(r.id)}>
+            <Icon name={r.icon} />
+            <span>{r.short}</span>
+            {r.id === "deploy" && visibleDeployed.length > 0 ? <i className="ide-rail-dot" /> : null}
+          </button>
+        ))}
+        <span className="ide-rail-fill" />
+        <a href={`${DOCS_URL}advanced/ide.html`} target="_blank" rel="noopener noreferrer" title="IDE guide" aria-label="IDE guide (docs)">
+          <Icon name="book" />
+          <span>Docs</span>
+        </a>
+      </nav>
+
+      {/* ── Side panel ── */}
+      {panel && (
+        <aside className="ide-panel" aria-label={RAIL.find((r) => r.id === panel)?.title}>
+          <h2 className="ide-panel-title">{RAIL.find((r) => r.id === panel)?.title}</h2>
+          <div className="ide-panel-body">
+            {panel === "files" && (
+              <>
+                {uploadLabel}
+                <ul className="ide-tree" role="tree" aria-label="Workspace files">
+                  <li role="treeitem" aria-expanded="true">
+                    <span className="ide-tree-row folder">
+                      <Icon name="chevron" /> <Icon name="folder" /> {workspace}
+                    </span>
+                    <ul role="group">
+                      {tree.map((node) =>
+                        node.children ? (
+                          <li key={node.name} role="treeitem" aria-expanded="true">
+                            <span className="ide-tree-row folder depth1">
+                              <Icon name="chevron" /> <Icon name="folder" /> {node.name}
+                            </span>
+                            <ul role="group">
+                              {node.children.map((p) => (
+                                <FileRow key={p} path={p} depth={2} active={activeTab === p} edited={isEdited(p)} onOpen={() => openFile(p)} />
+                              ))}
+                            </ul>
+                          </li>
+                        ) : (
+                          <FileRow key={node.name} path={node.name} depth={1} active={activeTab === node.name} edited={isEdited(node.name)} onOpen={() => openFile(node.name)} />
+                        ),
+                      )}
+                      <li role="treeitem" aria-selected={false}>
+                        <button type="button" className="ide-tree-row depth1" onClick={() => setPanel("build")} title="Prebuilt release build — open Build">
+                          <FileGlyph path={template.artifact} /> <span className="ide-tree-name">{template.artifact}</span>
+                          <span className="ide-chip">prebuilt</span>
+                        </button>
+                      </li>
+                    </ul>
+                  </li>
+                </ul>
+                <p className="ide-panel-note">Edits stay in this browser. Build them with cargo (Build tab) and load the .wasm to run your changes.</p>
+              </>
+            )}
+
+            {panel === "build" && (
+              <>
+                <section className="ide-section">
+                  <h3 className="ide-h">Loaded contract</h3>
+                  {wasm ? (
+                    <div className="ide-wasm">
+                      <p className="ide-wasm-name">
+                        <FileGlyph path={wasm.name} /> <span className="mono">{wasm.name}</span>
+                      </p>
+                      <p className="muted">
+                        {kb(wasm.analysis.size)} · {wasm.analysis.methods.length} method{wasm.analysis.methods.length === 1 ? "" : "s"}
+                        {wasm.templateId ? " · prebuilt" : " · your build"}
+                      </p>
+                      {wasm.analysis.problems.length > 0 ? (
+                        <ul className="ide-problems">
+                          {wasm.analysis.problems.map((p) => (
+                            <li key={p}>{p}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="ide-ok">
+                          <Icon name="check" /> Uses {wasm.analysis.imports.length} host function{wasm.analysis.imports.length === 1 ? "" : "s"}, all provided by the node.
+                        </p>
+                      )}
+                      {wasm.analysis.methods.length > 0 && (
+                        <ul className="ide-methods">
+                          {wasm.analysis.methods.map((m) => (
+                            <li key={m} className="mono">
+                              {m}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ) : (
+                    <p className={wasmError ? "ide-error" : "muted"}>{wasmError || "Loading…"}</p>
+                  )}
+                  {uploadLabel}
+                </section>
+                <section className="ide-section">
+                  <h3 className="ide-h">Build on your machine</h3>
+                  <p className="muted">RougeChain contracts are Rust compiled to WebAssembly. Nothing is compiled on a server.</p>
+                  <pre className="ide-cmd">
+                    <code>{`git clone ${SOURCE_URL}
 cd rougechain-node/${template.dir}
 rustup target add wasm32-unknown-unknown
 cargo build --release --target wasm32-unknown-unknown`}</code>
-            </pre>
-            <p className="muted">
-              Output: <code>target/wasm32-unknown-unknown/release/{template.artifact}</code>
-            </p>
-          </section>
-        </aside>
-
-        {/* ── Editor ── */}
-        <section className="ide-code" aria-label="Source">
-          <div className="ide-tabs" role="tablist" aria-label="Files">
-            {template.files.map((f) => (
-              <button key={f.path} type="button" role="tab" aria-selected={f.path === filePath} className={f.path === filePath ? "on" : undefined} onClick={() => setFilePath(f.path)}>
-                {f.path}
-                {edits[`${template.id}/${f.path}`] !== undefined && edits[`${template.id}/${f.path}`] !== f.content ? <span className="ide-dot" aria-label="edited" /> : null}
-              </button>
-            ))}
-            <span className="ide-tabs-fill" />
-            {edited && (
-              <button type="button" className="ide-link" onClick={resetFile}>
-                Revert
-              </button>
-            )}
-            <button type="button" className="ide-link" onClick={downloadFile}>
-              Download
-            </button>
-          </div>
-          <Editor docKey={fileKey} value={content} language={file.path.endsWith(".rs") ? "rust" : "text"} onChange={onEdit} label={`${template.name} — ${file.path}`} />
-          <p className="ide-note">Edits are saved in this browser. The prebuilt .wasm is the original template; load your own build to run your changes.</p>
-        </section>
-
-        {/* ── Deploy & run ── */}
-        <section className="ide-run" aria-label="Deploy and run">
-          <div className="ide-card">
-            <h2 className="ide-h">Account</h2>
-            {env === "local" ? (
-              chainState === "ready" ? (
-                <>
-                  <div className="ide-accounts" role="radiogroup" aria-label="Local account">
-                    {accounts.map((a, i) => (
-                      <button key={a.address} type="button" role="radio" aria-checked={i === accountIdx} className={i === accountIdx ? "on" : undefined} onClick={() => setAccountIdx(i)}>
-                        {a.label}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="ide-addr mono" title={account?.address}>
-                    {account ? short(account.address, 14, 6) : ""} · {myBalance !== null ? `${formatXrge(myBalance)} XRGE` : ""}
+                  </pre>
+                  <p className="muted">
+                    Output: <code className="mono">target/wasm32-unknown-unknown/release/{template.artifact}</code>
                   </p>
-                </>
-              ) : chainState === "loading" ? (
-                <p className="muted">Starting the local chain…</p>
-              ) : (
-                <p className="ide-error">The local chain could not start: {chainError}</p>
-              )
-            ) : signerKey ? (
-              <>
-                <p className="ide-addr mono" title={identity.address ?? undefined}>{identity.address ? short(identity.address, 14, 6) : "…"}</p>
-                <p className="muted">
-                  Signs with your wallet on <strong>{networkName}</strong>. Each call costs a gas fee in XRGE.
-                </p>
+                </section>
               </>
-            ) : (
-              <p className="muted">
-                {identity.locked ? "Unlock your wallet" : <><Link className="text-link inline" to="/wallet">Open or create a wallet</Link> to deploy</>} on {networkName}. Switch network in the wallet.
-              </p>
             )}
-          </div>
 
-          <div className="ide-card">
-            <h2 className="ide-h">Contract</h2>
-            {wasm ? (
+            {panel === "deploy" && (
               <>
-                <p className="ide-wasm">
-                  <span className="mono">{wasm.name}</span>
-                  <span className="muted">
-                    {kb(wasm.analysis.size)} · {wasm.analysis.methods.length} method{wasm.analysis.methods.length === 1 ? "" : "s"}
-                    {wasm.templateId ? " · prebuilt" : " · your build"}
-                  </span>
-                </p>
-                {wasm.analysis.problems.length > 0 ? (
-                  <ul className="ide-problems">
-                    {wasm.analysis.problems.map((p) => (
-                      <li key={p}>{p}</li>
-                    ))}
-                  </ul>
+                <label className="ide-field">
+                  <span>Environment</span>
+                  <select value={env} onChange={(e) => setEnv(e.target.value as Env)}>
+                    <option value="local">Local test chain (in this browser)</option>
+                    <option value="network">{networkName} (wallet)</option>
+                  </select>
+                </label>
+
+                <div className="ide-field">
+                  <span>Account</span>
+                  {env === "local" ? (
+                    chainState === "ready" ? (
+                      <>
+                        <select aria-label="Local account" value={accountIdx} onChange={(e) => setAccountIdx(Number(e.target.value))}>
+                          {accounts.map((a, i) => (
+                            <option key={a.address} value={i}>
+                              {a.label} ({short(a.address, 10, 4)})
+                            </option>
+                          ))}
+                        </select>
+                        <p className="ide-addr mono" title={account?.address}>
+                          {myBalance !== null ? `${formatXrge(myBalance)} XRGE` : ""}
+                        </p>
+                      </>
+                    ) : chainState === "loading" ? (
+                      <p className="muted">Starting the local chain…</p>
+                    ) : (
+                      <p className="ide-error">The local chain could not start: {chainError}</p>
+                    )
+                  ) : signerKey ? (
+                    <>
+                      <p className="ide-addr mono" title={identity.address ?? undefined}>
+                        {identity.address ? short(identity.address, 14, 6) : "…"}
+                      </p>
+                      <p className="muted small">
+                        Signs with your wallet on <strong>{networkName}</strong>. Each call costs a gas fee in XRGE.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="muted small">
+                      {identity.locked ? "Unlock your wallet" : <><Link className="text-link inline" to="/wallet">Open or create a wallet</Link> to deploy</>} on {networkName}. Switch network in the wallet.
+                    </p>
+                  )}
+                </div>
+
+                <div className="ide-field">
+                  <span>Contract</span>
+                  <p className="ide-contract mono" title={wasm?.name}>
+                    {wasm ? (
+                      <>
+                        <FileGlyph path={wasm.name} /> {wasm.name}
+                      </>
+                    ) : (
+                      wasmError || "Loading…"
+                    )}
+                  </p>
+                </div>
+
+                {env === "local" ? (
+                  <button type="button" className="button ide-primary" disabled={!wasm || chainState !== "ready"} onClick={deployLocal}>
+                    Deploy to local chain
+                  </button>
+                ) : confirming ? (
+                  <div className={`ide-confirm${wallet.network === "mainnet" ? " mainnet" : ""}`} role="alertdialog" aria-label="Confirm deployment">
+                    <p>
+                      Deploy <span className="mono">{wasm?.name}</span> to <strong>{networkName}</strong> for {CONTRACT_DEPLOY_FEE_XRGE} XRGE?
+                      {wallet.network === "mainnet" ? " Contracts can't be changed or removed after deployment." : ""}
+                    </p>
+                    <div className="ide-row">
+                      <button type="button" className="button ide-primary" disabled={busy} onClick={() => void deployNetwork()}>
+                        Deploy for {CONTRACT_DEPLOY_FEE_XRGE} XRGE
+                      </button>
+                      <button type="button" className="button ghost" onClick={() => setConfirming(false)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
                 ) : (
-                  <p className="ide-ok">Uses {wasm.analysis.imports.length} host function{wasm.analysis.imports.length === 1 ? "" : "s"}, all provided by the node.</p>
+                  <>
+                    <button type="button" className="button ide-primary" disabled={!wasm || !signerKey || busy} onClick={() => setConfirming(true)}>
+                      Deploy to {networkName}…
+                    </button>
+                    <div className="ide-at">
+                      <input className="mono" aria-label="Existing contract address" placeholder="At address (40 hex)" value={atAddress} onChange={(e) => setAtAddress(e.target.value)} />
+                      <button type="button" className="button ghost small" disabled={!wasm || !/^[0-9a-fA-F]{40}$/.test(atAddress.trim())} onClick={addAtAddress}>
+                        Add
+                      </button>
+                    </div>
+                  </>
                 )}
-              </>
-            ) : (
-              <p className={wasmError ? "ide-error" : "muted"}>{wasmError || "Loading…"}</p>
-            )}
-            <label className="ide-upload">
-              <input type="file" accept=".wasm,application/wasm" onChange={(e) => void onUpload(e.target.files?.[0])} />
-              Load your .wasm…
-            </label>
 
-            {env === "local" ? (
-              <button type="button" className="button ide-primary" disabled={!wasm || chainState !== "ready"} onClick={deployLocal}>
-                Deploy to local chain
+                <section className="ide-section">
+                  <h3 className="ide-h">
+                    Deployed contracts {visibleDeployed.length ? <span className="ide-count">{visibleDeployed.length}</span> : null}
+                  </h3>
+                  {visibleDeployed.length === 0 ? (
+                    <p className="muted small">Deployed contracts appear here with a form for each method.</p>
+                  ) : (
+                    visibleDeployed.map((d) => (
+                      <DeployedCard
+                        key={`${d.env}-${d.address}`}
+                        d={d}
+                        placeholders={placeholders}
+                        canRun={env === "local" ? chainState === "ready" && !!account : !!signerKey && !busy}
+                        onRun={(m, args, read, sym, amt) => (env === "local" ? callLocal(d, m, args, read, sym, amt) : void callNetwork(d, m, args, read, sym, amt))}
+                        onRemove={() => setDeployed((prev) => prev.filter((x) => x !== d))}
+                      />
+                    ))
+                  )}
+                </section>
+              </>
+            )}
+
+            {panel === "chain" && (
+              <ChainPanel snap={snap} accounts={accounts} account={account} labelOf={labelOf} template={template} onDemoNft={setupDemoNft} tool={tool} onReset={() => void resetChain()} />
+            )}
+          </div>
+        </aside>
+      )}
+
+      {/* ── Editor area ── */}
+      <section className="ide-main" aria-label="Editor">
+        <div className="ide-toolbar">
+          <button type="button" className="ide-run-btn" disabled={!wasm || (env === "local" && chainState !== "ready")} onClick={deployFromToolbar} title={wasm ? `Deploy ${wasm.name} to ${envLabel}` : undefined}>
+            <Icon name="play" /> Deploy <span className="ide-run-env">· {env === "local" ? "Local" : networkName}</span>
+          </button>
+          <button type="button" className="ide-icon-btn" aria-label="Smaller text" title="Smaller text" disabled={fontSize <= 10} onClick={() => setFontSize(fontSize - 1)}>
+            <Icon name="zoomOut" />
+          </button>
+          <button type="button" className="ide-icon-btn" aria-label="Larger text" title="Larger text" disabled={fontSize >= 20} onClick={() => setFontSize(fontSize + 1)}>
+            <Icon name="zoomIn" />
+          </button>
+          <div className="ide-tabs" role="tablist" aria-label="Open files">
+            <div className={`ide-tab${activeTab === HOME ? " on" : ""}`}>
+              <button type="button" role="tab" aria-selected={activeTab === HOME} onClick={() => setActiveTab(HOME)}>
+                <img src="/xrge-logo.webp" alt="" /> Home
               </button>
-            ) : confirming ? (
-              <div className={`ide-confirm${wallet.network === "mainnet" ? " mainnet" : ""}`} role="alertdialog" aria-label="Confirm deployment">
-                <p>
-                  Deploy <span className="mono">{wasm?.name}</span> to <strong>{networkName}</strong> for {CONTRACT_DEPLOY_FEE_XRGE} XRGE?
-                  {wallet.network === "mainnet" ? " Contracts can't be changed or removed after deployment." : ""}
-                </p>
-                <div className="ide-row">
-                  <button type="button" className="button ide-primary" disabled={busy} onClick={() => void deployNetwork()}>
-                    Deploy for {CONTRACT_DEPLOY_FEE_XRGE} XRGE
-                  </button>
-                  <button type="button" className="button ghost" onClick={() => setConfirming(false)}>
-                    Cancel
-                  </button>
-                </div>
+            </div>
+            {tabs.map((p) => (
+              <div key={p} className={`ide-tab${activeTab === p ? " on" : ""}`}>
+                <button type="button" role="tab" aria-selected={activeTab === p} onClick={() => setActiveTab(p)}>
+                  <FileGlyph path={p} /> {p.split("/").pop()}
+                  {isEdited(p) ? <span className="ide-dot" aria-label="edited" /> : null}
+                </button>
+                <button type="button" className="ide-tab-x" aria-label={`Close ${p}`} onClick={() => closeTab(p)}>
+                  <Icon name="x" />
+                </button>
               </div>
-            ) : (
-              <>
-                <button type="button" className="button ide-primary" disabled={!wasm || !signerKey || busy} onClick={() => setConfirming(true)}>
-                  Deploy to {networkName}…
-                </button>
-                <div className="ide-at">
-                  <input
-                    className="mono"
-                    aria-label="Existing contract address"
-                    placeholder="Or use at address (40 hex)"
-                    value={atAddress}
-                    onChange={(e) => setAtAddress(e.target.value)}
-                  />
-                  <button type="button" className="button ghost small" disabled={!wasm || !/^[0-9a-fA-F]{40}$/.test(atAddress.trim())} onClick={addAtAddress}>
-                    Add
-                  </button>
-                </div>
-              </>
-            )}
+            ))}
           </div>
-
-          {visibleDeployed.length === 0 ? (
-            <p className="ide-empty muted">Deployed contracts appear here with a form for each method.</p>
-          ) : (
-            visibleDeployed.map((d) => (
-              <DeployedCard
-                key={`${d.env}-${d.address}`}
-                d={d}
-                placeholders={placeholders}
-                canRun={env === "local" ? chainState === "ready" && !!account : !!signerKey && !busy}
-                onRun={(m, args, read, sym, amt) => (env === "local" ? callLocal(d, m, args, read, sym, amt) : void callNetwork(d, m, args, read, sym, amt))}
-                onRemove={() => setDeployed((prev) => prev.filter((x) => x !== d))}
-              />
-            ))
-          )}
-        </section>
-
-        {/* ── Console / local chain ── */}
-        <section className="ide-bottom" aria-label="Output">
-          <div className="ide-tabs" role="tablist" aria-label="Output">
-            <button type="button" role="tab" aria-selected={bottomTab === "console"} className={bottomTab === "console" ? "on" : undefined} onClick={() => setBottomTab("console")}>
-              Console {log.length ? <span className="ide-count">{log.length}</span> : null}
-            </button>
-            <button type="button" role="tab" aria-selected={bottomTab === "chain"} className={bottomTab === "chain" ? "on" : undefined} onClick={() => setBottomTab("chain")}>
-              Local chain {snap ? <span className="ide-count">#{snap.height}</span> : null}
-            </button>
-            <span className="ide-tabs-fill" />
-            {bottomTab === "console" ? (
-              log.length > 0 && (
-                <button type="button" className="ide-link" onClick={() => setLog([])}>
-                  Clear
+          {activeTab !== HOME && (
+            <div className="ide-file-actions">
+              {edited && (
+                <button type="button" className="ide-link" onClick={resetFile}>
+                  Revert
                 </button>
-              )
-            ) : (
-              <button type="button" className="ide-link" onClick={() => void resetChain()}>
-                Reset chain
+              )}
+              <button type="button" className="ide-link" onClick={downloadFile}>
+                Download
               </button>
-            )}
-          </div>
-          <div className="ide-bottom-body">
-            {bottomTab === "console" ? (
+            </div>
+          )}
+        </div>
+
+        <div className="ide-content">
+          {activeTab === HOME ? (
+            <Home
+              current={templateId}
+              onPick={(id) => {
+                pickTemplate(id);
+                setPanel("files");
+              }}
+              upload={uploadLabel}
+            />
+          ) : (
+            <Editor docKey={fileKey} value={content} language={file.path.endsWith(".rs") ? "rust" : "text"} onChange={onEdit} label={`${template.name} — ${file.path}`} />
+          )}
+        </div>
+
+        {showTerminal && (
+          <section className="ide-terminal" aria-label="Terminal">
+            <div className="ide-terminal-bar">
+              <span className="ide-terminal-title">
+                <Icon name="terminal" /> Console {log.length ? <span className="ide-count">{log.length}</span> : null}
+              </span>
+              <span className="ide-terminal-meta mono">
+                {envLabel}
+                {env === "local" && snap ? ` · block ${snap.height}` : ""}
+              </span>
+              <span className="ide-tabs-fill" />
+              {log.length > 0 && (
+                <button type="button" className="ide-icon-btn" aria-label="Clear console" title="Clear console" onClick={() => setLog([])}>
+                  <Icon name="trash" />
+                </button>
+              )}
+              <button type="button" className="ide-icon-btn" aria-label="Hide terminal" title="Hide terminal" onClick={() => setShowTerminal(false)}>
+                <Icon name="chevronDown" />
+              </button>
+            </div>
+            <div className="ide-terminal-body">
               <Console log={log} />
-            ) : (
-              <ChainPanel
-                snap={snap}
-                accounts={accounts}
-                account={account}
-                labelOf={labelOf}
-                template={template}
-                onDemoNft={setupDemoNft}
-                tool={tool}
-              />
-            )}
-          </div>
-        </section>
-      </div>
+            </div>
+          </section>
+        )}
+      </section>
+
+      {/* ── Status bar ── */}
+      <footer className="ide-status">
+        <span className={`ide-status-env ${env}`}>
+          <i />
+          {env === "local" ? (chainState === "ready" ? `Local test chain · block ${snap?.height ?? 0}` : chainState === "loading" ? "Starting local chain…" : "Local chain failed") : `${networkName} · ${signerKey ? "wallet connected" : "no wallet"}`}
+        </span>
+        {env === "local" && account ? (
+          <span>
+            {account.label} · {myBalance !== null ? `${formatXrge(myBalance)} XRGE` : ""}
+          </span>
+        ) : null}
+        <span className="ide-tabs-fill" />
+        <span className="ide-status-quiet">RougeChain VM · ML-DSA-65</span>
+      </footer>
     </main>
   );
 }
+
+type Panel = "files" | "build" | "deploy" | "chain";
+const HOME = "__home__";
+
+const RAIL: { id: Panel; title: string; short: string; icon: IconName }[] = [
+  { id: "files", title: "File explorer", short: "Files", icon: "files" },
+  { id: "build", title: "Build", short: "Build", icon: "build" },
+  { id: "deploy", title: "Deploy & run", short: "Deploy", icon: "deploy" },
+  { id: "chain", title: "Local chain", short: "Chain", icon: "chain" },
+];
+
+/** Workspace paths → one level of folders (templates are flat: src/*.rs, Cargo.toml, README.md). */
+function buildTree(paths: string[]): { name: string; children?: string[] }[] {
+  const out: { name: string; children?: string[] }[] = [];
+  for (const p of paths) {
+    const i = p.indexOf("/");
+    if (i < 0) {
+      out.push({ name: p });
+      continue;
+    }
+    const dir = p.slice(0, i);
+    const node = out.find((n) => n.name === dir && n.children);
+    if (node) node.children!.push(p);
+    else out.push({ name: dir, children: [p] });
+  }
+  return out.sort((a, b) => Number(!a.children) - Number(!b.children));
+}
+
+function FileRow({ path, depth, active, edited, onOpen }: { path: string; depth: number; active: boolean; edited: boolean; onOpen: () => void }) {
+  return (
+    <li role="treeitem" aria-selected={active}>
+      <button type="button" className={`ide-tree-row depth${depth}${active ? " on" : ""}`} onClick={onOpen}>
+        <FileGlyph path={path} /> {path.split("/").pop()}
+        {edited ? <span className="ide-dot" aria-label="edited" /> : null}
+      </button>
+    </li>
+  );
+}
+
+function FileGlyph({ path }: { path: string }) {
+  const ext = path.split(".").pop() ?? "";
+  const kind = ext === "rs" ? "rs" : ext === "toml" ? "toml" : ext === "wasm" ? "wasm" : ext === "md" ? "md" : "txt";
+  return <span className={`ide-glyph ${kind}`} aria-hidden="true">{kind === "rs" ? "rs" : kind === "toml" ? "{}" : kind === "wasm" ? "wa" : kind === "md" ? "M↓" : "·"}</span>;
+}
+
+function Home({ current, onPick, upload }: { current: string; onPick: (id: string) => void; upload: ReactNode }) {
+  return (
+    <div className="ide-home">
+      <div className="ide-home-brand">
+        <img src="/xrge-logo.webp" alt="" />
+        <div>
+          <p className="ide-home-name">RougeChain IDE</p>
+          <p className="ide-home-tag">
+            Write. Test. <span>Deploy.</span>
+          </p>
+        </div>
+      </div>
+
+      <h2 className="ide-h">Start from a template</h2>
+      <div className="ide-home-list">
+        {TEMPLATES.map((t) => (
+          <button key={t.id} type="button" className={`ide-home-card${t.id === current ? " current" : ""}`} onClick={() => onPick(t.id)}>
+            <span className="ide-home-icon">
+              <Icon name={t.id === current ? "check" : "play"} />
+            </span>
+            <span>
+              <strong>{t.name}</strong>
+              <span>{t.summary}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <h2 className="ide-h">Open</h2>
+      <div className="ide-home-grid">
+        {upload}
+        <a className="ide-home-tile" href={`${SOURCE_URL}/tree/main/contracts`} target="_blank" rel="noopener noreferrer">
+          <Icon name="github" /> Contracts on GitHub
+        </a>
+      </div>
+
+      <h2 className="ide-h">Learn</h2>
+      <div className="ide-home-grid">
+        <a className="ide-home-tile" href={`${DOCS_URL}advanced/ide.html`} target="_blank" rel="noopener noreferrer">
+          <Icon name="book" /> Using the IDE
+        </a>
+        <a className="ide-home-tile" href={`${DOCS_URL}advanced/smart-contracts.html`} target="_blank" rel="noopener noreferrer">
+          <Icon name="book" /> Smart contracts guide
+        </a>
+      </div>
+    </div>
+  );
+}
+
+type IconName =
+  | "files" | "build" | "deploy" | "chain" | "book" | "plus" | "folder" | "chevron" | "chevronDown" | "play" | "check"
+  | "zoomIn" | "zoomOut" | "x" | "trash" | "terminal" | "globe" | "layoutSide" | "layoutBottom" | "github";
+
+const ICONS: Record<IconName, ReactNode> = {
+  files: (
+    <>
+      <path d="M15 3H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7z" />
+      <path d="M15 3v4h4M3 8v11a2 2 0 0 0 2 2h9" />
+    </>
+  ),
+  build: <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.5 17.5l3 3 5.8-5.8a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.6-.4-.4-2.6z" />,
+  deploy: (
+    <>
+      <path d="M12 3l8 9-8 9-8-9z" />
+      <path d="M12 8v8M9 13l3 3 3-3" />
+    </>
+  ),
+  chain: (
+    <>
+      <path d="M12 2.5l8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5z" />
+      <path d="M12 21.5V12M20.5 7.25L12 12 3.5 7.25" />
+    </>
+  ),
+  book: (
+    <>
+      <path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v13a2 2 0 0 0-2-2H4z" />
+      <path d="M20 4.5h-5.5A2.5 2.5 0 0 0 12 7v13a2 2 0 0 1 2-2h6z" />
+    </>
+  ),
+  plus: <path d="M12 5v14M5 12h14" />,
+  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  chevron: <path d="M7 10l5 5 5-5" />,
+  chevronDown: <path d="M7 10l5 5 5-5" />,
+  play: <path d="M8 5.5v13l10-6.5z" fill="currentColor" />,
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  zoomIn: (
+    <>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4.5 4.5M8 11h6M11 8v6" />
+    </>
+  ),
+  zoomOut: (
+    <>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4.5 4.5M8 11h6" />
+    </>
+  ),
+  x: <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />,
+  trash: <path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13" />,
+  terminal: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2" />
+      <path d="M7 9.5l3 2.5-3 2.5M12.5 15H17" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17M12 3.5c2.5 2.4 3.5 5.2 3.5 8.5s-1 6.1-3.5 8.5c-2.5-2.4-3.5-5.2-3.5-8.5s1-6.1 3.5-8.5z" />
+    </>
+  ),
+  layoutSide: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2" />
+      <path d="M9 4.5v15" />
+    </>
+  ),
+  layoutBottom: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2" />
+      <path d="M3 14.5h18" />
+    </>
+  ),
+  github: (
+    <path d="M9 19c-4.5 1.4-4.5-2.5-6.5-3m13 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C7 2.8 5.9 3.1 5.9 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4.5 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21" />
+  ),
+};
+
+function Icon({ name }: { name: IconName }) {
+  return (
+    <svg className="ide-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {ICONS[name]}
+    </svg>
+  );
+}
+
 
 function DeployedCard({ d, placeholders, canRun, onRun, onRemove }: {
   d: Deployed;
@@ -812,7 +1198,7 @@ function Console({ log }: { log: LogEntry[] }) {
   );
 }
 
-function ChainPanel({ snap, accounts, account, labelOf, template, onDemoNft, tool }: {
+function ChainPanel({ snap, accounts, account, labelOf, template, onDemoNft, tool, onReset }: {
   snap: Snapshot | null;
   accounts: LocalAccount[];
   account?: LocalAccount;
@@ -820,6 +1206,7 @@ function ChainPanel({ snap, accounts, account, labelOf, template, onDemoNft, too
   template: Template;
   onDemoNft: () => void;
   tool: (title: string, run: (chain: LocalChain) => string | void) => void;
+  onReset: () => void;
 }) {
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("10");
@@ -840,6 +1227,9 @@ function ChainPanel({ snap, accounts, account, labelOf, template, onDemoNft, too
         <p className="muted">
           Block {snap.height} · {new Date(snap.time * 1000).toLocaleString()} · acting as <strong>{account?.label}</strong>. No fees, nothing leaves your browser.
         </p>
+        <button type="button" className="button ghost small ide-reset" onClick={onReset}>
+          Reset chain
+        </button>
         <div className="ide-row wrap">
           <span className="ide-tool-label">Clock</span>
           {[

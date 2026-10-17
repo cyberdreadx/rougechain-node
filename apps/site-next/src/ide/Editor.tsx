@@ -19,7 +19,7 @@ const highlight = HighlightStyle.define([
 
 const theme = EditorView.theme(
   {
-    "&": { height: "100%", backgroundColor: "transparent", color: "var(--ink)", fontSize: "13px" },
+    "&": { height: "100%", backgroundColor: "transparent", color: "var(--ink)" },
     ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.6" },
     ".cm-content": { caretColor: "var(--ink)", padding: "12px 0" },
     ".cm-gutters": { backgroundColor: "transparent", color: "color-mix(in srgb, var(--muted) 60%, transparent)", border: "none" },
