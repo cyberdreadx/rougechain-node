@@ -250,8 +250,8 @@ export const apps: EcosystemApp[] = [
   },
   {
     id: "ide",
-    kind: "developer-resource",
-    name: "Contract IDE",
+    kind: "app",
+    name: "Playground",
     group: "Build",
     description: "Write, test and deploy WASM contracts in the browser.",
     proposedHost: "rougechain.io/ide",
