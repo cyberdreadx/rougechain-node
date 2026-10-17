@@ -21,6 +21,21 @@ import { useRouteSeo } from "../pages/common";
 import { DOCS_URL, SOURCE_URL } from "../ecosystem/apps";
 import { analyzeWasm, type WasmAnalysis } from "./analyze";
 import { Editor } from "./Editor";
+import { Explorer, FileGlyph } from "./Explorer";
+import { Icon, type IconName } from "./icons";
+import {
+  addFile,
+  addFolder,
+  deletePath,
+  fromTemplate,
+  loadWorkspaces,
+  mainFile,
+  removeIn,
+  renameIn,
+  renamePath,
+  saveWorkspaces,
+  type Workspace,
+} from "./workspace";
 import { TEMPLATES, fillPlaceholders, templateById, type MethodHint, type Template } from "./templates";
 import { formatXrge, newLocalChain, parseXrge, type LocalChain } from "./vm";
 import "./ide.css";
@@ -73,23 +88,6 @@ interface LoadedWasm {
 
 const ACCOUNT_NAMES = ["Alice", "Bob", "Carol"];
 const START_BALANCE = (10_000n * 1_000_000_000n).toString();
-const STORAGE_KEY = "rougechain-ide-edits-v1";
-
-function readEdits(): Record<string, string> {
-  try {
-    return JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-function writeEdits(edits: Record<string, string>) {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(edits));
-  } catch {
-    /* storage unavailable: edits live for this visit only */
-  }
-}
 
 function short(s: string, head = 10, tail = 6): string {
   return s.length > head + tail + 1 ? `${s.slice(0, head)}…${s.slice(-tail)}` : s;
@@ -120,18 +118,37 @@ export default function IdePage() {
   // ── Source ─────────────────────────────────────────────────────────────────────────────────
   const [templateId, setTemplateId] = useState(TEMPLATES[0].id);
   const template = templateById(templateId) ?? TEMPLATES[0];
-  const [tabs, setTabs] = useState<string[]>([template.files[0].path]);
+  const [workspaces, setWorkspaces] = useState<Record<string, Workspace>>(loadWorkspaces);
+  const ws = workspaces[template.id] ?? fromTemplate(template);
+  const [tabs, setTabs] = useState<string[]>(() => [mainFile(ws) ?? ""].filter(Boolean));
   const [activeTab, setActiveTab] = useState<string>(HOME);
-  const filePath = activeTab === HOME ? template.files[0].path : activeTab;
-  const [edits, setEdits] = useState<Record<string, string>>(readEdits);
-  const fileKey = `${template.id}/${filePath}`;
-  const file = template.files.find((f) => f.path === filePath) ?? template.files[0];
-  const content = edits[fileKey] ?? file.content;
-  const edited = edits[fileKey] !== undefined && edits[fileKey] !== file.content;
+  const filePath = activeTab !== HOME && activeTab in ws.files ? activeTab : null;
+  const fileKey = `${template.id}/${filePath ?? ""}`;
+  const content = filePath ? ws.files[filePath] : "";
+  const original = (path: string) => template.files.find((f) => f.path === path)?.content;
   const isEdited = (path: string) => {
-    const v = edits[`${template.id}/${path}`];
-    return v !== undefined && v !== template.files.find((f) => f.path === path)?.content;
+    const o = original(path);
+    return o !== undefined && ws.files[path] !== undefined && ws.files[path] !== o;
   };
+  const edited = filePath ? isEdited(filePath) : false;
+  const untouched =
+    Object.keys(ws.files).length === template.files.length && ws.folders.length === 0 && template.files.every((f) => ws.files[f.path] === f.content);
+
+  const templateIdRef = useRef(template.id);
+  templateIdRef.current = template.id;
+  /** Change the current workspace and save it in this browser. */
+  const updateWs = useCallback(
+    (fn: (w: Workspace) => Workspace) => {
+      setWorkspaces((all) => {
+        const id = templateIdRef.current;
+        const t = templateById(id) ?? TEMPLATES[0];
+        const next = { ...all, [id]: fn(all[id] ?? fromTemplate(t)) };
+        saveWorkspaces(next);
+        return next;
+      });
+    },
+    [],
+  );
 
   function openFile(path: string) {
     setTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
@@ -140,31 +157,59 @@ export default function IdePage() {
 
   const onEdit = useCallback(
     (v: string) => {
-      setEdits((prev) => {
-        const next = { ...prev, [fileKey]: v };
-        writeEdits(next);
-        return next;
-      });
+      if (filePath) updateWs((w) => ({ ...w, files: { ...w.files, [filePath]: v } }));
     },
-    [fileKey],
+    [filePath, updateWs],
   );
 
   function resetFile() {
-    setEdits((prev) => {
-      const next = { ...prev };
-      delete next[fileKey];
-      writeEdits(next);
+    const o = filePath ? original(filePath) : undefined;
+    if (filePath && o !== undefined) updateWs((w) => ({ ...w, files: { ...w.files, [filePath]: o } }));
+    setEditorRev((r) => r + 1);
+  }
+
+  // Bumped when a file's text changes outside the editor (revert, reset), so the editor reloads it.
+  const [editorRev, setEditorRev] = useState(0);
+
+  function download(path: string) {
+    const blob = new Blob([ws.files[path] ?? ""], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = path.split("/").pop() ?? "file.txt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function createItem(path: string, folder: boolean, text = "") {
+    updateWs((w) => (folder ? addFolder(w, path) : addFile(w, path, text)));
+    if (!folder) openFile(path);
+  }
+
+  function renameItem(from: string, to: string) {
+    updateWs((w) => renamePath(w, from, to));
+    setTabs((prev) => renameIn(prev, from, to));
+    setActiveTab((a) => (a === HOME ? a : renameIn([a], from, to)[0]));
+  }
+
+  function deleteItem(path: string) {
+    updateWs((w) => deletePath(w, path));
+    setTabs((prev) => {
+      const next = removeIn(prev, path);
+      setActiveTab((a) => (a === HOME || next.includes(a) ? a : next[next.length - 1] ?? HOME));
       return next;
     });
   }
 
-  function downloadFile() {
-    const blob = new Blob([content], { type: "text/plain" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = file.path.split("/").pop() ?? "lib.rs";
-    a.click();
-    URL.revokeObjectURL(a.href);
+  function resetWorkspace() {
+    setWorkspaces((all) => {
+      const next = { ...all, [template.id]: fromTemplate({ ...template, id: "" }) };
+      saveWorkspaces(next);
+      return next;
+    });
+    const first = mainFile(fromTemplate({ ...template, id: "" }));
+    setTabs(first ? [first] : []);
+    setActiveTab(first ?? HOME);
+    setEditorRev((r) => r + 1);
   }
 
   // ── Log ────────────────────────────────────────────────────────────────────────────────────
@@ -263,8 +308,9 @@ export default function IdePage() {
     const t = templateById(id);
     if (!t) return;
     setTemplateId(id);
-    setTabs([t.files[0].path]);
-    setActiveTab(t.files[0].path);
+    const first = mainFile(workspaces[id] ?? fromTemplate(t));
+    setTabs(first ? [first] : []);
+    setActiveTab(first ?? HOME);
   }
 
   async function onUpload(f: File | undefined) {
@@ -489,7 +535,6 @@ export default function IdePage() {
 
   const envLabel = env === "local" ? "Local test chain" : networkName;
   const workspace = template.dir.split("/").pop() ?? template.id;
-  const tree = buildTree(template.files.map((f) => f.path));
 
   const uploadLabel = (
     <label className="ide-create">
@@ -564,38 +609,23 @@ export default function IdePage() {
             {panel === "files" && (
               <>
                 {uploadLabel}
-                <ul className="ide-tree" role="tree" aria-label="Workspace files">
-                  <li role="treeitem" aria-expanded="true">
-                    <span className="ide-tree-row folder">
-                      <Icon name="chevron" /> <Icon name="folder" /> {workspace}
-                    </span>
-                    <ul role="group">
-                      {tree.map((node) =>
-                        node.children ? (
-                          <li key={node.name} role="treeitem" aria-expanded="true">
-                            <span className="ide-tree-row folder depth1">
-                              <Icon name="chevron" /> <Icon name="folder" /> {node.name}
-                            </span>
-                            <ul role="group">
-                              {node.children.map((p) => (
-                                <FileRow key={p} path={p} depth={2} active={activeTab === p} edited={isEdited(p)} onOpen={() => openFile(p)} />
-                              ))}
-                            </ul>
-                          </li>
-                        ) : (
-                          <FileRow key={node.name} path={node.name} depth={1} active={activeTab === node.name} edited={isEdited(node.name)} onOpen={() => openFile(node.name)} />
-                        ),
-                      )}
-                      <li role="treeitem" aria-selected={false}>
-                        <button type="button" className="ide-tree-row depth1" onClick={() => setPanel("build")} title="Prebuilt release build — open Build">
-                          <FileGlyph path={template.artifact} /> <span className="ide-tree-name">{template.artifact}</span>
-                          <span className="ide-chip">prebuilt</span>
-                        </button>
-                      </li>
-                    </ul>
-                  </li>
-                </ul>
-                <p className="ide-panel-note">Edits stay in this browser. Build them with cargo (Build tab) and load the .wasm to run your changes.</p>
+                <Explorer
+                  ws={ws}
+                  name={workspace}
+                  active={filePath}
+                  isEdited={isEdited}
+                  isTemplateWorkspace={untouched}
+                  artifact={template.artifact}
+                  onOpen={openFile}
+                  onCreate={createItem}
+                  onRename={renameItem}
+                  onDelete={deleteItem}
+                  onDownload={download}
+                  onReset={resetWorkspace}
+                  onArtifact={() => setPanel("build")}
+                  onError={(message) => addLog({ env: "local", title: "Files", ok: false, lines: [{ label: "error", value: message }] })}
+                />
+                <p className="ide-panel-note">Right-click (or …) for more. Files stay in this browser. Build with cargo (Build tab) and load the .wasm to run your changes.</p>
               </>
             )}
 
@@ -806,14 +836,14 @@ cargo build --release --target wasm32-unknown-unknown`}</code>
               </div>
             ))}
           </div>
-          {activeTab !== HOME && (
+          {filePath && (
             <div className="ide-file-actions">
               {edited && (
                 <button type="button" className="ide-link" onClick={resetFile}>
                   Revert
                 </button>
               )}
-              <button type="button" className="ide-link" onClick={downloadFile}>
+              <button type="button" className="ide-link" onClick={() => download(filePath)}>
                 Download
               </button>
             </div>
@@ -831,7 +861,11 @@ cargo build --release --target wasm32-unknown-unknown`}</code>
               upload={uploadLabel}
             />
           ) : (
-            <Editor docKey={fileKey} value={content} language={file.path.endsWith(".rs") ? "rust" : "text"} onChange={onEdit} label={`${template.name} — ${file.path}`} />
+            filePath ? (
+              <Editor key={editorRev} docKey={fileKey} value={content} language={filePath.endsWith(".rs") ? "rust" : "text"} onChange={onEdit} label={`${template.name} — ${filePath}`} />
+            ) : (
+              <p className="ide-empty muted">Open a file from the explorer.</p>
+            )
           )}
         </div>
 
@@ -890,40 +924,6 @@ const RAIL: { id: Panel; title: string; short: string; icon: IconName }[] = [
   { id: "chain", title: "Local chain", short: "Chain", icon: "chain" },
 ];
 
-/** Workspace paths → one level of folders (templates are flat: src/*.rs, Cargo.toml, README.md). */
-function buildTree(paths: string[]): { name: string; children?: string[] }[] {
-  const out: { name: string; children?: string[] }[] = [];
-  for (const p of paths) {
-    const i = p.indexOf("/");
-    if (i < 0) {
-      out.push({ name: p });
-      continue;
-    }
-    const dir = p.slice(0, i);
-    const node = out.find((n) => n.name === dir && n.children);
-    if (node) node.children!.push(p);
-    else out.push({ name: dir, children: [p] });
-  }
-  return out.sort((a, b) => Number(!a.children) - Number(!b.children));
-}
-
-function FileRow({ path, depth, active, edited, onOpen }: { path: string; depth: number; active: boolean; edited: boolean; onOpen: () => void }) {
-  return (
-    <li role="treeitem" aria-selected={active}>
-      <button type="button" className={`ide-tree-row depth${depth}${active ? " on" : ""}`} onClick={onOpen}>
-        <FileGlyph path={path} /> {path.split("/").pop()}
-        {edited ? <span className="ide-dot" aria-label="edited" /> : null}
-      </button>
-    </li>
-  );
-}
-
-function FileGlyph({ path }: { path: string }) {
-  const ext = path.split(".").pop() ?? "";
-  const kind = ext === "rs" ? "rs" : ext === "toml" ? "toml" : ext === "wasm" ? "wasm" : ext === "md" ? "md" : "txt";
-  return <span className={`ide-glyph ${kind}`} aria-hidden="true">{kind === "rs" ? "rs" : kind === "toml" ? "{}" : kind === "wasm" ? "wa" : kind === "md" ? "M↓" : "·"}</span>;
-}
-
 function Home({ current, onPick, upload }: { current: string; onPick: (id: string) => void; upload: ReactNode }) {
   return (
     <div className="ide-home">
@@ -973,92 +973,6 @@ function Home({ current, onPick, upload }: { current: string; onPick: (id: strin
   );
 }
 
-type IconName =
-  | "files" | "build" | "deploy" | "chain" | "book" | "plus" | "folder" | "chevron" | "chevronDown" | "play" | "check"
-  | "zoomIn" | "zoomOut" | "x" | "trash" | "terminal" | "globe" | "layoutSide" | "layoutBottom" | "github";
-
-const ICONS: Record<IconName, ReactNode> = {
-  files: (
-    <>
-      <path d="M15 3H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7z" />
-      <path d="M15 3v4h4M3 8v11a2 2 0 0 0 2 2h9" />
-    </>
-  ),
-  build: <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.5 17.5l3 3 5.8-5.8a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.6-.4-.4-2.6z" />,
-  deploy: (
-    <>
-      <path d="M12 3l8 9-8 9-8-9z" />
-      <path d="M12 8v8M9 13l3 3 3-3" />
-    </>
-  ),
-  chain: (
-    <>
-      <path d="M12 2.5l8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5z" />
-      <path d="M12 21.5V12M20.5 7.25L12 12 3.5 7.25" />
-    </>
-  ),
-  book: (
-    <>
-      <path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v13a2 2 0 0 0-2-2H4z" />
-      <path d="M20 4.5h-5.5A2.5 2.5 0 0 0 12 7v13a2 2 0 0 1 2-2h6z" />
-    </>
-  ),
-  plus: <path d="M12 5v14M5 12h14" />,
-  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
-  chevron: <path d="M7 10l5 5 5-5" />,
-  chevronDown: <path d="M7 10l5 5 5-5" />,
-  play: <path d="M8 5.5v13l10-6.5z" fill="currentColor" />,
-  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
-  zoomIn: (
-    <>
-      <circle cx="11" cy="11" r="6.5" />
-      <path d="M16 16l4.5 4.5M8 11h6M11 8v6" />
-    </>
-  ),
-  zoomOut: (
-    <>
-      <circle cx="11" cy="11" r="6.5" />
-      <path d="M16 16l4.5 4.5M8 11h6" />
-    </>
-  ),
-  x: <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />,
-  trash: <path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13" />,
-  terminal: (
-    <>
-      <rect x="3" y="4.5" width="18" height="15" rx="2" />
-      <path d="M7 9.5l3 2.5-3 2.5M12.5 15H17" />
-    </>
-  ),
-  globe: (
-    <>
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M3.5 12h17M12 3.5c2.5 2.4 3.5 5.2 3.5 8.5s-1 6.1-3.5 8.5c-2.5-2.4-3.5-5.2-3.5-8.5s1-6.1 3.5-8.5z" />
-    </>
-  ),
-  layoutSide: (
-    <>
-      <rect x="3" y="4.5" width="18" height="15" rx="2" />
-      <path d="M9 4.5v15" />
-    </>
-  ),
-  layoutBottom: (
-    <>
-      <rect x="3" y="4.5" width="18" height="15" rx="2" />
-      <path d="M3 14.5h18" />
-    </>
-  ),
-  github: (
-    <path d="M9 19c-4.5 1.4-4.5-2.5-6.5-3m13 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C7 2.8 5.9 3.1 5.9 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4.5 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21" />
-  ),
-};
-
-function Icon({ name }: { name: IconName }) {
-  return (
-    <svg className="ide-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {ICONS[name]}
-    </svg>
-  );
-}
 
 
 function DeployedCard({ d, placeholders, canRun, onRun, onRemove }: {

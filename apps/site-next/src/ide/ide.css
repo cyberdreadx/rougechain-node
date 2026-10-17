@@ -319,30 +319,55 @@
 }
 
 /* file tree */
+.ide-explorer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ide-explorer-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 -6px;
+}
+.ide-explorer-tools .ide-icon-btn {
+  width: 30px;
+  height: 30px;
+}
 .ide-tree,
 .ide-tree ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
+.ide-tree {
+  margin: 0 -8px;
+  min-height: 120px;
+}
+.ide-tree-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+.ide-tree-item:hover,
+.ide-tree-item.selected {
+  background: var(--ide-hover);
+}
 .ide-tree-row {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 8px;
+  padding: 4px 8px 4px calc(8px + var(--depth, 0) * 16px);
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--ink);
   font-size: 14px;
   text-align: left;
-  cursor: default;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-button.ide-tree-row {
   cursor: pointer;
 }
 button.ide-tree-row:hover {
@@ -351,19 +376,113 @@ button.ide-tree-row:hover {
 .ide-tree-row.on {
   background: color-mix(in srgb, var(--violet) 18%, transparent);
 }
-.ide-tree-row.folder {
-  color: var(--ink);
-}
-.ide-tree-row.folder .ide-icon {
+.ide-tree-row .ide-icon {
   width: 15px;
   height: 15px;
   color: var(--muted);
 }
-.ide-tree-row.depth1 {
-  padding-left: 30px;
+.ide-tree-row.root {
+  font-weight: 500;
 }
-.ide-tree-row.depth2 {
-  padding-left: 52px;
+.ide-tree-row.editing {
+  cursor: default;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.ide-tree-more {
+  position: absolute;
+  right: 4px;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--raised);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+}
+.ide-tree-item:hover .ide-tree-more,
+.ide-tree-item.selected .ide-tree-more,
+.ide-tree-more:focus-visible {
+  opacity: 1;
+}
+.ide-tree-more:hover {
+  color: var(--ink);
+}
+.ide-tree-more .ide-icon {
+  width: 15px;
+  height: 15px;
+}
+@media (hover: none) {
+  .ide-tree-more {
+    opacity: 1;
+    background: transparent;
+  }
+}
+.ide-tree-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--ide-well);
+  color: var(--ink);
+  border: 1px solid var(--violet);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  outline: none;
+}
+
+/* right-click menu */
+.ide-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 200px;
+  padding: 5px;
+  display: grid;
+  background: var(--raised);
+  border: 1px solid var(--ide-line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+}
+.ide-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.ide-menu button .ide-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+.ide-menu button:hover:not(:disabled),
+.ide-menu button:focus-visible {
+  background: color-mix(in srgb, var(--violet) 20%, transparent);
+  outline: none;
+}
+.ide-menu button.danger {
+  color: var(--error);
+}
+.ide-menu button.danger .ide-icon {
+  color: var(--error);
+}
+.ide-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ide-menu kbd {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
 }
 .ide-glyph {
   display: inline-grid;
