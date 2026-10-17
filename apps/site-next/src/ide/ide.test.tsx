@@ -194,7 +194,7 @@ describe("IDE page", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "RougeChain IDE" })).toBeInTheDocument();
     // Opens like Remix: file explorer + Home tab; the template's source is a tab away.
     expect(screen.getByRole("heading", { level: 2, name: "File explorer" })).toBeInTheDocument();
-    await user.click(within(screen.getByRole("tree")).getByRole("button", { name: /lib\.rs/ }));
+    await user.click(within(screen.getByRole("tree")).getByRole("button", { name: "lib.rs" }));
     expect(screen.getByRole("tab", { name: /lib\.rs/, selected: true })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Build" }));
@@ -214,5 +214,47 @@ describe("IDE page", () => {
     const returned = within(entry).getByText("returned").nextElementSibling!;
     expect(JSON.parse(returned.textContent!)).toEqual({ count: 1 });
     expect(within(entry).getByText("event incremented")).toBeInTheDocument();
+  });
+
+  it("creates, renames and deletes files in the explorer", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    renderIde();
+    const tree = await screen.findByRole("tree", { name: "Workspace files" });
+
+    // New file in the selected folder (src, after clicking lib.rs) from the toolbar.
+    await user.click(within(tree).getByRole("button", { name: "lib.rs" }));
+    await user.click(screen.getByRole("button", { name: "New file" }));
+    await user.type(screen.getByRole("textbox", { name: "New file name" }), "util.rs{Enter}");
+    expect(screen.getByRole("tab", { name: /util\.rs/, selected: true })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", { name: "src" })).toContainElement(within(tree).getByRole("button", { name: "util.rs" }));
+
+    // Duplicate names are refused.
+    await user.click(screen.getByRole("button", { name: "New file" }));
+    await user.type(screen.getByRole("textbox", { name: "New file name" }), "lib.rs{Enter}");
+    expect(await screen.findByText("lib.rs already exists here.")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    // Rename from the right-click menu; the open tab follows.
+    await user.pointer({ keys: "[MouseRight]", target: within(tree).getByRole("button", { name: "util.rs" }) });
+    await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
+    const input = screen.getByRole("textbox", { name: "Rename util.rs" });
+    await user.clear(input);
+    await user.type(input, "helpers.rs{Enter}");
+    expect(screen.getByRole("tab", { name: /helpers\.rs/ })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("rougechain-ide-workspaces-v1")!).counter.files["src/helpers.rs"]).toBe("");
+
+    // Collapse a folder, then delete it with the "…" button.
+    await user.click(within(tree).getByRole("button", { name: "src" }));
+    expect(within(tree).queryByRole("button", { name: "lib.rs" })).not.toBeInTheDocument();
+    await user.click(within(tree).getByRole("button", { name: "Actions for src" }));
+    await user.click(screen.getByRole("menuitem", { name: /Delete/ }));
+    expect(within(tree).queryByRole("treeitem", { name: "src" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /helpers\.rs/ })).not.toBeInTheDocument();
+
+    // Reset brings the template back.
+    await user.click(screen.getByRole("button", { name: "Reset workspace" }));
+    await user.click(within(tree).getByRole("button", { name: "src" }));
+    expect(within(tree).getByRole("button", { name: "lib.rs" })).toBeInTheDocument();
   });
 });
