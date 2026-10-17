@@ -192,9 +192,17 @@ describe("IDE page", () => {
     const user = userEvent.setup();
     renderIde();
     expect(await screen.findByRole("heading", { level: 1, name: "RougeChain IDE" })).toBeInTheDocument();
+    // Opens like Remix: file explorer + Home tab; the template's source is a tab away.
+    expect(screen.getByRole("heading", { level: 2, name: "File explorer" })).toBeInTheDocument();
+    await user.click(within(screen.getByRole("tree")).getByRole("button", { name: /lib\.rs/ }));
+    expect(screen.getByRole("tab", { name: /lib\.rs/, selected: true })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Build" }));
+    expect(await screen.findByText(/Uses 7 host functions, all provided by the node\./)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Deploy & run" }));
     const deploy = await screen.findByRole("button", { name: "Deploy to local chain" });
     await waitFor(() => expect(deploy).toBeEnabled());
-    expect(screen.getByText("Uses 7 host functions, all provided by the node.")).toBeInTheDocument();
 
     await user.click(deploy);
     expect(await screen.findByText("Deployed rougechain_counter.wasm")).toBeInTheDocument();
