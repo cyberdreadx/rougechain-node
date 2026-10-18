@@ -67,11 +67,11 @@ export const MAX_REPORT_BYTES = 4 * 1024;
 const STORAGE_KEY = "rougechain-shield-v2-nodes";
 
 /**
- * Whether a configured origin is acceptable in the settings: https (http only for loopback
- * development sets), no path, and not the local-use NAT64 prefix `64:ff9b:1::/48`, which the core
+ * Whether a configured origin is acceptable in the settings: https (http only for a loopback node
+ * in a development build), no path, no IPv6 literal or trailing-dot name, and not the local-use NAT64 prefix `64:ff9b:1::/48`, which the core
  * cannot map to a host (UI_CONTRACT obligation 4: "a client SHOULD refuse it").
  */
-export function originProblem(raw: string): "not_an_origin" | "not_https" | "local_nat64" | null {
+export function originProblem(raw: string, dev = import.meta.env.DEV): "not_an_origin" | "not_https" | "local_nat64" | "ip6_literal" | "trailing_dot" | null {
   let u: URL;
   try {
     u = new URL(raw.trim());
@@ -81,8 +81,13 @@ export function originProblem(raw: string): "not_an_origin" | "not_https" | "loc
   if (u.pathname !== "/" || u.search || u.hash || u.username || u.password) return "not_an_origin";
   const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (/^64:ff9b:1:/.test(host)) return "local_nat64";
+  // The browser and the wallet core spell an IPv6 literal (IPv4-mapped forms) and a trailing-dot
+  // name differently; either would make the site and the core disagree on the configured set.
+  if (u.hostname.startsWith("[") && host !== "::1") return "ip6_literal";
+  if (host.endsWith(".")) return "trailing_dot";
   const loopback = host === "localhost" || host === "::1" || /^127\./.test(host);
-  if (u.protocol === "http:" && !loopback) return "not_https";
+  // plain http only for a loopback node, and only in a development build
+  if (u.protocol === "http:" && !(loopback && dev)) return "not_https";
   if (u.protocol !== "https:" && u.protocol !== "http:") return "not_an_origin";
   return null;
 }
@@ -114,3 +119,12 @@ export function saveNodes(network: NetworkType, nodes: ConfiguredNode[] | null):
 export function usableOrigins(nodes: ConfiguredNode[]): string[] {
   return nodes.flatMap((n) => (n.origin && originProblem(n.origin) === null ? [new URL(n.origin).origin] : []));
 }
+
+/** A whole configured list: no origin twice, and an odd number of nodes (a strict majority is then never a tie). */
+export function listProblem(origins: string[]): "duplicate" | "even" | null {
+  const seen = new Set(origins.map((o) => new URL(o).origin));
+  if (seen.size !== origins.length) return "duplicate";
+  if (origins.length > 0 && origins.length % 2 === 0) return "even";
+  return null;
+}
+

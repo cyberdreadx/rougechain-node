@@ -111,6 +111,8 @@ export interface ShieldViewModel {
   shield: { available: boolean; reason: string | null; pool_total: string | null; pool_cap: string };
   rate: { blocks_per_day: number; days: number } | null;
   events: string[];
+  /** How many nodes this client has left or banned since it started (the round cadence slows after one). */
+  leaves: number;
 }
 
 export type PaymentResult =
@@ -144,7 +146,10 @@ export class ShieldClient {
     return (this.o.now ?? Date.now)();
   }
 
+  private leaves = 0;
+
   private log(e: string): void {
+    if (e.startsWith("left") || e.startsWith("banned")) this.leaves += 1;
     this.events = [e, ...this.events].slice(0, 30);
   }
 
@@ -231,6 +236,14 @@ export class ShieldClient {
     }
     if (ser(want) !== ser(have)) {
       const r = splitStateResult<{ nodes: string[] }>(core(() => this.o.api.set_nodes(this.payload.state, ser(want), s.revision)));
+      if (r.rest.nodes.length < 3 || r.rest.nodes.length !== want.length) {
+        // the core counts fewer distinct nodes than the site does (two spellings of one host):
+        // read-only, the stored set untouched
+        this.nodes = want;
+        this.session = null;
+        this.log("configured nodes: the wallet core counts fewer distinct nodes than listed");
+        return;
+      }
       const keep = this.payload.listed_from && r.rest.nodes.includes(this.payload.listed_from) ? this.payload.listed_from : null;
       if (!(await this.write({ ...this.payload, state: r.state, listed_from: keep, start_node: keep ? null : this.payload.start_node }, r.rest.revision_id))) throw new Error("stale");
       s = this.summary();
@@ -742,6 +755,7 @@ export class ShieldClient {
       shield: { available: !!ctx, reason: !this.session ? "nodes" : ctx ? null : "anchor", pool_total: ctx?.pool_total ?? null, pool_cap: POOL_CAP_QUANTA.toString() },
       rate: rateOf(p?.rate ?? []),
       events: this.events,
+      leaves: this.leaves,
     };
   }
 }

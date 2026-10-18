@@ -165,7 +165,11 @@
       "not_an_origin": "{{origin}} はオリジンではありません（https://host または https://host:port）。",
       "not_https": "{{origin}} は https を使う必要があります。",
       "local_nat64": "{{origin}} はローカル NAT64 アドレスで、独立した公開ノードにはなれません。",
-      "operator": "アドレスの後に {{origin}} の運営者を書いてください。"
+      "operator": "アドレスの後に {{origin}} の運営者を書いてください。",
+      "ip6_literal": "{{origin}} は IPv6 アドレスです。ノードのホスト名を使ってください。",
+      "trailing_dot": "{{origin}} の末尾にドットがあります。ドットなしで入力してください。",
+      "duplicate": "同じノードが2回記載されています。",
+      "even": "ノードは奇数個（3、5…）にしてください。過半数が同数になるのを防ぐためです。"
     }
   }
 }

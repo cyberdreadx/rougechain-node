@@ -33,6 +33,7 @@ export function useShieldSession(o: { mnemonic: string | null; network: string; 
   const host = useRef<ShieldHost | null>(null);
   const busy = useRef(false);
   const timer = useRef<number | null>(null);
+  const leavesSeen = useRef(0);
   const [phase, setPhase] = useState<Phase>("starting");
   const [view, setView] = useState<ShieldViewModel | null>(null);
   const [ident, setIdent] = useState<{ address: string; fingerprint: string } | null>(null);
@@ -74,7 +75,12 @@ export function useShieldSession(o: { mnemonic: string | null; network: string; 
       if (v.nodes.length < 3) return; // read-only: no loop
       if (v.stop?.kind === "pool_inactive") return schedule(INACTIVE_RECHECK_MS, true);
       if (v.stop) return; // no honest listing node / fault: until the user's "try again"
-      schedule(v.events.some((e) => e.startsWith("left") || e.startsWith("banned")) ? SLOW_ROUND_INTERVAL_MS : ROUND_INTERVAL_MS);
+      // Slow down after a round in which a node was left or banned; back to the normal cadence once
+      // a round passes without one (the events list keeps old entries, so use the client's count).
+      const leaves = v.leaves;
+      const slow = leaves > leavesSeen.current;
+      leavesSeen.current = leaves;
+      schedule(slow ? SLOW_ROUND_INTERVAL_MS : ROUND_INTERVAL_MS);
     },
     [schedule],
   );

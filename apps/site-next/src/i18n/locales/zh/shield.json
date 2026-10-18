@@ -165,7 +165,11 @@
       "not_an_origin": "{{origin}} 不是源地址（https://host 或 https://host:port）。",
       "not_https": "{{origin}} 必须使用 https。",
       "local_nat64": "{{origin}} 是本地 NAT64 地址，不能作为独立的公共节点。",
-      "operator": "请在地址后写明谁运行 {{origin}}。"
+      "operator": "请在地址后写明谁运行 {{origin}}。",
+      "ip6_literal": "{{origin}} 是 IPv6 地址；请使用节点的主机名。",
+      "trailing_dot": "{{origin}} 以点结尾；请去掉末尾的点。",
+      "duplicate": "有节点被列出了两次。",
+      "even": "请列出奇数个节点（3、5……），这样多数永远不会打平。"
     }
   }
 }

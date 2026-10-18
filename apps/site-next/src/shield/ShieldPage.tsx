@@ -12,7 +12,7 @@ import { Button, Status } from "@rougechain/ui";
 import { toDataURL } from "qrcode";
 import { useSigner, useWallet } from "../wallet/WalletProvider";
 import { CopyText, UnlockForm } from "../wallet/parts";
-import { DEFAULT_NODES, MIN_NODES, loadNodes, originProblem, saveNodes, shieldV2Enabled, usableOrigins, type ConfiguredNode } from "./config";
+import { DEFAULT_NODES, MIN_NODES, listProblem, loadNodes, originProblem, saveNodes, shieldV2Enabled, usableOrigins, type ConfiguredNode } from "./config";
 import type { PaymentResult, ShieldViewModel } from "./client";
 import { useShieldSession, type ShieldSession } from "./useShield";
 import { fromQuanta, toQuanta } from "./units";
@@ -427,6 +427,8 @@ function NodesPanel({ network, nodes, view, onChange }: { network: string; nodes
               if (!op.length) return setError(t("nodes.problem.operator", { origin }));
               list.push({ origin, operator: op.join(" ") });
             }
+            const lp = listProblem(list.map((n) => n.origin!));
+            if (lp) return setError(t(`nodes.problem.${lp}`));
             setError(null);
             setEditing(false);
             onChange(list);

@@ -168,7 +168,11 @@
       "not_an_origin": "{{origin}} is not an origin (https://host or https://host:port).",
       "not_https": "{{origin}} must use https.",
       "local_nat64": "{{origin}} is a local NAT64 address, which cannot be an independent public node.",
-      "operator": "Name who runs {{origin}} after the address."
+      "operator": "Name who runs {{origin}} after the address.",
+      "ip6_literal": "{{origin}} is an IPv6 address; use the node's host name.",
+      "trailing_dot": "{{origin}} ends with a dot; write the host name without it.",
+      "duplicate": "A node is listed twice.",
+      "even": "List an odd number of nodes (3, 5, …), so that a majority is never a tie."
     }
   }
 }

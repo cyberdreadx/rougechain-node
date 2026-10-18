@@ -51,6 +51,7 @@ function makeView(o: Partial<ShieldViewModel> = {}): ShieldViewModel {
     shield: { available: true, reason: null, pool_total: "9000000000", pool_cap: "1000000000000000" },
     rate: { blocks_per_day: 12, days: 7 },
     events: [],
+    leaves: 0,
     ...o,
   };
 }
