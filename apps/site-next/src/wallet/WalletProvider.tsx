@@ -279,6 +279,12 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     // already exists (it then replaces that vault with the imported wallet).
     stageUnifiedWallet(wallet);
     notifyWalletChanged();
+    // Shielded pool V2 (flag on only): an imported phrase never inherits the "only copy" statement
+    // an earlier create() may have left here (UI_CONTRACT obligation 1).
+    if (import.meta.env.VITE_SHIELD_V2_ENABLED === "true" && wallet.mnemonic) {
+      const phrase = wallet.mnemonic;
+      void import("../shield/host").then((m) => m.forgetStatementForImportedPhrase(phrase)).catch(() => {});
+    }
     setFlow({ mode: "import", step: "password" });
   }, []);
 

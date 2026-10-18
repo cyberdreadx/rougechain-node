@@ -5,6 +5,7 @@ import type { SessionData } from "./loop";
 export type WorkerRequest = { id: number } & (
   | { cmd: "init"; network: string; seed: Uint8Array; origins: string[]; session: SessionData | null }
   | { cmd: "newPhrase"; network: string; seed: Uint8Array }
+  | { cmd: "importedPhrase"; networks: string[]; seed: Uint8Array }
   | { cmd: "round"; recheckPool?: boolean }
   | { cmd: "newSession" }
   | { cmd: "view" }

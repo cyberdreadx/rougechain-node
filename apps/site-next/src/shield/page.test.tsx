@@ -129,11 +129,12 @@ describe("flag", () => {
     expect(fetched.filter((u) => /wasm|shield/.test(u))).toEqual([]);
   });
 
-  it("off: the wallet's create() does not touch the shield code", async () => {
+  it("off: the wallet's create() and import do not touch the shield code", async () => {
     vi.stubEnv("VITE_SHIELD_V2_ENABLED", "");
     const src = readFileSync(path.join(repoRoot(), "apps/site-next/src/wallet/WalletProvider.tsx"), "utf8");
-    // the only reference is a dynamic import inside the build-time flag test
-    expect(src.match(/import\("\.\.\/shield\/host"\)/g)).toHaveLength(1);
+    // the only references are dynamic imports inside the build-time flag tests (create, import)
+    expect(src.match(/import\("\.\.\/shield\/host"\)/g)).toHaveLength(2);
+    expect(src).toMatch(/if \(import\.meta\.env\.VITE_SHIELD_V2_ENABLED === "true" && wallet\.mnemonic\) \{\s+const phrase = wallet\.mnemonic;\s+void import\("\.\.\/shield\/host"\)/);
     expect(src).toMatch(/if \(import\.meta\.env\.VITE_SHIELD_V2_ENABLED === "true"\) \{\s+const network = getActiveNetwork\(\);\s+void import\("\.\.\/shield\/host"\)/);
   });
 });

@@ -88,3 +88,19 @@ export async function makeStateForNewlyGeneratedPhrase(mnemonic: string, network
     host.terminate();
   }
 }
+
+/**
+ * "Import / restore a phrase": a state an earlier "create new phrase" left on this installation
+ * loses its sole-copy statement if it was never confirmed (see dropUnconfirmedGeneratedState).
+ * Called only by the wallet's import paths.
+ */
+export async function forgetStatementForImportedPhrase(mnemonic: string, factory: WorkerFactory = defaultWorkerFactory): Promise<void> {
+  const host = new ShieldHost(factory);
+  try {
+    const seed = await bip39Seed(mnemonic);
+    await host.ask({ cmd: "importedPhrase", networks: ["mainnet", "testnet"], seed }, [seed.buffer]);
+  } finally {
+    host.terminate();
+  }
+}
+

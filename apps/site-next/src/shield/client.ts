@@ -770,3 +770,27 @@ export async function stateForNewlyGeneratedPhrase(api: CoreApi, store: Store, k
   const record = await seal(key, id, 1, r.rest.revision_id, payload);
   return store.cas(id, null, record);
 }
+
+/**
+ * A phrase was IMPORTED (or restored from a backup) on this installation. A state left here by an
+ * earlier "create new phrase" carries the statement that no other copy exists; the phrase may
+ * since have been used elsewhere (the wallet removed, the phrase restored on another device). If
+ * that state never had a confirmed check and holds no payment of its own, it is replaced with a
+ * fresh state under the restore embargo (UI_CONTRACT obligation 1: a restored phrase never inherits
+ * the statement). A state with a confirmed check or a stored payment is kept: it is this device's
+ * own record, and the embargo no longer applies to it in any case.
+ */
+export async function dropUnconfirmedGeneratedState(api: CoreApi, store: Store, key: CryptoKey, id: string, address: string): Promise<boolean> {
+  const rec = await store.get(id);
+  if (!rec) return false;
+  const p = await openRecord(key, rec);
+  if (p.origin !== "generated" || p.envelopes.length > 0 || p.history.length > 0) return false;
+  const s = JSON.parse(core(() => api.summary(p.state))) as Summary;
+  if (s.confirmed_height !== null) return false;
+  const fresh = core(() => api.new_state(address, "", 0));
+  const fs = JSON.parse(core(() => api.summary(fresh))) as Summary;
+  const payload: Payload = { state: fresh, listed_from: null, start_node: null, origin: "imported", envelopes: [], history: [], rate: [] };
+  const next = await seal(key, id, rec.seq + 1, fs.revision_id, payload);
+  return store.cas(id, { revision_id: rec.revision_id, seq: rec.seq }, next);
+}
+

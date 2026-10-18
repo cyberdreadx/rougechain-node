@@ -14,7 +14,7 @@
  */
 import init, * as pkg from "./vendor/quantum_vault_shield_v2_wasm.js";
 import wasmUrl from "./vendor/quantum_vault_shield_v2_wasm_bg.wasm?url";
-import { ShieldClient, stateForNewlyGeneratedPhrase, type PaymentResult, type ShieldViewModel } from "./client";
+import { ShieldClient, stateForNewlyGeneratedPhrase, dropUnconfirmedGeneratedState, type PaymentResult, type ShieldViewModel } from "./client";
 import { CoreError, core } from "./core-api";
 import { fetchNet } from "./node-io";
 import { IdbStore, deriveStateKey } from "./store";
@@ -64,6 +64,19 @@ async function handle(msg: WorkerRequest): Promise<Omit<WorkerResponse, "id">> {
         const k = await keysOf(msg.seed, msg.network);
         const made = await stateForNewlyGeneratedPhrase(pkg, store, k.key, k.id, k.address);
         return { ok: true, made };
+      } finally {
+        msg.seed.fill(0);
+      }
+    }
+    case "importedPhrase": {
+      // an imported / restored phrase never inherits an earlier "create"'s sole-copy statement
+      await ready();
+      try {
+        for (const network of msg.networks) {
+          const k = await keysOf(msg.seed, network);
+          await dropUnconfirmedGeneratedState(pkg, store, k.key, k.id, k.address);
+        }
+        return { ok: true };
       } finally {
         msg.seed.fill(0);
       }

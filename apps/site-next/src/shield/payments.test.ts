@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { signShieldV2Bytes } from "@rougechain/core/pqc-signer";
-import { ShieldClient } from "./client";
+import { ShieldClient, dropUnconfirmedGeneratedState } from "./client";
 import { open as openRecord, MemoryStore, type Store } from "./store";
 import { ORIGINS, Q, TestNet, makeClient, vectorChain, wallet } from "./testing/fixtures";
 
@@ -159,5 +159,27 @@ describe("shield signing", () => {
     expect(() => signShieldV2Bytes(bytes, hex(kp.secretKey), "00".repeat(1952))).toThrow();
     const done = await client.completeShield(sig);
     expect(done.status).toBe("submitted");
+  }, 120_000);
+});
+
+describe("an imported phrase and an earlier create()", () => {
+  it("an unconfirmed 'generated' state loses its sole-copy statement; the next session is under the embargo", async () => {
+    const truth = await vectorChain(20);
+    const net = new TestNet(truth);
+    const made = await makeClient({ wallet: "wallet-2", net, soleCopy: true, open: false });
+    expect(await dropUnconfirmedGeneratedState(made.api, made.store, made.key, made.id, made.w.address)).toBe(true);
+    const rec = await made.store.get(made.id);
+    const p = await openRecord(made.key, rec!);
+    expect(p.origin).toBe("imported");
+    expect(JSON.parse(made.api.summary(p.state)).sole_copy_asserted).toBe(false);
+    // a second call finds nothing to drop
+    expect(await dropUnconfirmedGeneratedState(made.api, made.store, made.key, made.id, made.w.address)).toBe(false);
+  }, 120_000);
+
+  it("a state with a confirmed check is this device's own record and is kept", async () => {
+    const { store, key, id, api, w } = await ready();
+    const before = await store.get(id);
+    expect(await dropUnconfirmedGeneratedState(api, store, key, id, w.address)).toBe(false);
+    expect(await store.get(id)).toEqual(before);
   }, 120_000);
 });
