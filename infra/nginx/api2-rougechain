@@ -26,6 +26,8 @@ server {
 
     # Same wildcard CORS as api.rougechain.io (no cookie or session auth on the API).
     proxy_hide_header Access-Control-Allow-Origin;
+    proxy_hide_header Access-Control-Allow-Methods;
+    proxy_hide_header Access-Control-Allow-Headers;
     add_header Access-Control-Allow-Origin "*" always;
     add_header Access-Control-Allow-Methods "GET, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Content-Type" always;
