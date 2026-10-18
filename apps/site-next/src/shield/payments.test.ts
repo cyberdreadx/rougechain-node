@@ -8,6 +8,8 @@
  *   - two tabs build from one stored state: one write wins, the other gets nothing and submits nothing.
  */
 import { describe, expect, it, vi } from "vitest";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { signShieldV2Bytes } from "@rougechain/core/pqc-signer";
 import { ShieldClient } from "./client";
 import { open as openRecord, MemoryStore, type Store } from "./store";
 import { ORIGINS, Q, TestNet, makeClient, vectorChain, wallet } from "./testing/fixtures";
@@ -142,3 +144,20 @@ async function seedOf(): Promise<Uint8Array> {
   const h = wallet("wallet-2").bip39_seed;
   return Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 }
+
+describe("shield signing", () => {
+  it("the wallet core's real shield signing_bytes pass the site's shield-only signer", async () => {
+    const { client } = await ready();
+    const hex = (b: Uint8Array) => Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+    const kp = ml_dsa65.keygen(new Uint8Array(32).fill(9));
+    const pub = hex(kp.publicKey);
+    const p = await client.prepareShield(pub, (3n * Q).toString(), FEE);
+    expect(p.status).toBe("sign");
+    const bytes = (p as { signing_bytes: string }).signing_bytes;
+    const sig = signShieldV2Bytes(bytes, hex(kp.secretKey), pub);
+    // ...and the same bytes are refused for a different key
+    expect(() => signShieldV2Bytes(bytes, hex(kp.secretKey), "00".repeat(1952))).toThrow();
+    const done = await client.completeShield(sig);
+    expect(done.status).toBe("submitted");
+  }, 120_000);
+});

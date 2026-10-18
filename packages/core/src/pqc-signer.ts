@@ -818,10 +818,34 @@ export function createSignedUnshield(
 }
 
 /**
- * ML-DSA-65 over raw bytes (hex in, hex out), no payload encoding: the account signature of a
- * shielded pool V2 `shield_v2`, whose `signing_bytes` the shielded wallet core defines
- * (core/shield-v2-wallet NOTES §6 item 11). Not for anything the node verifies as a signed payload.
+ * ML-DSA-65 account signature of a shielded pool V2 `shield_v2` (hex in, hex out). The bytes are
+ * the legacy `encode_tx_for_signing` JSON that the shielded wallet core builds (core/shield-v2-wallet
+ * NOTES §6 item 11); the node accepts that unbound form only for `tx_type == "shield_v2"`.
+ *
+ * This is NOT a general raw signer: it refuses anything that is not exactly a shield_v2 envelope
+ * from `publicKey` (version 1, envelope fee 0, only the body and proof set), so it can never be used
+ * to sign a transfer or any other transaction.
  */
-export function signRawBytes(bytesHex: string, privateKey: string): string {
-  return bytesToHex(ml_dsa65.sign(hexToBytes(bytesHex), hexToBytes(privateKey)));
+export function signShieldV2Bytes(bytesHex: string, privateKey: string, publicKey: string): string {
+  const bytes = hexToBytes(bytesHex);
+  let tx: unknown;
+  try {
+    tx = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new Error("shield_v2 signing bytes are not a JSON envelope");
+  }
+  const t = tx as Record<string, unknown>;
+  const keys = t && typeof t === "object" && !Array.isArray(t) ? Object.keys(t).join(",") : "";
+  if (keys !== "version,tx_type,from_pub_key,nonce,payload,fee") throw new Error("shield_v2 signing bytes: unexpected envelope fields");
+  if (t.version !== 1 || t.tx_type !== "shield_v2" || !Number.isSafeInteger(t.nonce) || (t.nonce as number) < 0 || t.fee !== 0) throw new Error("shield_v2 signing bytes: not a shield_v2 envelope");
+  if (typeof t.from_pub_key !== "string" || t.from_pub_key.toLowerCase() !== publicKey.toLowerCase())
+    throw new Error("shield_v2 signing bytes: not from this wallet's key");
+  const payload = t.payload as Record<string, unknown> | null;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("shield_v2 signing bytes: no payload");
+  const hex = (v: unknown, max: number) => typeof v === "string" && v.length > 0 && v.length <= max && v.length % 2 === 0 && /^[0-9a-f]+$/.test(v);
+  if (!hex(payload.shield_v2_body, 5092) || (payload.shield_v2_body as string).length !== 5092) throw new Error("shield_v2 signing bytes: bad body");
+  if (!hex(payload.shield_v2_proof, 400_000)) throw new Error("shield_v2 signing bytes: bad proof");
+  for (const [k, v] of Object.entries(payload))
+    if (k !== "shield_v2_body" && k !== "shield_v2_proof" && v !== null) throw new Error(`shield_v2 signing bytes: unexpected payload field ${k}`);
+  return bytesToHex(ml_dsa65.sign(bytes, hexToBytes(privateKey)));
 }

@@ -35,7 +35,7 @@ import { deriveMessagingKeypair, migrateToDerivedMessagingKeys, withDerivedMessa
 import { getRougeChainProvider, signMessageViaExtension, signViaExtension, type SignedMessage } from "@rougechain/core/extension-bridge";
 import { pubkeyToAddress } from "@rougechain/core/address";
 import { signMessage } from "@rougechain/core/message-signing";
-import { signRawBytes, signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
+import { signShieldV2Bytes, signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
 import { verifyNodeChainId } from "@rougechain/core/chain-id";
 import { useChain } from "../explorer/chain";
 import {
@@ -409,8 +409,8 @@ export interface Signer {
    */
   signMessage(message: string): Promise<SignedMessage>;
   /**
-   * ML-DSA-65 over raw bytes (hex): the account signature of a shielded pool V2 shield, whose
-   * `signing_bytes` the wallet core defines. Local keys only — the extension / Qwalla provider has
+   * ML-DSA-65 account signature of a shielded pool V2 shield over the `signing_bytes` the wallet
+   * core defines; refuses any bytes that are not a shield_v2 envelope from this key. Local keys only — the extension / Qwalla provider has
    * no such call, so a provider wallet cannot shield (the /shield page says so).
    */
   signBytes?(bytesHex: string): Promise<string>;
@@ -442,7 +442,7 @@ export function useSigner(): Signer | null {
           publicKey,
           address: await pubkeyToAddress(publicKey),
         }),
-        signBytes: async (bytesHex) => signRawBytes(bytesHex, priv),
+        signBytes: async (bytesHex) => signShieldV2Bytes(bytesHex, priv, publicKey),
       };
     }
     return {
