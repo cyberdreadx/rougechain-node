@@ -1,4 +1,5 @@
-import { Suspense, type ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
+import { identifyContract } from "../contracts/known";
 import {
   Link,
   useLocation,
@@ -890,6 +891,25 @@ export function NftCollectionPage() {
 
 // ─── Contracts ───────────────────────────────────────────────────────────────
 
+// Loaded on demand: it pulls in the wallet signing code, which the rest of the explorer never needs.
+const ContractInteract = lazy(() =>
+  import("./ContractInteract").then((m) => ({ default: m.ContractInteract })),
+);
+
+function Verification({ codeHash }: { codeHash: string }) {
+  const { t } = useTranslation("explorer");
+  const known = identifyContract(codeHash);
+  if (!known)
+    return <span className="muted">{t("contract.verificationBody")}</span>;
+  return (
+    <span>
+      <span className="pill ok">{t("interact.matched")}</span>{" "}
+      {t("contract.matchesTemplate", { name: known.name })}{" "}
+      <code className="mono">{known.dir}</code>
+    </span>
+  );
+}
+
 export function ContractDetailPage() {
   const { addr: param = "" } = useParams();
   const addr = param.toLowerCase();
@@ -982,12 +1002,15 @@ export function ContractDetailPage() {
                 ],
                 [
                   t("contract.verification"),
-                  <span key="v" className="muted">
-                    {t("contract.verificationBody")}
-                  </span>,
+                  <Verification key="v" codeHash={c.codeHash} />,
                 ],
               ]}
             />
+            <Section id="interact" title={t("interact.title")}>
+              <Suspense fallback={<p className="muted">{t("interact.loading")}</p>}>
+                <ContractInteract addr={c.address} codeHash={c.codeHash} />
+              </Suspense>
+            </Section>
             <Section
               id="storage"
               title={t("what.storage")}

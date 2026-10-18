@@ -317,7 +317,7 @@ describe("explorer pages", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
-  it("contracts list and read-only contract detail", async () => {
+  it("contracts list and contract detail", async () => {
     mockNode();
     const list = renderAt("/contracts");
     expect(
@@ -330,8 +330,17 @@ describe("explorer pages", () => {
     ).toBeInTheDocument();
     expect(await screen.findByText("No storage")).toBeInTheDocument();
     expect(await screen.findByText(/"roll":35/)).toBeInTheDocument();
+    // Unknown code: no function list, only the free-form call. Nothing runs until clicked.
     expect(
-      screen.queryByRole("button", { name: /call|execute|query|deploy/i }),
+      await screen.findByText(/doesn't match a known template/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Read" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Query" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /sign|deploy/i }),
     ).not.toBeInTheDocument();
   });
 });
