@@ -2,27 +2,27 @@
   "schema": 1,
   "network": "mainnet",
   "chain_id": "rougechain-mainnet-1",
-  "version": "1.6.3",
-  "released": "2026-10-05",
-  "source_commit": "8eacc0d",
+  "version": "1.6.8",
+  "released": "2026-10-15",
+  "source_commit": "290d4a2",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-directory-hardening-8eacc0d",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-directory-hardening-8eacc0d",
+    "name": "quantum-vault-daemon-nftfix-290d4a2",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-nftfix-290d4a2",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.3/quantum-vault-daemon-directory-hardening-8eacc0d"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.8/quantum-vault-daemon-nftfix-290d4a2"
     ],
-    "sha256": "58c0288fc0137f35f4b986be24b010589ff4783c58239bde229f6a7014ab6171",
-    "size": 28441912
+    "sha256": "b8c11945ef9c94017e2b1cb46472a4855f609b0ef16cb2fa1532d7a7dabf36e2",
+    "size": 29400544
   },
   "cli": {
-    "name": "rougechain-638637f",
-    "url": "https://api.rougechain.io/releases/rougechain-638637f",
+    "name": "rougechain-290d4a2",
+    "url": "https://api.rougechain.io/releases/rougechain-290d4a2",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.1/rougechain-638637f"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.8/rougechain-290d4a2"
     ],
-    "sha256": "35ce999d8fbe4ed972d2169dddf47c2a0a2d66b6aa27f8c7888347f13afa1d59",
-    "size": 5292512
+    "sha256": "0df5a526a120eeb12ac77a5a86b6b448bbdf80b371c63db0a4c1427ef22f6870",
+    "size": 5294304
   },
   "genesis": {
     "name": "genesis-mainnet.json",
@@ -89,8 +89,12 @@
     {
       "name": "monetary_integrity",
       "height": 245
+    },
+    {
+      "name": "amm_integrity",
+      "height": 260
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.3.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.8.html",
   "min_installer_version": "2.0.0"
 }

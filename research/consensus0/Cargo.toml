@@ -1,0 +1,26 @@
+[package]
+name = "consensus0"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "CONSENSUS-0: RougeChain Consensus R2 rules as a pure state machine, with a seeded simulator"
+
+# Standalone on purpose: NOT a member of core/'s workspace (design §9: built
+# before the node is touched). The empty table stops cargo from searching
+# parent directories for a workspace root.
+[workspace]
+
+[dependencies]
+# Seeded PRNG only; no OS entropy, no std feature. Range sampling is done in
+# sim.rs so a schedule depends on nothing but the ChaCha8 stream.
+rand_chacha = { version = "0.3.1", default-features = false }
+rand_core = { version = "0.6.4", default-features = false }
+
+[profile.release]
+opt-level = 3
+debug = false
+overflow-checks = true   # integer-only rules: an overflow must never wrap silently
+
+[profile.test]
+opt-level = 2
+overflow-checks = true

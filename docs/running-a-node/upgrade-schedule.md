@@ -17,9 +17,12 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Mintable custom tokens (TOKEN_MINTING) | 235 | 1360 |
 | Contracts read NFT royalty (CONTRACT_NFT_ROYALTY) | 235 | 1360 |
 | Monetary-integrity rule (MONETARY_INTEGRITY) | 245 | 1390 |
+| Signatures commit to the chain id (CHAIN_ID_BINDING) | not scheduled | not scheduled |
+| Contracts read the chain id (CONTRACT_CHAIN_ID) | not scheduled | not scheduled |
+| Pool transactions apply all-or-nothing (AMM_INTEGRITY) | 260 | 1440 |
 
-**Every height in this table has been reached** on both networks (mainnet height 251, testnet past
-1390, on 2026-10-06). Nothing is scheduled beyond them; the next consensus changes — restoring the
+**Every height in this table has been reached** on both networks, except the `not scheduled` rows
+(mainnet passed 260 on 2026-10-10; testnet passed 1440 on 2026-10-09). Nothing else is scheduled beyond them; the next consensus changes — restoring the
 types suspended at 245, the shielded pool V2, and the consensus redesign decided on 2026-10-06 — have
 no heights yet and will be announced in advance (see [Status & Roadmap](../status.md)).
 
@@ -97,3 +100,106 @@ two independent schedule fields — set **both** to the same `H`.
 Rollback before `H` is just reinstalling the previous binary. After a mintable token exists (or a
 call to a contract importing the royalty functions is included), a node without the upgrade cannot
 follow the chain.
+
+<a id="chain-id-binding"></a>
+
+## Upgrade notice: CHAIN_ID_BINDING and CONTRACT_CHAIN_ID (not scheduled)
+
+**What it is.** From node release 1.6.4 every wallet signs the chain id into its payloads, and nodes
+refuse a payload that names another network (node rule, no fork). CHAIN_ID_BINDING makes the same
+property a consensus rule; CONTRACT_CHAIN_ID gives contracts `host_get_chain_id`. Both are hard forks
+with **no height on any network** (`upgrade_schedule.chain_id_binding` / `.contract_chain_id` are
+`null`).
+
+**The rule, from height `H`.** A block is invalid if any transaction's signed bytes do not commit to
+this chain's id:
+
+| Signature format | Required from `H` |
+|---|---|
+| `/api/v2` signed payload (`signed_payload`, flat JSON) | the signature verifies over `signed_payload` **only** (no fallback to another format), and the JSON has `chainId` equal to the chain id (exact string) |
+| `rougechain` CLI envelope (`signed_payload` with `tx_type` + `payload`) | same, with `chain_id` in the envelope |
+| V1 format (no `signed_payload`; node-signed transactions: faucet, bridge mints, cosigned bridge withdrawals, legacy node routes) | signed over the network-bound encoding `"rougechain/tx-v1/chain" ‖ 0x00 ‖ u64_be(len) ‖ chain id ‖ encode_tx_for_signing(tx)`; the plain V1 and legacy full-struct encodings are refused |
+| SHIELD_V2 (`shield_v2`, signer-less `*_v2`) | unchanged — the body already carries `sha256(chain id)` and is checked by the SHIELD_V2 rule |
+
+Below `H` nothing changes: blocks are accepted, executed and stored exactly as by release 1.6.3, and
+the network-bound V1 encoding is not accepted (an older node would refuse it). Nodes start signing
+their own V1 transactions in the network-bound encoding at `H` automatically.
+
+**What must ship first, in this order.**
+
+1. Node release 1.6.4 on every node of the network (node rule; harmless to older wallets).
+2. Wallets that sign `chainId`: the site, `@rougechain/sdk` 1.15.0 (and every dApp built on it,
+   after a dependency bump), browser extension 1.9.0, Qwalla 1.3.0, `rougechain` CLI 1.3.0, the
+   MCP server. Watch the node log / API errors for payloads still arriving without the field.
+3. Operators turn on `REQUIRE_SIGNED_CHAIN_ID` (testnet first). Only then is a payload without a
+   network refused everywhere.
+4. Pick `H` (well above the tip), set `chain_id_binding: Some(H)` (and, if wanted at the same time,
+   `contract_chain_id: Some(H)`) for testnet in `core/daemon/src/upgrades.rs` — mainnet via
+   `chain_binding::CHAIN_ID_BINDING_ACTIVATION_HEIGHT` / `node::CONTRACT_CHAIN_ID_ACTIVATION_HEIGHT` —
+   update `mainnet_schedule_is_pinned` / `testnet_schedule_is_pinned` and this page, build, and install
+   on **every** node of that network before `H`. Confirm the startup line
+   `[upgrades] … chain id binding Some(H), contract chain id Some(H)` and `GET /api/stats` →
+   `upgrade_schedule.chain_id_binding == H` on each node.
+5. Any transaction still in a mempool at `H` without a network-bound signature is dropped by the
+   producer and must be signed again.
+
+<a id="amm-integrity"></a>
+
+## Upgrade notice: AMM_INTEGRITY (mainnet 260, testnet 1440)
+
+**What it is.** A hard fork that changes how the four pool transaction types — `create_pool`,
+`add_liquidity`, `remove_liquidity`, `swap` — are executed. It activates on **mainnet at height 260**
+(release 1.6.7; `upgrade_schedule.amm_integrity` is `260`) and has been active on **testnet since
+height 1440** (release 1.6.6). Mainnet nodes must run release 1.6.7 or later before block 260. Source: `core/daemon/src/amm_integrity.rs`.
+
+Node release 1.6.4 already keeps pool transactions that cannot take effect out of the blocks a node
+produces. That protects a network only while every block producer runs it. AMM_INTEGRITY makes the
+same outcome a rule of the chain, so it no longer depends on who produces the block.
+
+**The rule, from height `H`.** A pool transaction either takes its full effect or changes nothing:
+no fee is charged, no balance moves, no pool changes. It can never make its block invalid.
+
+| Transaction | Takes effect only if |
+|---|---|
+| `swap` | the input amount is greater than zero; the two tokens differ; the route (the signed `swap_path`, or the direct pair when absent) names 2 to 4 tokens, starts at the input token, ends at the output token, and uses no pool twice; every pool on the route exists and returns more than zero; the final amount is at least the signed `min_amount_out`; the sender holds the input and the fee |
+| `create_pool` | the two symbols are well formed and differ (compared without regard to letter case); both amounts are greater than zero; LP tokens would be minted; **no pool exists for the pair**, in either order or letter case; the sender holds both amounts and the fee |
+| `add_liquidity` | the pool exists; both amounts are greater than zero; more than zero LP tokens would be minted; the sender holds both amounts and the fee |
+| `remove_liquidity` | the pool exists; the sender holds the LP tokens; **both** sides return more than zero; the sender holds the fee |
+
+When a transaction takes effect, all of its parts are written together: the sender's debit, the
+pools on the route, and the credit. Amounts are computed with checked integer arithmetic; a value
+out of range means the transaction has no effect. The fee is counted as collected whenever it is
+charged (before `H`, the fee of a swap that pays out XRGE is taken from the sender but not
+distributed).
+
+**What does not change.** Prices (constant product, 0.3% of the input stays in the pool), the LP
+minting and redemption formulas, XRGE pool amounts in whole XRGE, the state root layout, the
+`/api/v2` request formats, and every block below `H`, which replays exactly as before.
+
+**For wallets and apps.** No change is required. Two visible differences from `H`:
+
+- A swap that misses its `min_amount_out` no longer costs the sender anything. Before `H` a node
+  running 1.6.4 already leaves such a swap out of its blocks; from `H` the chain guarantees it.
+- A transaction that has no effect is still included in a block when a producer includes it, and
+  the chain does not record a per-transaction result. To learn whether a swap traded, compare
+  balances or read the pool events (`GET /api/pool/:pool_id/events`).
+
+Multi-pool routes are validated by the rule, but nodes do not yet accept a `swap_path` from the API
+(no wallet signs one); that is a later, node-level change.
+
+**Not part of this upgrade** (candidates for a later one): locking the minimum liquidity of a new
+pool, taking only the matching amounts in `add_liquidity` with a signed minimum of LP tokens,
+committing pool reserves in the state root, a deadline on swaps.
+
+**Activation.**
+
+1. Pick `H` (well above the tip), set `amm_integrity: Some(H)` for testnet in
+   `core/daemon/src/upgrades.rs` — mainnet via `amm_integrity::AMM_INTEGRITY_ACTIVATION_HEIGHT` —
+   update `mainnet_schedule_is_pinned` / `testnet_schedule_is_pinned` and this page, build, and
+   install on **every** node of that network before `H`. A node without the upgrade cannot follow
+   the chain past the first block at or above `H` whose pool transactions the two rule sets judge
+   differently.
+2. Confirm the startup line `[upgrades] … AMM integrity Some(H)` and `GET /api/stats` →
+   `upgrade_schedule.amm_integrity == H` on each node.
+3. After `H`, on testnet: one swap that trades, one swap signed with a minimum it cannot meet (the
+   sender's balances must be unchanged), one liquidity add and one removal.

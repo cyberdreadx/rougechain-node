@@ -41,9 +41,10 @@ it("global Apps exposes apps in the requested group order without resource or ut
     within(group)
       .getAllByRole("link")
       .map((a) => a.querySelector("span")?.textContent?.replace(" ↗", "")),
-  ).toEqual(["Qwalla Mobile Wallet", "Web Wallet", "Wallet Extension", "Swap", "Bridge", "Rougee", "qWave", "Messenger", "Mail", "Explorer", "Validators"]);
+  ).toEqual(["Qwalla Mobile Wallet", "Web Wallet", "Wallet Extension", "Swap", "Bridge", "Rougee", "qWave", "Messenger", "Mail", "Explorer", "Validators", "Playground"]);
   expect(within(group).getByText("Arcade").parentElement).toHaveAttribute("aria-disabled", "true");
   expect(within(group).getByRole("link", { name: /Web Wallet/ })).toHaveAttribute("href", "/wallet");
+  expect(within(group).getByRole("link", { name: /Playground/ })).toHaveAttribute("href", "/ide");
 });
 
 it("offers create / import / extension while disconnected, without touching a provider or the network", async () => {

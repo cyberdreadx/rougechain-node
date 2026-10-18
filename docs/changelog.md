@@ -4,6 +4,66 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.8: NFT mint stability fix — 2026-10-15
+
+- Fixes a bug that could make a node stop producing and importing blocks while processing certain
+  public NFT mints. Recommended for every node; no consensus change.
+- See the [release notes](running-a-node/release-1.6.8.md).
+
+## Node release 1.6.7: AMM_INTEGRITY on mainnet at block 260 — 2026-10-10
+
+- AMM_INTEGRITY activates on **mainnet at height 260** (active on testnet since 1440). Mainnet
+  nodes must run 1.6.7 before that block. On testnet the release behaves as 1.6.6.
+- See the [release notes](running-a-node/release-1.6.7.md).
+
+## Node release 1.6.6: AMM_INTEGRITY on testnet at block 1440 — 2026-10-09
+
+- AMM_INTEGRITY activates on **testnet at height 1440**; mainnet stays unscheduled. Testnet nodes
+  must run 1.6.6 before that block. On mainnet the release behaves as 1.6.5.
+- See the [release notes](running-a-node/release-1.6.6.md).
+
+## Node release 1.6.5: AMM_INTEGRITY included, not scheduled — 2026-10-09
+
+- The node carries the consensus rule AMM_INTEGRITY with no activation height on any network
+  (`upgrade_schedule.amm_integrity` is `null`). From its height, pool transactions (`create_pool`,
+  `add_liquidity`, `remove_liquidity`, `swap`) apply all-or-nothing: one that cannot take effect
+  changes nothing, pays no fee and does not make the block invalid; swap routes are validated; a
+  pair has one pool; amounts use checked integer arithmetic; the fee of a token-to-XRGE swap is
+  counted as collected.
+- Until the height is set, nodes on 1.6.5 validate and produce exactly as on 1.6.4.
+- See the [upgrade schedule](running-a-node/upgrade-schedule.md#amm-integrity) and the
+  [release notes](running-a-node/release-1.6.5.md).
+
+## Node release 1.6.4: signatures commit to the network — 2026-10-08
+
+- Every payload a wallet signs for a node now names the network it is for: `chainId` (the exact chain
+  id, e.g. `rougechain-mainnet-1`) inside the signed bytes of `/api/v2` transactions and of signed
+  mail, messenger, name and vote requests; `chain_id` inside a `rougechain` CLI envelope. Wallets take
+  it from their network setting, check it once per session against the node's `/api/health`
+  `chain_id`, and refuse to sign when they differ.
+- **Node 1.6.4 (no fork):** a signed payload naming another chain id is refused with
+  `CHAIN_ID_MISMATCH` at the API, mempool and producer. New operator flag `REQUIRE_SIGNED_CHAIN_ID`
+  (`--require-signed-chain-id` / `QV_REQUIRE_SIGNED_CHAIN_ID`, default **off**) also refuses payloads
+  naming none (`CHAIN_ID_REQUIRED`); it is turned on once wallets have shipped.
+- **Consensus (not scheduled):** CHAIN_ID_BINDING — from a height to be announced, every
+  transaction's signed bytes must commit to the chain id (V1-format, node-signed transactions use a
+  new network-bound signing encoding from that height). CONTRACT_CHAIN_ID — contracts can read the
+  chain id with `host_get_chain_id`. Both are `None` on every network; history replays identically.
+- Clients: site (rougechain.io), `@rougechain/sdk` 1.15.0, browser extension 1.9.0 (approval
+  screen shows the network and refuses another one), `rougechain` CLI 1.3.0 (`--chain-id`), Qwalla
+  1.3.0 (patch). Sign-in verification (`verifySignIn`) already required the chain id; the docs now
+  say verifiers must check it.
+- **Node 1.6.4, also:** every item of `POST /api/v2/batch-submit` gets the checks of a single
+  `/api/v2` submission (5-minute timestamp window, the shared signature replay guard, the network
+  rule, `from` = signer, signed `account_nonce`); a batch with any failing item is refused as a whole
+  and uses up no signature. `GET /api/balance/:publicKey/XRGE` returns the native balance, and both
+  balance routes return exact integer fields (`balance_raw` + `decimals`, `balance_quanta` +
+  `token_balances_raw`). The block producer leaves out transactions that would fail and refuses
+  malformed liquidity and swap requests (`AMM_REQUEST_REFUSED`; node rules, block validity
+  unchanged). The shielded pool V2 code is present and inactive.
+  `quantum-vault-daemon --version` reports `1.6.4`.
+- See [Security](security.md#network-binding) and the [release notes](running-a-node/release-1.6.4.md).
+
 ## Wallet message signing (`signMessage`) for logins and token gating — 2026-10-06
 
 - New provider method `window.rougechain.signMessage({ message })` → `{ signature, publicKey, address }`

@@ -230,7 +230,8 @@ describe("signTransaction and verifyTransaction", () => {
   it("produces a signed tx with correct fields", () => {
     const payload = makePayload({ from: pubKeyHex });
     const signed = signTransaction(payload, secKeyHex, pubKeyHex);
-    expect(signed.payload).toEqual(payload);
+    // the signed payload also names the network (chainId is inside the signed bytes)
+    expect(signed.payload).toEqual({ ...payload, chainId: "rougechain-mainnet-1" });
     expect(signed.public_key).toBe(pubKeyHex);
     expect(signed.signature).toHaveLength(6618); // 3309 bytes * 2 hex chars
   });

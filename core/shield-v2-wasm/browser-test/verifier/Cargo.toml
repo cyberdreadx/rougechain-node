@@ -1,0 +1,22 @@
+# The NODE's side of the browser harness: verifies, natively, what the WebAssembly package built
+# in the browser. Built with the default feature set of `quantum-vault-shield-v2` — the verifier
+# only, never `prover` — exactly as the daemon is. Its own workspace (it is not a member of
+# core/Cargo.toml); `run.mjs` copies core/Cargo.lock next to this file before building so that
+# every dependency is the version the node is built with (the copy is ignored by git).
+[package]
+name = "shield-v2-browser-verifier"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+quantum-vault-shield-v2 = { path = "../../../shield-v2" }
+quantum-vault-types = { path = "../../../types" }
+quantum-vault-crypto = { path = "../../../crypto" }
+quantum-vault-storage = { path = "../../../storage" }
+# as the daemon: exact f64 parsing (the envelope's `fee` must be 0.0 bit for bit)
+serde_json = { version = "1", features = ["float_roundtrip"] }
+hex = "0.4"
+sha2 = "0.10"

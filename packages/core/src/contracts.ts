@@ -10,8 +10,12 @@
  * - Payable calls: an optional signed `attach: {symbol, amount}` (integer quanta for XRGE,
  *   raw units for tokens) pays the contract if the call succeeds (SDK 1.10.0 `attach`).
  *
+ * - Deployment: a `contract_deploy` payload carrying the base64 WASM, signed by the connected wallet
+ *   and sent to `POST /api/v2/contract/publish` (SDK `createSignedContractPublish`). Costs 10 XRGE.
+ *
  * The node-signed `/v2/contract/call` and `/v2/contract/deploy` endpoints are retired.
  */
+import { sha256 } from "@noble/hashes/sha2.js";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
 import { loadUnifiedWallet } from "./unified-wallet";
 import {
@@ -22,11 +26,15 @@ import {
   type TransactionPayload,
 } from "./pqc-signer";
 import { signViaExtension } from "./extension-bridge";
+import { verifyNodeChainId } from "./chain-id";
 
 /** Max gas per call (the node's `DEFAULT_FUEL_LIMIT`). */
 export const CONTRACT_MAX_GAS = 10_000_000;
 /** XRGE charged per unit of signed gas limit. */
 export const CONTRACT_GAS_PRICE_XRGE = 0.000001;
+
+/** XRGE charged for a contract deployment (the node's `CONTRACT_DEPLOY_FEE_XRGE`). */
+export const CONTRACT_DEPLOY_FEE_XRGE = 10;
 
 /** Quanta per XRGE (XRGE has 9 decimals). */
 export const QUANTA_PER_XRGE = 1_000_000_000n;
@@ -246,6 +254,7 @@ async function signWithWallet(payload: Omit<TransactionPayload, "from">): Promis
   const w = loadUnifiedWallet();
   if (!w?.signingPublicKey) throw new Error("Connect or unlock a wallet to sign this call.");
   const full = { ...payload, from: w.signingPublicKey } as TransactionPayload;
+  await verifyNodeChainId(); // once per session: the node must be on the selected network
   if (w.signingPrivateKey) {
     const tx = signTransaction(full, w.signingPrivateKey, w.signingPublicKey);
     const bytes = serializePayload(tx.payload);
@@ -280,6 +289,67 @@ export async function executeContract(
     txId: r.txId as string | undefined,
     fee: r.fee as number | undefined,
     preview: r.preview as ContractExecuteResult["preview"],
+  };
+}
+
+/**
+ * Address a player-signed deployment gets (the node's `contract_address_v2`): the first 20 bytes of
+ * sha256("rougechain/contract/v2" ‖ deployer ‖ 0 ‖ nonce ‖ 0 ‖ sha256(wasm)), hex.
+ */
+export function predictContractAddress(deployer: string, nonce: string, wasm: Uint8Array): string {
+  const enc = new TextEncoder();
+  const parts = [enc.encode("rougechain/contract/v2"), enc.encode(deployer), new Uint8Array([0]), enc.encode(nonce), new Uint8Array([0]), sha256(wasm)];
+  const buf = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    buf.set(p, o);
+    o += p.length;
+  }
+  return Array.from(sha256(buf).slice(0, 20), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** Build the unsigned `contract_deploy` payload (exported for tests). */
+export function buildContractPublishPayload(from: string, wasm: Uint8Array, nonce: string = generateNonce()): TransactionPayload {
+  if (wasm.length === 0) throw new Error("The WASM file is empty.");
+  if (nonce.length < 8) throw new Error("contract publish nonce must be at least 8 characters");
+  return { type: "contract_deploy", from, wasm: bytesToBase64(wasm), timestamp: Date.now(), nonce };
+}
+
+export interface ContractPublishResult {
+  success: boolean;
+  error?: string;
+  txId?: string;
+  /** The address the node reports (once accepted). */
+  address?: string;
+  /** The address computed locally before sending — the contract's address once mined. */
+  predictedAddress: string;
+  fee?: number;
+}
+
+/**
+ * Deploy WASM bytecode, signed by the connected wallet. Costs {@link CONTRACT_DEPLOY_FEE_XRGE} XRGE.
+ * The contract is installed when the tx is mined, at `predictedAddress`.
+ */
+export async function publishContract(wasm: Uint8Array): Promise<ContractPublishResult> {
+  const w = loadUnifiedWallet();
+  if (!w?.signingPublicKey) throw new Error("Connect or unlock a wallet to deploy.");
+  const payload = buildContractPublishPayload(w.signingPublicKey, wasm);
+  const predictedAddress = predictContractAddress(w.signingPublicKey, payload.nonce as string, wasm);
+  const signed = await signWithWallet(payload);
+  const r = await postJson("/v2/contract/publish", signed);
+  return {
+    success: r.success === true,
+    error: r.error as string | undefined,
+    txId: r.txId as string | undefined,
+    address: r.address as string | undefined,
+    predictedAddress,
+    fee: r.fee as number | undefined,
   };
 }
 

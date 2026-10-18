@@ -29,6 +29,8 @@
     "explore": "Explore"
   },
   "footer": {
+    "learn": "Learn",
+    "playground": "Playground",
     "tagline": "Built for what comes next.",
     "docs": "Documentation",
     "community": "Community",
@@ -160,6 +162,10 @@
     "build": {
       "name": "Developer Portal",
       "description": "Tools to build on RougeChain."
+    },
+    "ide": {
+      "name": "Playground",
+      "description": "Write, test and deploy WASM contracts in the browser."
     },
     "docs": {
       "name": "Documentation",

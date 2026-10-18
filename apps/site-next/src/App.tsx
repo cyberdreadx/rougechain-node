@@ -99,6 +99,8 @@ export default function App() {
                         path="*"
                         element={
                           <main id="main" className="container page-intro">
+                            {/* The SPA answers every path with 200; tell crawlers this one is not a page. */}
+                            <meta name="robots" content="noindex" />
                             <h1>{t("notFound.title")}</h1>
                             <p>{t("notFound.body")}</p>
                             <a className="button" href="/">

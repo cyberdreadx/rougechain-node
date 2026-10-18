@@ -11,6 +11,7 @@ import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
 import { loadUnifiedWallet } from "./unified-wallet";
 import { generateNonce, signTransaction, type SignedTransaction, type TransactionPayload } from "./pqc-signer";
 import { signViaExtension } from "./extension-bridge";
+import { verifyNodeChainId } from "./chain-id";
 
 export type VoteChoice = "yes" | "no" | "abstain";
 export type VoteStatus = "open" | "passed" | "failed" | "paid" | "cancelled";
@@ -108,6 +109,7 @@ async function sign(payload: Record<string, unknown>): Promise<SignedTransaction
   const w = loadUnifiedWallet();
   if (!w?.signingPublicKey) throw new Error("Connect or unlock a wallet to vote.");
   const full = { ...payload, from: w.signingPublicKey, timestamp: Date.now(), nonce: generateNonce() } as unknown as TransactionPayload;
+  await verifyNodeChainId(); // once per session: the node must be on the selected network
   return w.signingPrivateKey
     ? signTransaction(full, w.signingPrivateKey, w.signingPublicKey)
     : signViaExtension(full, w.signingPublicKey);

@@ -42,7 +42,9 @@ describe("nft_batch_mint attributes", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await secureBatchMintNft(pub, priv, "col:abc:SYM", ["A", "B"], { attributes: ATTRS });
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    // the first request is the once-per-session chain id check (GET /health, /stats)
+    const post = fetchMock.mock.calls.find((c) => !/\/(health|stats)$/.test(String((c as unknown[])[0])));
+    const [url, init] = post as unknown as [string, RequestInit];
     expect(url).toMatch(/\/v2\/nft\/batch-mint$/);
     const body = JSON.parse(String(init.body));
     expect(body.payload.attributes).toEqual(ATTRS);
@@ -65,7 +67,7 @@ describe("create_token fee default", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await secureCreateToken(pub, priv, "Name", "SYM", 1000);
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [, init] = fetchMock.mock.calls.find((c) => !/\/(health|stats)$/.test(String((c as unknown[])[0]))) as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body)).payload.fee).toBe(nodeFee());
   });
 });

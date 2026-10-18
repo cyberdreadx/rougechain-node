@@ -333,6 +333,29 @@ Pass the wallet's **hex public key** (the `publicKey` that `verifySignIn` return
 endpoints match the owner exactly as recorded, which is the public key; a `rouge1…` address does
 not find NFTs there. Token balances are in the units the node reports for that token.
 
+### Units and precision
+
+Use the exact fields for any threshold check. The float fields (`balance`, `token_balances`) remain
+for display and cannot represent every amount exactly above 2^53 units.
+
+| Endpoint | Exact fields | Meaning |
+|---|---|---|
+| `GET /api/balance/:publicKey/:tokenSymbol` | `balance_raw` (string), `decimals` | The balance in integer base units; `balance_raw / 10^decimals` is the displayed amount |
+| `GET /api/balance/:publicKey` | `balance_quanta` (string), `token_balances_raw` (symbol → string) | XRGE in quanta (1 XRGE = 10^9 quanta) and every token in integer units |
+
+- **Tokens.** Tokens created on RougeChain have `decimals: 0`: one unit is one whole token, so a gate of
+  "at least 1 TICKET" is `BigInt(balance_raw) >= 1n`. The bridged assets differ: `qUSDC` and `qETH` use
+  6 decimals and `qBTC` uses 8. `GET /api/tokens` lists every token's `decimals`. Convert your
+  threshold to base units once (`minimum × 10^decimals`) and compare integers.
+- **XRGE.** XRGE is the chain's native coin. It is held in the native ledger, not the token ledger,
+  and `XRGE` is a reserved symbol that no token can use. `GET /api/balance/:publicKey/XRGE` returns
+  the native balance with `native: true`, `decimals: 9` and `balance_raw` in quanta.
+  **Nodes before this change** answer `0` for `XRGE` on the per-token endpoint and have no exact
+  fields; on those, read XRGE from `balance` in `GET /api/balance/:publicKey` (display units). A
+  client can tell the two apart by the presence of `balance_raw`.
+- **Symbols** are case-sensitive, and an unknown symbol returns `0` rather than an error, so check the
+  symbol against `GET /api/tokens` when you configure a gate.
+
 ## What a verifier must check
 
 `verifySignIn` does the cryptography. The rest is yours:
@@ -344,8 +367,9 @@ not find NFTs there. Token balances are in the units the node reports for that t
    a nonce was used before.
 3. **Expiry.** Put an `Expiration Time` a few minutes ahead in the message, or pass `maxAgeMs`.
    Keep your server's clock synchronised.
-4. **Chain ID.** Pass the network you gate on as `expectedChainId`, so a testnet sign-in is not
-   accepted for mainnet holdings.
+4. **Chain ID — required.** A verifier MUST check the `Chain ID` line: pass the network you gate on
+   as `expectedChainId` (`verifySignIn` requires it and fails with `chain_id_mismatch` otherwise), so
+   a sign-in made for one network is never accepted for another.
 5. **Use the address `verifySignIn` returns.** Do not trust an address or public key sent
    alongside the message.
 6. **Holdings come from a node you choose.** The signature proves control of a key; it says

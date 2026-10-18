@@ -393,7 +393,7 @@ describe("withdrawals (signed intent, 0.1 XRGE fee)", () => {
   }
   function expectSigned(body: Record<string, unknown>, fields: Record<string, unknown>) {
     const payload = body.payload as Record<string, unknown>;
-    expect(Object.keys(payload).sort()).toEqual(["amount", "evmAddress", "fee", "from", "nonce", "timestamp", "tokenSymbol", "type"]);
+    expect(Object.keys(payload).sort()).toEqual(["amount", "chainId", "evmAddress", "fee", "from", "nonce", "timestamp", "tokenSymbol", "type"]);
     expect(payload).toMatchObject({ type: "bridge_withdraw", from: keys.publicKey, fee: 0.1, ...fields });
     const signed: SignedTransaction = { payload: payload as unknown as SignedTransaction["payload"], signature: body.signature as string, public_key: keys.publicKey };
     expect(verifyTransaction(signed)).toBe(true);

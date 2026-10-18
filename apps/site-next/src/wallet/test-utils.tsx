@@ -6,6 +6,8 @@ import { vi } from "vitest";
 import { generateMnemonic, keypairFromMnemonic } from "@rougechain/core/mnemonic";
 import { generateEncryptionKeypair } from "@rougechain/core/pqc-messenger";
 import { lockUnifiedWallet, saveUnifiedWallet, type UnifiedWallet } from "@rougechain/core/unified-wallet";
+import { chainIdForNetwork, resetChainIdChecks } from "@rougechain/core/chain-id";
+import { getActiveNetwork } from "@rougechain/core/network";
 import { resetWalletStoreForTests } from "./store";
 import { clearToasts } from "./toast";
 
@@ -52,6 +54,7 @@ export function resetBrowserState(): void {
   resetWalletStoreForTests();
   clearToasts();
   Reflect.deleteProperty(window, "rougechain");
+  resetChainIdChecks();
 }
 
 export type Handler = (url: string, init?: RequestInit) => unknown;
@@ -64,6 +67,11 @@ export function mockFetch(routes: Record<string, Handler> = {}) {
   const calls: { url: string; init?: RequestInit }[] = [];
   const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    // The once-per-session chain id check (core chain-id.ts, GET /health): answered with the
+    // selected network's chain id and not recorded, unless the test routes /health itself.
+    if (url.endsWith("/health") && !Object.keys(routes).some((part) => url.includes(part))) {
+      return new Response(JSON.stringify({ status: "ok", chain_id: chainIdForNetwork(getActiveNetwork()), height: 1 }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     calls.push({ url, init });
     for (const [part, handler] of Object.entries(routes)) {
       if (url.includes(part)) {

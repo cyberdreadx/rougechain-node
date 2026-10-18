@@ -16,7 +16,7 @@ use wasmi::{Engine, Linker, Module, Store, Config};
 use host::HostEnv;
 pub use host::MAX_CALL_DEPTH;
 pub use store::{ContractStore, ContractMetadata, ContractEvent, ContractCallResult};
-pub use game::{ChainEffect, ChainView, CollectionView, GameExt, GAME_HOST_FUNCTIONS, NFT_ROYALTY_HOST_FUNCTIONS};
+pub use game::{ChainEffect, ChainView, CollectionView, GameExt, CHAIN_ID_HOST_FUNCTIONS, GAME_HOST_FUNCTIONS, NFT_ROYALTY_HOST_FUNCTIONS};
 
 /// Default fuel limit per contract call (≈ 10M WASM instructions)
 pub const DEFAULT_FUEL_LIMIT: u64 = 10_000_000;
@@ -263,6 +263,7 @@ impl WasmRuntime {
                             block_hashes: g.block_hashes,
                             payable: g.payable,
                             nft_royalty: g.nft_royalty,
+                            chain_id: g.chain_id.clone(),
                             attached: None, // a payment goes to the called contract only
                         }),
                     ) {
@@ -482,6 +483,9 @@ impl WasmRuntime {
             }
             if env.game.as_ref().map_or(false, |g| g.ext.nft_royalty) {
                 game::register_nft_royalty_functions(&mut linker)?;
+            }
+            if env.game.as_ref().map_or(false, |g| g.ext.chain_id.is_some()) {
+                game::register_chain_id_function(&mut linker)?;
             }
         }
 

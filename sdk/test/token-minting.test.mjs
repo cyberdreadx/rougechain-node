@@ -23,6 +23,7 @@ function capture(stats) {
   const posts = [];
   const gets = [];
   const fn = async (url, init) => {
+    if (url.endsWith("/health")) return new Response(JSON.stringify({ status: "ok", chain_id: "rougechain-mainnet-1", height: 1 }), { status: 200 });
     if (init?.method === "POST") {
       posts.push({ url, body: JSON.parse(init.body) });
     } else {
@@ -117,7 +118,8 @@ test("mintTokens posts a signed mint_tokens (not the old unsigned body)", async 
   const body = posts[0].body;
   assert.equal(body.public_key, wallet.publicKey);
   assert.ok(body.signature.length > 100);
-  assert.deepEqual(Object.keys(body.payload).sort(), ["amount", "fee", "from", "nonce", "timestamp", "token_symbol", "type"]);
+  assert.deepEqual(Object.keys(body.payload).sort(), ["amount", "chainId", "fee", "from", "nonce", "timestamp", "token_symbol", "type"]);
+  assert.equal(body.payload.chainId, "rougechain-mainnet-1", "signed for the node's network");
   assert.equal(body.payload.type, "mint_tokens");
   assert.equal(body.payload.token_symbol, "MNT");
   assert.equal(body.payload.amount, 250);

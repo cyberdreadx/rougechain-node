@@ -30,8 +30,9 @@ it("classifies user-facing apps for global navigation", () => {
     "Bridge",
     "Explorer",
     "Validators",
+    "Playground",
   ]);
-  expect(globalAppGroups).toEqual(["Hold", "Trade", "Play", "Talk", "Explore"]);
+  expect(globalAppGroups).toEqual(["Hold", "Trade", "Play", "Talk", "Explore", "Build"]);
   expect(apps.filter((a) => a.kind === "developer-resource")).toHaveLength(5);
   expect(appById("liquidity")?.kind).toBe("utility");
   expect(appById("network")?.kind).toBe("utility");

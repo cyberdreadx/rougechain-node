@@ -316,6 +316,26 @@ pub fn encode_tx_for_signing(tx: &TxV1) -> Vec<u8> {
     serde_json::to_vec(&s).unwrap_or_default()
 }
 
+/// Domain tag of the network-bound V1 signing format (CHAIN_ID_BINDING).
+pub const CHAIN_BOUND_V1_DOMAIN: &[u8] = b"rougechain/tx-v1/chain";
+
+/// CHAIN_ID_BINDING (from that upgrade's activation height): the bytes a V1-format transaction
+/// (one without `signed_payload`) is signed over, committing the signature to the network:
+/// `CHAIN_BOUND_V1_DOMAIN ‖ 0x00 ‖ u64_be(len(chain_id)) ‖ chain_id ‖ encode_tx_for_signing(tx)`.
+/// [`encode_tx_for_signing`] itself is unchanged, so every historical signature, `tx_identity`
+/// and pinned hash stays byte-identical; this is a separate, length-prefixed, domain-separated
+/// encoding that can never equal a legacy one (a legacy encoding starts with `{`).
+pub fn encode_tx_for_signing_chain(tx: &TxV1, chain_id: &str) -> Vec<u8> {
+    let body = encode_tx_for_signing(tx);
+    let mut out = Vec::with_capacity(CHAIN_BOUND_V1_DOMAIN.len() + 9 + chain_id.len() + body.len());
+    out.extend_from_slice(CHAIN_BOUND_V1_DOMAIN);
+    out.push(0);
+    out.extend_from_slice(&(chain_id.len() as u64).to_be_bytes());
+    out.extend_from_slice(chain_id.as_bytes());
+    out.extend_from_slice(&body);
+    out
+}
+
 pub fn encode_header_v1(header: &BlockHeaderV1) -> Vec<u8> {
     serde_json::to_vec(header).unwrap_or_default()
 }
@@ -523,6 +543,28 @@ mod tests {
         assert_ne!(tx_identity(&tx), id);
         let legacy: TxPayload = serde_json::from_str(r#"{"token_symbol":"A"}"#).unwrap();
         assert_eq!((legacy.shield_v2_body, legacy.shield_v2_proof), (None, None));
+    }
+
+    /// CHAIN_ID_BINDING: the network-bound V1 encoding is the legacy encoding behind a
+    /// domain-separated, length-prefixed chain id; the legacy encoding (and with it every pinned
+    /// hash above) is untouched, and two chain ids never give the same bytes.
+    #[test]
+    fn chain_bound_v1_encoding_wraps_the_legacy_bytes() {
+        let tx = legacy_token_txs().remove(1);
+        let legacy = encode_tx_for_signing(&tx);
+        let main = encode_tx_for_signing_chain(&tx, "rougechain-mainnet-1");
+        let test = encode_tx_for_signing_chain(&tx, "rougechain-devnet-1");
+        assert!(main.ends_with(&legacy) && test.ends_with(&legacy));
+        assert_ne!(main, test);
+        assert_ne!(main, legacy);
+        assert_eq!(legacy.first(), Some(&b'{'));
+        let mut want = b"rougechain/tx-v1/chain\0".to_vec();
+        want.extend_from_slice(&20u64.to_be_bytes());
+        want.extend_from_slice(b"rougechain-mainnet-1");
+        want.extend_from_slice(&legacy);
+        assert_eq!(main, want);
+        // the legacy signing bytes of the pinned mint tx are unchanged (same pin as above)
+        assert_eq!(sha256_hex(&legacy), "02e482d9e25bad6223b10dc8cac310b4ba6f874572cc2f76b3de58050114b5bb");
     }
 
     /// A post-fork header carries the field and it survives a round-trip.

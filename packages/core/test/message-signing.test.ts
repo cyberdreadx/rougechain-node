@@ -148,6 +148,7 @@ describe("domain separation: a signed message is never a transaction signature",
   const typesRs = repo("core/types/src/lib.rs");
   const nodeRs = repo("core/daemon/src/node.rs");
   const mainRs = repo("core/daemon/src/main.rs");
+  const chainRs = repo("core/daemon/src/chain_binding.rs");
   const bindingRs = repo("core/daemon/src/v2_binding.rs");
   const fn = (src: string, start: string, len = 2600) => {
     const i = src.indexOf(start);
@@ -192,7 +193,7 @@ describe("domain separation: a signed message is never a transaction signature",
     // Every pqc_verify call in the daemon, by the expression it verifies. A new call site with a
     // new kind of input makes this fail: add it to the proof (message-signing.ts) first.
     const inputs = new Set<string>();
-    for (const src of [nodeRs, mainRs]) {
+    for (const src of [nodeRs, mainRs, chainRs]) {
       for (const m of src.matchAll(/pqc_verify\(\s*&?([A-Za-z0-9_.]+),\s*&?([A-Za-z0-9_.()]+(?:\([^)]*\))?),/g)) inputs.add(m[2]);
     }
     expect([...inputs].sort()).toEqual([
@@ -202,7 +203,9 @@ describe("domain separation: a signed message is never a transaction signature",
       "bytes_new", // encode_tx_for_signing(tx)
       "encode_tx_for_signing(&m)", // tests
       "encode_tx_for_signing(&t)", // tests
+      "encode_tx_for_signing(&t1)", // tests
       "encode_tx_for_signing(tx)", // tests
+      "encode_tx_for_signing_chain(&t2, CHAIN)", // tests (network-bound V1, first byte `r`)
       "encode_tx_v1(&legacy)", // tests
       "header_bytes", // encode_header_v1 (block proposer, JSON)
       "payload_bytes", // /api/v2 batch: JSON equal to payload

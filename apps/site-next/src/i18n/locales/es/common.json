@@ -29,6 +29,8 @@
     "explore": "Explorar"
   },
   "footer": {
+    "learn": "Aprende",
+    "playground": "Playground",
     "tagline": "Construida para lo que viene.",
     "docs": "Documentación",
     "community": "Comunidad",
@@ -160,6 +162,10 @@
     "build": {
       "name": "Portal para desarrolladores",
       "description": "Herramientas para construir en RougeChain."
+    },
+    "ide": {
+      "name": "Playground de contratos",
+      "description": "Escribe, prueba y despliega contratos WASM en el navegador."
     },
     "docs": {
       "name": "Documentación",

@@ -181,7 +181,7 @@ describe("sending: endpoints and payloads match apps/web (core sendMessage)", ()
     const sent = node.postsTo("/v2/messenger/messages")[0].body;
     expect(sent.valid).toBe(true);
     expect(sent.public_key).toBe(me.signingPublicKey);
-    expect(Object.keys(sent.payload).sort()).toEqual(["contentSignature", "conversationId", "encryptedContent", "from", "messageType", "nonce", "selfDestruct", "spoiler", "timestamp"]);
+    expect(Object.keys(sent.payload).sort()).toEqual(["chainId", "contentSignature", "conversationId", "encryptedContent", "from", "messageType", "nonce", "selfDestruct", "spoiler", "timestamp"]);
     expect(sent.payload).toMatchObject({ conversationId: "c1", messageType: "text", selfDestruct: false, spoiler: false, from: me.signingPublicKey });
     const pkg = String(sent.payload.encryptedContent);
     expect(isV2Package(pkg)).toBe(false);

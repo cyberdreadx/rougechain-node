@@ -67,6 +67,7 @@ Then point the config at the built file:
 |----------|---------|-------------|
 | `ROUGECHAIN_URL` | `https://api.rougechain.io` | RougeChain API host (the `api.` subdomain — **not** the `rougechain.io` frontend, which serves the web app) |
 | `ROUGECHAIN_API_KEY` | (none) | Optional API key |
+| `ROUGECHAIN_CHAIN_ID` | (the node's) | Network the wallet signs for (`rougechain-mainnet-1` / `rougechain-devnet-1`). Every signature commits to it; the server refuses to sign if the node reports a different chain id. Recommended in write mode. |
 | `ROUGECHAIN_MNEMONIC` | (none) | **Enables write mode.** 12/24-word BIP-39 seed of the signing wallet |
 | `ROUGECHAIN_PRIVATE_KEY` + `ROUGECHAIN_PUBLIC_KEY` | (none) | Alternative to the mnemonic — raw hex keys |
 

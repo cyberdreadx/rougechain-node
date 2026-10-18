@@ -18,6 +18,11 @@ const i18nReady = import("./i18n").then((m) =>
     testnet: import.meta.env.VITE_NETWORK_LOCK === "testnet",
   }),
 );
+// Signatures commit to the network: check once per session, in the background, that the node
+// reports the chain id of the selected network (signing is refused if it does not).
+if (!explorer) {
+  void import("@rougechain/core/chain-id").then((m) => m.verifyNodeChainId()).catch(() => {});
+}
 const Root = lazy(() =>
   Promise.all([explorer ? import("./ExplorerSite") : import("./App"), i18nReady]).then(([m]) => m),
 );

@@ -9,6 +9,9 @@
 //!   * `payload_bytes_hex` carries those exact signed bytes, so the node verifies the signature
 //!     over them directly (`verify_signed_tx` in the daemon) instead of relying on
 //!     re-serialisation. The node also checks they parse to the same `payload`.
+//!   * `chainId` names the network the request is for (the node's `/api/health` `chain_id`);
+//!     it is inside the signed bytes, so the signature commits to that network and a node of
+//!     another network refuses it (`CHAIN_ID_MISMATCH`).
 //! The node derives the executable transaction from the signed payload alone
 //! (daemon `v2_binding`): stake/unstake read `amount` (integer), transfer reads `to`, `amount`,
 //! `token`; the fee is fixed by the node (1 XRGE for all three).
@@ -70,14 +73,43 @@ pub fn canonical_json(value: &Value) -> String {
     }
 }
 
+pub const MAINNET_CHAIN_ID: &str = "rougechain-mainnet-1";
+pub const TESTNET_CHAIN_ID: &str = "rougechain-devnet-1";
+
+/// The chain id of a `--network` name.
+pub fn chain_id_for_network(network: &str) -> Option<&'static str> {
+    match network {
+        "mainnet" => Some(MAINNET_CHAIN_ID),
+        "testnet" => Some(TESTNET_CHAIN_ID),
+        _ => None,
+    }
+}
+
+/// The chain id to sign for: the expected one (from `--chain-id`, or the network of the public
+/// node in use) must equal what the node reports; with no expectation (a custom `--rpc`) the
+/// node's own chain id is used. Refuses when they disagree or nothing is known.
+pub fn pick_chain_id(expected: Option<&str>, reported: Option<&str>) -> Result<String, String> {
+    match (expected, reported) {
+        (Some(e), Some(r)) if e == r => Ok(e.to_string()),
+        (Some(e), Some(r)) => Err(format!(
+            "CHAIN_ID_MISMATCH: refusing to sign for '{}' — the node reports chain id '{}' (pass --chain-id or the matching --network)", e, r)),
+        (Some(e), None) => Ok(e.to_string()),
+        (None, Some(r)) => Ok(r.to_string()),
+        (None, None) => Err("cannot determine the chain id: the node did not report one; pass --chain-id".into()),
+    }
+}
+
 /// Build and sign a v2 request. `timestamp_ms` and `nonce` are parameters so tests are deterministic.
+/// `chain_id` is signed as `chainId`, so the signature commits to that network.
 pub fn build_signed_v2(
     public_key_hex: &str,
     secret_key_hex: &str,
     mut fields: Map<String, Value>,
     timestamp_ms: u64,
     nonce: &str,
+    chain_id: &str,
 ) -> Result<Value, String> {
+    fields.insert("chainId".into(), Value::String(chain_id.to_string()));
     fields.insert("from".into(), Value::String(public_key_hex.to_string()));
     fields.insert("timestamp".into(), Value::from(timestamp_ms));
     fields.insert("nonce".into(), Value::String(nonce.to_string()));
@@ -90,6 +122,19 @@ pub fn build_signed_v2(
         "public_key": public_key_hex,
         "payload_bytes_hex": hex::encode(signed.as_bytes()),
     }))
+}
+
+/// The `rougechain` CLI envelope (the signed bytes of a `/api/tx/broadcast` transaction):
+/// `{tx_type, from, nonce, fee, payload, chain_id}` — `chain_id` binds the signature to the network.
+pub fn envelope(tx_type: &str, from: &str, nonce: u64, fee: u64, payload: Map<String, Value>, chain_id: &str) -> Value {
+    serde_json::json!({
+        "tx_type": tx_type,
+        "from": from,
+        "nonce": nonce,
+        "fee": fee,
+        "payload": payload,
+        "chain_id": chain_id,
+    })
 }
 
 #[cfg(test)]
@@ -142,11 +187,12 @@ mod tests {
     #[test]
     fn stake_request_has_the_sdk_shape_and_passes_the_node_checks() {
         let (pk, sk) = keypair();
-        let req = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, NONCE).unwrap();
+        let req = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, NONCE, MAINNET_CHAIN_ID).unwrap();
         let p = req["payload"].as_object().unwrap();
         let mut keys: Vec<&str> = p.keys().map(|k| k.as_str()).collect();
         keys.sort();
-        assert_eq!(keys, ["amount", "fee", "from", "nonce", "timestamp", "type"]);
+        assert_eq!(keys, ["amount", "chainId", "fee", "from", "nonce", "timestamp", "type"]);
+        assert_eq!(p["chainId"], MAINNET_CHAIN_ID);
         assert_eq!(p["type"], "stake");
         assert_eq!(p["from"], pk.as_str());
         assert_eq!(p["nonce"], NONCE);
@@ -158,7 +204,7 @@ mod tests {
         let signed = node_verify(&req, NOW as i64 + 1_000).unwrap();
         assert_eq!(
             signed,
-            format!(r#"{{"amount":10000,"fee":1,"from":"{pk}","nonce":"{NONCE}","timestamp":{NOW},"type":"stake"}}"#)
+            format!(r#"{{"amount":10000,"chainId":"{MAINNET_CHAIN_ID}","fee":1,"from":"{pk}","nonce":"{NONCE}","timestamp":{NOW},"type":"stake"}}"#)
         );
     }
 
@@ -168,7 +214,7 @@ mod tests {
         // The CLI signs exactly that serialisation, so both node paths accept the same signature.
         let (pk, sk) = keypair();
         for fields in [stake_fields("stake", 10_000), stake_fields("unstake", 12_345), transfer_fields(&"ab".repeat(1952), 25, "XRGE"), faucet_fields()] {
-            let req = build_signed_v2(&pk, &sk, fields, NOW, NONCE).unwrap();
+            let req = build_signed_v2(&pk, &sk, fields, NOW, NONCE, MAINNET_CHAIN_ID).unwrap();
             let with = node_verify(&req, NOW as i64).unwrap();
             let mut without = req.clone();
             without.as_object_mut().unwrap().remove("payload_bytes_hex");
@@ -183,7 +229,7 @@ mod tests {
     fn transfer_and_unstake_fields() {
         let (pk, sk) = keypair();
         let to = "cd".repeat(1952);
-        let req = build_signed_v2(&pk, &sk, transfer_fields(&to, 7, "XRGE"), NOW, NONCE).unwrap();
+        let req = build_signed_v2(&pk, &sk, transfer_fields(&to, 7, "XRGE"), NOW, NONCE, MAINNET_CHAIN_ID).unwrap();
         let p = &req["payload"];
         assert_eq!(p["type"], "transfer");
         assert_eq!(p["to"], to.as_str());
@@ -192,7 +238,7 @@ mod tests {
         assert_eq!(p["token"], "XRGE");
         assert_eq!(p["fee"].as_u64(), Some(1));
         node_verify(&req, NOW as i64).unwrap();
-        let req = build_signed_v2(&pk, &sk, stake_fields("unstake", 10_000), NOW, NONCE).unwrap();
+        let req = build_signed_v2(&pk, &sk, stake_fields("unstake", 10_000), NOW, NONCE, MAINNET_CHAIN_ID).unwrap();
         assert_eq!(req["payload"]["type"], "unstake");
         assert_eq!(req["payload"]["amount"].as_u64(), Some(10_000));
         node_verify(&req, NOW as i64).unwrap();
@@ -201,7 +247,7 @@ mod tests {
     #[test]
     fn tampering_is_rejected_by_the_node_checks() {
         let (pk, sk) = keypair();
-        let good = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, NONCE).unwrap();
+        let good = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, NONCE, MAINNET_CHAIN_ID).unwrap();
         // amount changed in the payload object only
         let mut t = good.clone();
         t["payload"]["amount"] = Value::from(20_000u64);
@@ -223,14 +269,14 @@ mod tests {
         assert!(node_verify(&t, NOW as i64).is_err());
         // signed by a key other than `from`
         let (_, other_sk) = keypair();
-        let forged = build_signed_v2(&pk, &other_sk, stake_fields("stake", 10_000), NOW, NONCE).unwrap();
+        let forged = build_signed_v2(&pk, &other_sk, stake_fields("stake", 10_000), NOW, NONCE, MAINNET_CHAIN_ID).unwrap();
         assert!(node_verify(&forged, NOW as i64).is_err());
     }
 
     #[test]
     fn timestamp_window_is_five_minutes_either_way() {
         let (pk, sk) = keypair();
-        let req = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, NONCE).unwrap();
+        let req = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, NONCE, MAINNET_CHAIN_ID).unwrap();
         let now = NOW as i64;
         assert!(node_verify(&req, now + 5 * 60 * 1000).is_ok());
         assert!(node_verify(&req, now - 5 * 60 * 1000).is_ok());
@@ -241,10 +287,47 @@ mod tests {
     #[test]
     fn two_requests_differ_by_nonce_so_signatures_are_not_replays() {
         let (pk, sk) = keypair();
-        let a = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, "aa").unwrap();
-        let b = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, "bb").unwrap();
+        let a = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, "aa", MAINNET_CHAIN_ID).unwrap();
+        let b = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, "bb", MAINNET_CHAIN_ID).unwrap();
         assert_ne!(a["payload_bytes_hex"], b["payload_bytes_hex"]);
         assert_ne!(a["signature"], b["signature"]);
+    }
+
+    #[test]
+    fn chain_id_is_signed_and_differs_per_network() {
+        let (pk, sk) = keypair();
+        let main = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, NONCE, MAINNET_CHAIN_ID).unwrap();
+        let test = build_signed_v2(&pk, &sk, stake_fields("stake", 10_000), NOW, NONCE, TESTNET_CHAIN_ID).unwrap();
+        assert_eq!(test["payload"]["chainId"], TESTNET_CHAIN_ID);
+        assert_ne!(main["payload_bytes_hex"], test["payload_bytes_hex"]);
+        // the chain id is inside the signed bytes: changing it breaks the signature
+        let mut t = main.clone();
+        t["payload"]["chainId"] = Value::String(TESTNET_CHAIN_ID.into());
+        t["payload_bytes_hex"] = Value::String(hex::encode(canonical_json(&t["payload"])));
+        assert_eq!(node_verify(&t, NOW as i64).unwrap_err(), "Invalid signature");
+    }
+
+    #[test]
+    fn envelope_carries_chain_id_inside_the_signed_bytes() {
+        let mut payload = Map::new();
+        payload.insert("amount".into(), Value::from(5u64));
+        let e = envelope("stake", "ab", 3, 1, payload, TESTNET_CHAIN_ID);
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""chain_id":"rougechain-devnet-1""#), "{s}");
+        assert_eq!(e["payload"]["amount"].as_u64(), Some(5));
+        assert_eq!((e["tx_type"].as_str(), e["nonce"].as_u64(), e["fee"].as_u64()), (Some("stake"), Some(3), Some(1)));
+    }
+
+    #[test]
+    fn chain_id_selection_refuses_a_disagreeing_node() {
+        assert_eq!(chain_id_for_network("mainnet"), Some(MAINNET_CHAIN_ID));
+        assert_eq!(chain_id_for_network("testnet"), Some(TESTNET_CHAIN_ID));
+        assert_eq!(chain_id_for_network("other"), None);
+        assert_eq!(pick_chain_id(Some(MAINNET_CHAIN_ID), Some(MAINNET_CHAIN_ID)).unwrap(), MAINNET_CHAIN_ID);
+        assert!(pick_chain_id(Some(MAINNET_CHAIN_ID), Some(TESTNET_CHAIN_ID)).unwrap_err().starts_with("CHAIN_ID_MISMATCH"));
+        assert_eq!(pick_chain_id(None, Some("test")).unwrap(), "test");
+        assert_eq!(pick_chain_id(Some(TESTNET_CHAIN_ID), None).unwrap(), TESTNET_CHAIN_ID);
+        assert!(pick_chain_id(None, None).is_err());
     }
 
     #[test]

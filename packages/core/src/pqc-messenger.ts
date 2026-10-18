@@ -6,6 +6,7 @@ import { encryptAndSignV2, decryptV2Package, isV2Package, verifyPackageSignature
 import { blockWalletKeys, getBlockedList, unblockWalletKeys } from "./messenger-prefs";
 import { fitsAvatarLimit, getStoredAvatar, isSafeAvatarUrl, normalizeAvatarField, setStoredAvatar } from "./avatar";
 import { deriveMessagingKeypair } from "./messaging-keys";
+import { withChainId } from "./chain-id";
 export { deriveMessagingKeypair, hasMessagingKeys, withDerivedMessagingKeys } from "./messaging-keys";
 
 export interface Wallet {
@@ -556,7 +557,8 @@ export function buildSignedRequest(
     timestamp: Date.now(),
     nonce,
   };
-  const sorted = sortKeysDeep(fullPayload) as Record<string, unknown>;
+  // Signed requests commit to the network too: `chainId` is inside the signed bytes.
+  const sorted = sortKeysDeep(withChainId(fullPayload)) as Record<string, unknown>;
   const json = JSON.stringify(sorted);
   const bytes = new TextEncoder().encode(json);
   const sig = ml_dsa65.sign(bytes, hexToBytes(signingPrivateKey));

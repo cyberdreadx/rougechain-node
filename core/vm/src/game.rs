@@ -59,6 +59,9 @@ pub struct GameExt {
     pub payable: bool,
     /// CONTRACT_NFT_ROYALTY: link `host_nft_royalty_bps` / `host_nft_royalty_recipient`.
     pub nft_royalty: bool,
+    /// CONTRACT_CHAIN_ID: `Some(chain id)` links `host_get_chain_id`; `None` (before activation)
+    /// leaves it unlinked, so a module importing it fails like one importing any unknown function.
+    pub chain_id: Option<String>,
     /// What the caller attached to this call (symbol, amount in quanta or raw token units). The node
     /// has already credited it to the contract in the balances the call sees; it moves for real only
     /// if the call succeeds. `None` for sub-calls and calls without payment.
@@ -442,6 +445,31 @@ pub fn register_payable_functions(linker: &mut Linker<HostEnv>) -> Result<(), St
 /// Names of the CONTRACT_NFT_ROYALTY host functions (not linked before activation, so a module
 /// importing them fails to instantiate exactly like a module importing any unknown function).
 pub const NFT_ROYALTY_HOST_FUNCTIONS: &[&str] = &["host_nft_royalty_bps", "host_nft_royalty_recipient"];
+
+/// Name of the CONTRACT_CHAIN_ID host function (not linked before activation).
+pub const CHAIN_ID_HOST_FUNCTIONS: &[&str] = &["host_get_chain_id"];
+
+/// CONTRACT_CHAIN_ID: `host_get_chain_id(buf_ptr, buf_len) -> i32` writes the chain id (UTF-8, e.g.
+/// `rougechain-mainnet-1`) into contract memory and returns its length; `-1` if `buf_len` is too
+/// small or the buffer is outside memory. Same calling pattern as `host_get_self_addr`. A contract
+/// uses it to bind the messages it verifies to the network (domain-separated message including the
+/// chain id, its own address and an expiry).
+pub fn register_chain_id_function(linker: &mut Linker<HostEnv>) -> Result<(), String> {
+    linker.func_wrap("env", "host_get_chain_id",
+        |mut caller: Caller<'_, HostEnv>, bp: u32, bl: u32| -> i32 {
+            let id = match caller.data().game.as_ref().and_then(|g| g.ext.chain_id.clone()) {
+                Some(id) => id,
+                None => return -1,
+            };
+            if id.len() > bl as usize { return -1; }
+            match write(&mut caller, bp, bl, id.as_bytes()) {
+                n if n < 0 => -1,
+                n => n,
+            }
+        }
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
 
 /// Basis points that mean 100%.
 pub const ROYALTY_BPS_MAX: u16 = 10_000;

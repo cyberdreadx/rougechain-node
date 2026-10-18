@@ -27,6 +27,7 @@ All node configuration is done via command-line flags or environment variables.
 | `--dev` | - | `false` | Dev mode: enables legacy v1 unsigned write endpoints **and** allows any CORS origin |
 | — | `QV_CORS_ORIGINS` | *(built-in list)* | Comma-separated origins allowed to call the API from a browser |
 | — | `QV_FAUCET_ENABLED` | `false` | Enable the faucet endpoints (testnet/dev only — never set on mainnet) |
+| `--require-signed-chain-id` | `QV_REQUIRE_SIGNED_CHAIN_ID` | `false` | **REQUIRE_SIGNED_CHAIN_ID.** Refuse signed payloads (`/api/v2` transactions, signed mail/messenger/name requests, CLI envelopes) that do not name this node's chain id (`chainId`; `chain_id` in a CLI envelope), with `CHAIN_ID_REQUIRED`. A payload naming another chain id is always refused (`CHAIN_ID_MISMATCH`), whatever this flag says. Leave off until wallets have shipped the field — see [Security](../security.md#network-binding) |
 
 ### Browser access (CORS)
 

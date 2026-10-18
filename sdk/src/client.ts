@@ -26,6 +26,8 @@ import {
   createSignedPushRegister,
   createSignedPushUnregister,
   signRequest,
+  bindWalletToChain,
+  ChainIdMismatchError,
 } from "./signer.js";
 import { hexToBytes, bytesToHex } from "./utils.js";
 
@@ -121,6 +123,17 @@ export interface RougeChainOptions {
    * Pass e.g. the `ws` package on Node versions without a global WebSocket.
    */
   WebSocket?: new (url: string) => unknown;
+  /**
+   * Exact chain id of the network you intend to sign for ("rougechain-mainnet-1" or
+   * "rougechain-devnet-1"). Every payload this client signs carries it as `chainId`, inside the
+   * signed bytes, so a signature is only valid on that network. Before the first signature the
+   * client checks it once against the node's `GET /api/health` `chain_id` and refuses to sign
+   * (`ChainIdMismatchError`, code `CHAIN_ID_MISMATCH`) if they differ.
+   *
+   * Strongly recommended. Without it the client adopts whatever chain id the node reports, which
+   * still binds each signature to one network but cannot catch a client pointed at the wrong node.
+   */
+  chainId?: string;
 }
 
 export class RougeChain {
@@ -128,6 +141,10 @@ export class RougeChain {
   /** @internal */ readonly fetchFn: FetchFn;
   /** @internal */ readonly headers: Record<string, string>;
   /** @internal */ readonly wsCtor: (new (url: string) => unknown) | undefined;
+  /** Chain id configured in the options (undefined = adopt the node's). */
+  readonly configuredChainId: string | undefined;
+  private chainIdCheck: Promise<string> | null = null;
+  private resolvedChainId: string | undefined;
 
   public readonly nft: NftClient;
   public readonly dex: DexClient;
@@ -148,6 +165,7 @@ export class RougeChain {
     if (options.apiKey) {
       this.headers["X-API-Key"] = options.apiKey;
     }
+    this.configuredChainId = options.chainId || undefined;
 
     this.nft = new NftClient(this);
     this.dex = new DexClient(this);
@@ -157,6 +175,58 @@ export class RougeChain {
     this.shielded = new ShieldedClient(this);
     this.social = new SocialClient(this);
     this.contracts = new ContractsClient(this);
+  }
+
+  // ===== Network binding =====
+
+  /**
+   * The chain id this client signs for. Checked against the node once per client instance
+   * (`GET /health` → `chain_id`); rejects with {@link ChainIdMismatchError} when the node reports
+   * a different chain id than `options.chainId`. Without `options.chainId` the node's is adopted.
+   */
+  async getChainId(): Promise<string> {
+    if (this.resolvedChainId !== undefined) return this.resolvedChainId;
+    if (!this.chainIdCheck) {
+      this.chainIdCheck = this.fetchReportedChainId().then((reported) => {
+        const want = this.configuredChainId;
+        if (want !== undefined && reported !== null && reported !== want) {
+          throw new ChainIdMismatchError(want, reported);
+        }
+        const id = want ?? reported;
+        if (!id) {
+          throw new Error("CHAIN_ID_UNKNOWN: the node did not report a chain id; pass `chainId` in the RougeChain options");
+        }
+        this.resolvedChainId = id;
+        return id;
+      });
+      // A failed check (node unreachable) is retried on the next signature; a mismatch stays.
+      this.chainIdCheck.catch((e) => {
+        if (!(e instanceof ChainIdMismatchError)) this.chainIdCheck = null;
+      });
+    }
+    return this.chainIdCheck;
+  }
+
+  /** The chain id if already known (configured or checked), without a network round trip. */
+  knownChainId(): string | undefined {
+    return this.resolvedChainId ?? this.configuredChainId;
+  }
+
+  private async fetchReportedChainId(): Promise<string | null> {
+    for (const path of ["/health", "/stats"]) {
+      try {
+        const res = await this.fetchFn(`${this.baseUrl}${path}`, { headers: this.headers });
+        if (!res.ok) continue;
+        const data = (await res.json()) as { chain_id?: unknown };
+        if (typeof data?.chain_id === "string" && data.chain_id) return data.chain_id;
+      } catch { /* try the next endpoint */ }
+    }
+    return null;
+  }
+
+  /** @internal `wallet` bound to this client's (checked) chain id, for the signers. */
+  async bind<W extends WalletKeys>(wallet: W): Promise<W & { chainId: string }> {
+    return bindWalletToChain(wallet, await this.getChainId());
   }
 
   // ===== Internal helpers =====
@@ -408,13 +478,13 @@ export class RougeChain {
 
   /** Register an Expo push token — signed by wallet to prove ownership. */
   async registerPushToken(wallet: WalletKeys, pushToken: string, platform = "expo"): Promise<ApiResponse> {
-    const tx = createSignedPushRegister(wallet, pushToken, platform);
+    const tx = createSignedPushRegister(await this.bind(wallet), pushToken, platform);
     return this.submitTx("/push/register", tx);
   }
 
   /** Unregister push notifications — signed by wallet to prove ownership. */
   async unregisterPushToken(wallet: WalletKeys): Promise<ApiResponse> {
-    const tx = createSignedPushUnregister(wallet);
+    const tx = createSignedPushUnregister(await this.bind(wallet));
     return this.submitTx("/push/unregister", tx);
   }
 
@@ -425,7 +495,7 @@ export class RougeChain {
     params: TransferParams
   ): Promise<ApiResponse> {
     const tx = createSignedTransfer(
-      wallet,
+      await this.bind(wallet),
       params.to,
       params.amount,
       params.fee,
@@ -446,7 +516,7 @@ export class RougeChain {
     let tx: SignedTransaction;
     try {
       tx = createSignedTokenCreation(
-        wallet,
+        await this.bind(wallet),
         params.name,
         params.symbol,
         params.totalSupply,
@@ -464,7 +534,7 @@ export class RougeChain {
     wallet: WalletKeys,
     params: StakeParams
   ): Promise<ApiResponse> {
-    const tx = createSignedStake(wallet, params.amount, params.fee);
+    const tx = createSignedStake(await this.bind(wallet), params.amount, params.fee);
     return this.submitTx("/v2/stake", tx);
   }
 
@@ -472,12 +542,12 @@ export class RougeChain {
     wallet: WalletKeys,
     params: StakeParams
   ): Promise<ApiResponse> {
-    const tx = createSignedUnstake(wallet, params.amount, params.fee);
+    const tx = createSignedUnstake(await this.bind(wallet), params.amount, params.fee);
     return this.submitTx("/v2/unstake", tx);
   }
 
   async faucet(wallet: WalletKeys): Promise<ApiResponse> {
-    const tx = createSignedFaucetRequest(wallet);
+    const tx = createSignedFaucetRequest(await this.bind(wallet));
     return this.submitTx("/v2/faucet", tx);
   }
 
@@ -487,7 +557,7 @@ export class RougeChain {
     fee = 1,
     token = "XRGE"
   ): Promise<ApiResponse> {
-    const tx = createSignedBurn(wallet, amount, fee, token);
+    const tx = createSignedBurn(await this.bind(wallet), amount, fee, token);
     return this.submitTx("/v2/transfer", tx);
   }
 
@@ -495,7 +565,7 @@ export class RougeChain {
     wallet: WalletKeys,
     params: TokenMetadataUpdateParams
   ): Promise<ApiResponse> {
-    const tx = createSignedTokenMetadataUpdate(wallet, params.symbol, {
+    const tx = createSignedTokenMetadataUpdate(await this.bind(wallet), params.symbol, {
       image: params.image,
       description: params.description,
       website: params.website,
@@ -509,7 +579,7 @@ export class RougeChain {
     wallet: WalletKeys,
     tokenSymbol: string
   ): Promise<ApiResponse> {
-    const tx = createSignedTokenMetadataClaim(wallet, tokenSymbol);
+    const tx = createSignedTokenMetadataClaim(await this.bind(wallet), tokenSymbol);
     return this.submitTx("/v2/token/metadata/claim", tx);
   }
 
@@ -524,7 +594,7 @@ export class RougeChain {
   ): Promise<ApiResponse> {
     let tx: SignedTransaction;
     try {
-      tx = createSignedTokenMint(wallet, params.symbol, params.amount, params.fee, params.accountNonce);
+      tx = createSignedTokenMint(await this.bind(wallet), params.symbol, params.amount, params.fee, params.accountNonce);
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -660,7 +730,7 @@ class NftClient {
     wallet: WalletKeys,
     params: CreateNftCollectionParams
   ): Promise<ApiResponse> {
-    const tx = createSignedNftCreateCollection(wallet, params.symbol, params.name, {
+    const tx = createSignedNftCreateCollection(await this.rc.bind(wallet), params.symbol, params.name, {
       maxSupply: params.maxSupply,
       royaltyBps: params.royaltyBps,
       royaltyRecipient: params.royaltyRecipient,
@@ -679,7 +749,7 @@ class NftClient {
     wallet: WalletKeys,
     params: MintNftParams
   ): Promise<ApiResponse> {
-    const tx = createSignedNftMint(wallet, params.collectionId, params.name, {
+    const tx = createSignedNftMint(await this.rc.bind(wallet), params.collectionId, params.name, {
       metadataUri: params.metadataUri,
       attributes: params.attributes,
     });
@@ -691,7 +761,7 @@ class NftClient {
     params: BatchMintNftParams
   ): Promise<ApiResponse> {
     const tx = createSignedNftBatchMint(
-      wallet,
+      await this.rc.bind(wallet),
       params.collectionId,
       params.names,
       { uris: params.uris, attributes: params.attributes ?? params.batchAttributes }
@@ -704,7 +774,7 @@ class NftClient {
     params: TransferNftParams
   ): Promise<ApiResponse> {
     const tx = createSignedNftTransfer(
-      wallet,
+      await this.rc.bind(wallet),
       params.collectionId,
       params.tokenId,
       params.to,
@@ -717,7 +787,7 @@ class NftClient {
     wallet: WalletKeys,
     params: BurnNftParams
   ): Promise<ApiResponse> {
-    const tx = createSignedNftBurn(wallet, params.collectionId, params.tokenId);
+    const tx = createSignedNftBurn(await this.rc.bind(wallet), params.collectionId, params.tokenId);
     return this.rc.submitTx("/v2/nft/burn", tx);
   }
 
@@ -726,7 +796,7 @@ class NftClient {
     params: LockNftParams
   ): Promise<ApiResponse> {
     const tx = createSignedNftLock(
-      wallet,
+      await this.rc.bind(wallet),
       params.collectionId,
       params.tokenId,
       params.locked
@@ -739,7 +809,7 @@ class NftClient {
     params: FreezeCollectionParams
   ): Promise<ApiResponse> {
     const tx = createSignedNftFreezeCollection(
-      wallet,
+      await this.rc.bind(wallet),
       params.collectionId,
       params.frozen
     );
@@ -797,7 +867,7 @@ class DexClient {
     params: SwapParams
   ): Promise<ApiResponse> {
     const tx = createSignedSwap(
-      wallet,
+      await this.rc.bind(wallet),
       params.tokenIn,
       params.tokenOut,
       params.amountIn,
@@ -811,7 +881,7 @@ class DexClient {
     params: CreatePoolParams
   ): Promise<ApiResponse> {
     const tx = createSignedPoolCreation(
-      wallet,
+      await this.rc.bind(wallet),
       params.tokenA,
       params.tokenB,
       params.amountA,
@@ -825,7 +895,7 @@ class DexClient {
     params: AddLiquidityParams
   ): Promise<ApiResponse> {
     const tx = createSignedAddLiquidity(
-      wallet,
+      await this.rc.bind(wallet),
       params.poolId,
       params.amountA,
       params.amountB
@@ -837,7 +907,7 @@ class DexClient {
     wallet: WalletKeys,
     params: RemoveLiquidityParams
   ): Promise<ApiResponse> {
-    const tx = createSignedRemoveLiquidity(wallet, params.poolId, params.lpAmount);
+    const tx = createSignedRemoveLiquidity(await this.rc.bind(wallet), params.poolId, params.lpAmount);
     return this.rc.submitTx("/v2/pool/remove-liquidity", tx);
   }
 }
@@ -897,7 +967,7 @@ class BridgeClient {
     try {
       const tokenSymbol = params.tokenSymbol ?? "qETH";
       const signed = createSignedBridgeWithdraw(
-        wallet,
+        await this.rc.bind(wallet),
         params.amount,
         params.evmAddress,
         tokenSymbol,
@@ -1003,7 +1073,7 @@ class BridgeClient {
   ): Promise<ApiResponse> {
     try {
       const signed = createSignedBridgeWithdraw(
-        wallet,
+        await this.rc.bind(wallet),
         params.amount,
         params.evmAddress,
         "XRGE",
@@ -1050,7 +1120,7 @@ class MailClient {
   // --- Name Registry (signed) ---
 
   async registerName(wallet: WalletKeys, name: string, walletId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { name, walletId });
+    const signed = signRequest(await this.rc.bind(wallet), { name, walletId });
     return this.rc.submitTx("/v2/names/register", signed);
   }
 
@@ -1078,7 +1148,7 @@ class MailClient {
   }
 
   async releaseName(wallet: WalletKeys, name: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { name });
+    const signed = signRequest(await this.rc.bind(wallet), { name });
     return this.rc.submitTx("/v2/names/release", signed);
   }
 
@@ -1099,7 +1169,7 @@ class MailClient {
         contentSig = bytesToHex(sigBytes);
       } catch { /* signature optional — daemon accepts empty */ }
     }
-    const signed = signRequest(wallet, {
+    const signed = signRequest(await this.rc.bind(wallet), {
       fromWalletId: params.from,
       toWalletIds: [params.to],
       subjectEncrypted: params.encrypted_subject,
@@ -1113,7 +1183,7 @@ class MailClient {
   }
 
   async getInbox(wallet: WalletKeys): Promise<MailMessage[]> {
-    const signed = signRequest(wallet, { folder: "inbox" });
+    const signed = signRequest(await this.rc.bind(wallet), { folder: "inbox" });
     try {
       const data = await this.rc.post<{ messages: MailMessage[] }>("/v2/mail/folder", signed);
       return data.messages ?? [];
@@ -1121,7 +1191,7 @@ class MailClient {
   }
 
   async getSent(wallet: WalletKeys): Promise<MailMessage[]> {
-    const signed = signRequest(wallet, { folder: "sent" });
+    const signed = signRequest(await this.rc.bind(wallet), { folder: "sent" });
     try {
       const data = await this.rc.post<{ messages: MailMessage[] }>("/v2/mail/folder", signed);
       return data.messages ?? [];
@@ -1129,7 +1199,7 @@ class MailClient {
   }
 
   async getTrash(wallet: WalletKeys): Promise<MailMessage[]> {
-    const signed = signRequest(wallet, { folder: "trash" });
+    const signed = signRequest(await this.rc.bind(wallet), { folder: "trash" });
     try {
       const data = await this.rc.post<{ messages: MailMessage[] }>("/v2/mail/folder", signed);
       return data.messages ?? [];
@@ -1137,7 +1207,7 @@ class MailClient {
   }
 
   async getMessage(wallet: WalletKeys, messageId: string): Promise<MailMessage | null> {
-    const signed = signRequest(wallet, { messageId });
+    const signed = signRequest(await this.rc.bind(wallet), { messageId });
     try {
       const data = await this.rc.post<{ success: boolean; message: MailMessage }>("/v2/mail/message", signed);
       return data.message ?? null;
@@ -1145,17 +1215,17 @@ class MailClient {
   }
 
   async move(wallet: WalletKeys, messageId: string, folder: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { messageId, folder });
+    const signed = signRequest(await this.rc.bind(wallet), { messageId, folder });
     return this.rc.submitTx("/v2/mail/move", signed);
   }
 
   async markRead(wallet: WalletKeys, messageId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { messageId });
+    const signed = signRequest(await this.rc.bind(wallet), { messageId });
     return this.rc.submitTx("/v2/mail/read", signed);
   }
 
   async delete(wallet: WalletKeys, messageId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { messageId });
+    const signed = signRequest(await this.rc.bind(wallet), { messageId });
     return this.rc.submitTx("/v2/mail/delete", signed);
   }
 }
@@ -1189,7 +1259,7 @@ class MessengerClient {
     /** Optional base64 data-URI avatar shared via the directory so peers can render it. */
     avatarUrl?: string;
   }): Promise<ApiResponse> {
-    const signed = signRequest(wallet, {
+    const signed = signRequest(await this.rc.bind(wallet), {
       id: opts.id,
       displayName: opts.displayName,
       signingPublicKey: opts.signingPublicKey,
@@ -1205,7 +1275,7 @@ class MessengerClient {
    * deleted, recoverable for 30 days) or "all".
    */
   async getConversations(wallet: WalletKeys, opts: { folder?: MessengerFolder } = {}): Promise<MessengerConversation[]> {
-    const signed = signRequest(wallet, opts.folder ? { folder: opts.folder } : {});
+    const signed = signRequest(await this.rc.bind(wallet), opts.folder ? { folder: opts.folder } : {});
     try {
       const data = await this.rc.post<{ conversations: Partial<MessengerConversation>[] }>(
         "/v2/messenger/conversations/list", signed
@@ -1218,7 +1288,7 @@ class MessengerClient {
     name?: string;
     isGroup?: boolean;
   } = {}): Promise<ApiResponse> {
-    const signed = signRequest(wallet, {
+    const signed = signRequest(await this.rc.bind(wallet), {
       participantIds,
       name: opts.name,
       isGroup: opts.isGroup ?? false,
@@ -1228,7 +1298,7 @@ class MessengerClient {
 
   /** Rename a group conversation (or clear its name by passing ""). Any participant may rename. */
   async updateConversation(wallet: WalletKeys, conversationId: string, opts: { name?: string } = {}): Promise<ApiResponse> {
-    const signed = signRequest(wallet, {
+    const signed = signRequest(await this.rc.bind(wallet), {
       conversationId,
       name: opts.name,
     });
@@ -1240,7 +1310,7 @@ class MessengerClient {
    * encrypt to the new members automatically; they don't receive prior history.
    */
   async addParticipants(wallet: WalletKeys, conversationId: string, participantIds: string[]): Promise<ApiResponse> {
-    const signed = signRequest(wallet, {
+    const signed = signRequest(await this.rc.bind(wallet), {
       conversationId,
       participantIds,
     });
@@ -1248,7 +1318,7 @@ class MessengerClient {
   }
 
   async getMessages(wallet: WalletKeys, conversationId: string): Promise<MessengerMessage[]> {
-    const signed = signRequest(wallet, { conversationId });
+    const signed = signRequest(await this.rc.bind(wallet), { conversationId });
     try {
       const data = await this.rc.post<{ messages: MessengerMessage[] }>(
         "/v2/messenger/messages/list", signed
@@ -1269,7 +1339,7 @@ class MessengerClient {
       spoiler?: boolean;
     } = {}
   ): Promise<ApiResponse> {
-    const signed = signRequest(wallet, {
+    const signed = signRequest(await this.rc.bind(wallet), {
       conversationId,
       encryptedContent,
       contentSignature: opts.contentSignature ?? "",
@@ -1282,7 +1352,7 @@ class MessengerClient {
   }
 
   async deleteMessage(wallet: WalletKeys, messageId: string, conversationId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { messageId, conversationId });
+    const signed = signRequest(await this.rc.bind(wallet), { messageId, conversationId });
     return this.rc.submitTx("/v2/messenger/messages/delete", signed);
   }
 
@@ -1292,19 +1362,19 @@ class MessengerClient {
    * only once every participant has deleted it.
    */
   async deleteConversation(wallet: WalletKeys, conversationId: string, opts: { purge?: boolean } = {}): Promise<ApiResponse> {
-    const signed = signRequest(wallet, opts.purge ? { conversationId, purge: true } : { conversationId });
+    const signed = signRequest(await this.rc.bind(wallet), opts.purge ? { conversationId, purge: true } : { conversationId });
     return this.rc.submitTx("/v2/messenger/conversations/delete", signed);
   }
 
   /** Restore a conversation from your trash. */
   async restoreConversation(wallet: WalletKeys, conversationId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { conversationId });
+    const signed = signRequest(await this.rc.bind(wallet), { conversationId });
     return this.rc.submitTx("/v2/messenger/conversations/restore", signed);
   }
 
   /** Restore a message you deleted (sender only, within the recovery window). */
   async restoreMessage(wallet: WalletKeys, messageId: string, conversationId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { messageId, conversationId });
+    const signed = signRequest(await this.rc.bind(wallet), { messageId, conversationId });
     return this.rc.submitTx("/v2/messenger/messages/restore", signed);
   }
 
@@ -1313,7 +1383,11 @@ class MessengerClient {
    * private `new_message` events. Nonces are single-use: build a new one per connect.
    */
   realtimeAuth(wallet: WalletKeys): { auth: SignedTransaction } {
-    return { auth: signRequest(wallet, { action: "messenger_ws_subscribe" }) };
+    // Synchronous: binds to the chain id when it is already known (configured, or checked by an
+    // earlier signature / `subscribe`, which resolves it before connecting).
+    const chainId = this.rc.knownChainId();
+    const w = chainId ? bindWalletToChain(wallet, chainId) : wallet;
+    return { auth: signRequest(w, { action: "messenger_ws_subscribe" }) };
   }
 
   /**
@@ -1352,7 +1426,12 @@ class MessengerClient {
         timer = setTimeout(open, Math.min(1000 * 2 ** attempt++, 30000));
       };
     };
-    open();
+    // Resolve (and check) the chain id first so the auth frame is bound to the network; on a
+    // mismatch nothing is signed and the status callback reports the error.
+    this.rc.getChainId().then(open, (e: unknown) => {
+      if (e instanceof ChainIdMismatchError) opts.onStatus?.(false, e.message);
+      else open();
+    });
     return () => {
       stopped = true;
       if (timer) clearTimeout(timer);
@@ -1361,7 +1440,7 @@ class MessengerClient {
   }
 
   async markRead(wallet: WalletKeys, messageId: string, conversationId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { messageId, conversationId });
+    const signed = signRequest(await this.rc.bind(wallet), { messageId, conversationId });
     return this.rc.submitTx("/v2/messenger/messages/read", signed);
   }
 }
@@ -1398,7 +1477,7 @@ class ShieldedClient {
     params: ShieldParams
   ): Promise<ApiResponse & { note?: ShieldedNote }> {
     const note = createShieldedNote(params.amount, wallet.publicKey);
-    const tx = createSignedShield(wallet, params.amount, note.commitment);
+    const tx = createSignedShield(await this.rc.bind(wallet), params.amount, note.commitment);
     const result = await this.rc.submitTx("/v2/shielded/shield", tx);
     if (result.success) {
       return { ...result, note };
@@ -1415,7 +1494,7 @@ class ShieldedClient {
     params: ShieldedTransferParams
   ): Promise<ApiResponse> {
     const tx = createSignedShieldedTransfer(
-      wallet,
+      await this.rc.bind(wallet),
       params.nullifiers,
       params.outputCommitments,
       params.proof,
@@ -1433,7 +1512,7 @@ class ShieldedClient {
     params: UnshieldParams
   ): Promise<ApiResponse> {
     const tx = createSignedUnshield(
-      wallet,
+      await this.rc.bind(wallet),
       params.nullifiers,
       params.amount,
       params.proof
@@ -1541,27 +1620,27 @@ class SocialClient {
   constructor(private readonly rc: RougeChain) {}
 
   async recordPlay(wallet: WalletKeys, trackId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { trackId });
+    const signed = signRequest(await this.rc.bind(wallet), { trackId });
     return this.rc.submitTx("/v2/social/play", signed);
   }
 
   async toggleLike(wallet: WalletKeys, trackId: string): Promise<ApiResponse & { liked?: boolean; likes?: number }> {
-    const signed = signRequest(wallet, { trackId });
+    const signed = signRequest(await this.rc.bind(wallet), { trackId });
     return this.rc.submitTx("/v2/social/like", signed) as Promise<ApiResponse & { liked?: boolean; likes?: number }>;
   }
 
   async postComment(wallet: WalletKeys, trackId: string, body: string): Promise<ApiResponse & { comment?: SocialComment }> {
-    const signed = signRequest(wallet, { trackId, body });
+    const signed = signRequest(await this.rc.bind(wallet), { trackId, body });
     return this.rc.submitTx("/v2/social/comment", signed) as Promise<ApiResponse & { comment?: SocialComment }>;
   }
 
   async deleteComment(wallet: WalletKeys, commentId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { commentId });
+    const signed = signRequest(await this.rc.bind(wallet), { commentId });
     return this.rc.submitTx("/v2/social/comment/delete", signed);
   }
 
   async toggleFollow(wallet: WalletKeys, artistPubkey: string): Promise<ApiResponse & { following?: boolean; followers?: number }> {
-    const signed = signRequest(wallet, { artistPubkey });
+    const signed = signRequest(await this.rc.bind(wallet), { artistPubkey });
     return this.rc.submitTx("/v2/social/follow", signed) as Promise<ApiResponse & { following?: boolean; followers?: number }>;
   }
 
@@ -1606,17 +1685,17 @@ class SocialClient {
   async createPost(wallet: WalletKeys, body: string, replyToId?: string): Promise<ApiResponse & { post?: SocialPost }> {
     const payload: Record<string, unknown> = { body };
     if (replyToId) payload.replyToId = replyToId;
-    const signed = signRequest(wallet, payload);
+    const signed = signRequest(await this.rc.bind(wallet), payload);
     return this.rc.submitTx("/v2/social/post", signed) as Promise<ApiResponse & { post?: SocialPost }>;
   }
 
   async deletePost(wallet: WalletKeys, postId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { postId });
+    const signed = signRequest(await this.rc.bind(wallet), { postId });
     return this.rc.submitTx("/v2/social/post/delete", signed);
   }
 
   async toggleRepost(wallet: WalletKeys, postId: string): Promise<ApiResponse & { reposted?: boolean; reposts?: number }> {
-    const signed = signRequest(wallet, { postId });
+    const signed = signRequest(await this.rc.bind(wallet), { postId });
     return this.rc.submitTx("/v2/social/repost", signed) as Promise<ApiResponse & { reposted?: boolean; reposts?: number }>;
   }
 
@@ -1653,7 +1732,7 @@ class SocialClient {
   }
 
   async getFollowingFeed(wallet: WalletKeys, limit = 50, offset = 0): Promise<SocialPost[]> {
-    const signed = signRequest(wallet, { limit, offset });
+    const signed = signRequest(await this.rc.bind(wallet), { limit, offset });
     try {
       const data = await this.rc.submitTx("/v2/social/feed", signed) as unknown as { posts?: SocialPost[] };
       return data.posts ?? [];
@@ -1663,7 +1742,7 @@ class SocialClient {
   // ── Hidden Tracks ─────────────────────────────────────
 
   async hideTrack(wallet: WalletKeys, trackId: string, hidden = true): Promise<ApiResponse & { hidden?: boolean }> {
-    const signed = signRequest(wallet, { trackId, hidden });
+    const signed = signRequest(await this.rc.bind(wallet), { trackId, hidden });
     return this.rc.submitTx("/v2/social/hide-track", signed) as Promise<ApiResponse & { hidden?: boolean }>;
   }
 

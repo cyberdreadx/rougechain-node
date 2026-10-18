@@ -7,6 +7,7 @@
 
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { type TokenMintOptions, TOKEN_MINT_FEE_XRGE, assertMintAmount, tokenMintFields } from "./token-minting";
+import { withChainId } from "./chain-id";
 
 /**
  * The official burn address - tokens sent here are permanently destroyed
@@ -48,6 +49,12 @@ export interface TransactionPayload {
   evmAddress?: string;
   timestamp: number;
   nonce: string;
+  /**
+   * The chain id of the network this payload is signed for (e.g. "rougechain-mainnet-1").
+   * Set by `signTransaction` from the selected network; inside the signed bytes, so the
+   * signature commits to that network.
+   */
+  chainId?: string;
   // Token creation
   token_name?: string;
   token_symbol?: string;
@@ -149,7 +156,8 @@ export function serializePayload(payload: TransactionPayload): Uint8Array {
 }
 
 /**
- * Sign a transaction payload with the private key
+ * Sign a transaction payload with the private key. The returned `payload` carries `chainId`
+ * (the selected network's chain id), which is inside the signed bytes.
  * 
  * @param payload - The transaction payload to sign
  * @param privateKey - The ML-DSA-65 private key (hex string)
@@ -161,13 +169,16 @@ export function signTransaction(
   privateKey: string,
   publicKey: string
 ): SignedTransaction {
-  const payloadBytes = serializePayload(payload);
+  // Signatures commit to the network: `chainId` (the selected network's chain id) is part of
+  // the signed bytes. A payload already naming another network is refused.
+  const bound = withChainId(payload);
+  const payloadBytes = serializePayload(bound);
   const privateKeyBytes = hexToBytes(privateKey);
 
   const signature = ml_dsa65.sign(payloadBytes, privateKeyBytes);
 
   return {
-    payload,
+    payload: bound,
     signature: bytesToHex(signature),
     public_key: publicKey,
   };

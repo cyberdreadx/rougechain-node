@@ -416,7 +416,8 @@ describe("signing payload layout + key derivation", () => {
     const w = fixtureWallet();
     const tx = createSignedTransfer(w.signingPublicKey, w.signingPrivateKey, "bb", 10);
     expect(Object.keys(tx).sort()).toEqual(["payload", "public_key", "signature"]);
-    expect(Object.keys(tx.payload).sort()).toEqual(["amount", "fee", "from", "nonce", "timestamp", "to", "token", "type"]);
+    expect(Object.keys(tx.payload).sort()).toEqual(["amount", "chainId", "fee", "from", "nonce", "timestamp", "to", "token", "type"]);
+    expect(tx.payload.chainId).toBe("rougechain-mainnet-1"); // signatures commit to the network
     expect(tx.payload).toMatchObject({ type: "transfer", from: w.signingPublicKey, to: "bb", amount: 10, fee: 1, token: "XRGE" });
     expect(tx.payload.nonce).toMatch(/^[0-9a-f]{32}$/);
     expect(verifyTransaction(tx)).toBe(true);

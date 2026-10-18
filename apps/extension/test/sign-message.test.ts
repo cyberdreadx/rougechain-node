@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { pubkeyToAddress } from "@rougechain/core/address";
 import {
@@ -124,8 +124,15 @@ function connect(origin = ORIGIN) {
 }
 
 let ADDRESS = "";
+let nodeChainId = "rougechain-mainnet-1";
 beforeAll(async () => {
     (globalThis as any).chrome = fakeChrome;
+    // The worker checks the selected network's chain id against its node once per session; answer
+    // locally (never reach a real node from tests). `nodeChainId` lets a test play a wrong node.
+    vi.stubGlobal("fetch", async (url: string) => {
+        if (String(url).endsWith("/health")) return new Response(JSON.stringify({ status: "ok", chain_id: nodeChainId, height: 1 }), { status: 200 });
+        return new Response(JSON.stringify({ success: false, error: "offline in tests" }), { status: 503 });
+    });
     ADDRESS = await pubkeyToAddress(PUB);
     await import("../src/background/service-worker");
 });
@@ -326,7 +333,11 @@ describe("service worker: signMessage", () => {
         const payload = { type: "transfer", from: PUB, to: "rouge1x", amount: 5, fee: 1, token: "XRGE", timestamp: 1, nonce: "n" };
         const res = await request("signTransaction", { payload });
         expect(approvals[0].type).toBe("sign");
-        const sorted = JSON.stringify(Object.fromEntries(Object.entries(payload).sort(([a], [b]) => (a < b ? -1 : 1))));
+        // network binding: a plain payload is signed for the wallet's selected network
+        const bound = { ...payload, chainId: "rougechain-mainnet-1" };
+        expect(res.result.payload).toEqual(bound);
+        expect(approvals[0].stored.network).toMatchObject({ chainId: "rougechain-mainnet-1", name: "RougeChain Mainnet", missing: false });
+        const sorted = JSON.stringify(Object.fromEntries(Object.entries(bound).sort(([a], [b]) => (a < b ? -1 : 1))));
         expect(res.result.signedPayload).toBe(sorted);
         expect(ml_dsa65.verify(unhex(res.result.signature), new TextEncoder().encode(sorted), kp.publicKey)).toBe(true);
         // a transaction signature is not a message signature
@@ -334,6 +345,47 @@ describe("service worker: signMessage", () => {
         // and signTransaction still only signs bytes that are the payload's canonical JSON
         const forged = await request("signTransaction", { payload: { payload, serializedHex: hex(messageSigningBytes("hello")) } });
         expect(forged.error).toBe("serializedHex does not match the payload");
+    });
+
+    it("signTransaction refuses a payload for another network, before any approval", async () => {
+        const payload = { type: "transfer", from: PUB, to: "rouge1x", amount: 5, timestamp: 1, nonce: "n", chainId: "rougechain-devnet-1" };
+        const res = await request("signTransaction", { payload });
+        expect(res.error).toMatch(/^CHAIN_ID_MISMATCH: .*RougeChain Testnet.*RougeChain Mainnet/);
+        expect(approvals).toHaveLength(0);
+        // with testnet selected the same payload is fine
+        local["rougechain-network"] = "testnet";
+        nodeChainId = "rougechain-devnet-1";
+        try {
+            const ok = await request("signTransaction", { payload });
+            expect(ok.result.payload.chainId).toBe("rougechain-devnet-1");
+            expect(approvals[0].stored.network).toMatchObject({ name: "RougeChain Testnet", missing: false });
+        } finally {
+            nodeChainId = "rougechain-mainnet-1";
+        }
+    });
+
+    it("signTransaction envelope without chainId: shown with the no-network warning, bytes unchanged", async () => {
+        const payload = { type: "transfer", from: PUB, to: "rouge1x", amount: 5, timestamp: 1, nonce: "n" };
+        const sorted = JSON.stringify(Object.fromEntries(Object.entries(payload).sort(([a], [b]) => (a < b ? -1 : 1))));
+        const res = await request("signTransaction", { payload: { payload, serializedHex: hex(new TextEncoder().encode(sorted)) } });
+        expect(res.result.signedPayload).toBe(sorted);
+        expect(approvals[0].stored.network).toMatchObject({ chainId: null, missing: true });
+    });
+
+    it("signTransaction and sendTransaction refuse to sign when the node reports another chain id", async () => {
+        local["rougechain-network"] = "testnet";
+        local["rougechain-custom-node-url"] = "https://wrong-node.example"; // not checked yet this session
+        nodeChainId = "rougechain-mainnet-1"; // the selected (testnet) node says it is mainnet
+        try {
+            const payload = { type: "transfer", from: PUB, to: "rouge1x", amount: 5, timestamp: 1, nonce: "n" };
+            const res = await request("signTransaction", { payload });
+            expect(res.error).toMatch(/Refusing to sign/);
+            const sent = await request("sendTransaction", { payload: { type: "transfer", to: "rouge1x", amount: 1 } });
+            expect(sent.error).toMatch(/Refusing to sign/);
+            expect(approvals).toHaveLength(0);
+        } finally {
+            nodeChainId = "rougechain-mainnet-1";
+        }
     });
 });
 
@@ -416,14 +468,15 @@ describe("approval popup: SignMessageView", () => {
         const app = src("approval/App.tsx");
         expect(app).toContain('{kind === "sign-message" && (');
         expect(app).toContain("<SignMessageView review={messageReview} />");
-        expect(app).toContain('disabled={closing || (kind === "sign-message" && !messageReview)}');
+        expect(app).toContain('disabled={closing || (kind === "sign-message" && !messageReview) || ((kind === "sign" || kind === "send") && !request.network)}');
+        expect(app).toContain("<NetworkBanner network={request.network} />");
         expect(app).toContain('{isSign && (messageDanger ? "Sign anyway" : "Sign")}');
     });
 });
 
 describe("version", () => {
-    it("the manifests and package.json say 1.8.0 (the first version with signMessage)", () => {
+    it("the manifests and package.json agree, at 1.9.0 (signMessage since 1.8.0; signatures name the network since 1.9.0)", () => {
         const root = (p: string) => JSON.parse(readFileSync(path.resolve(here, "..", p), "utf8")).version;
-        expect([root("package.json"), root("manifest.json"), root("public/manifest.json")]).toEqual(["1.8.0", "1.8.0", "1.8.0"]);
+        expect([root("package.json"), root("manifest.json"), root("public/manifest.json")]).toEqual(["1.9.0", "1.9.0", "1.9.0"]);
     });
 });
