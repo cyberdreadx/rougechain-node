@@ -183,3 +183,20 @@ describe("an imported phrase and an earlier create()", () => {
     expect(await store.get(id)).toEqual(before);
   }, 120_000);
 });
+
+describe("privacy from the listing node", () => {
+  it("a payment is submitted first to a node other than the one the wallet scanned from", async () => {
+    const { client, net } = await ready();
+    const listing = client.nodes[client.session!.listing];
+    const firstSubmit: string[] = [];
+    const inner = net.request.bind(net);
+    net.request = async (url, init) => {
+      if (isSubmit(url) && firstSubmit.length === 0) firstSubmit.push(url);
+      return inner(url, init);
+    };
+    const r = await client.buildTransfer(new Uint8Array(await seedOf()), TO().address, AMOUNT, FEE, TO().address_fingerprint);
+    expect(r).toMatchObject({ status: "submitted", submit: "accepted" });
+    expect(firstSubmit).toHaveLength(1);
+    expect(firstSubmit[0].startsWith(listing)).toBe(false);
+  }, 120_000);
+});

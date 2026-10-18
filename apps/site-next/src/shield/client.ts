@@ -477,9 +477,14 @@ export class ShieldClient {
     }
   }
 
-  /** Submits a stored envelope (the listing node first, then the others) and records the answer. */
+  /**
+   * Submits a stored envelope and records the answer. The listing node goes LAST: it has just
+   * served this wallet the anchor the transaction carries, so sending it there first tells it whose
+   * transaction it is (NOTES §10: "submit through another node than the one scanned from").
+   */
   private async submit(e: StoredEnvelope): Promise<StoredEnvelope["submit"]> {
-    const order = this.session ? [...this.nodes.slice(this.session.listing), ...this.nodes.slice(0, this.session.listing)] : this.nodes;
+    const l = this.session ? this.session.listing : -1;
+    const order = l >= 0 ? [...this.nodes.slice(l + 1), ...this.nodes.slice(0, l), this.nodes[l]] : this.nodes;
     let result: StoredEnvelope["submit"] = "unanswered";
     for (const origin of order) {
       const r = await submitEnvelope(this.o.net, origin, e.envelope);
