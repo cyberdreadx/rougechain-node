@@ -10,7 +10,7 @@ import { INACTIVE_RECHECK_MS, ROUND_INTERVAL_MS, SLOW_ROUND_INTERVAL_MS } from "
 import { ShieldHost, bip39Seed, type WorkerFactory } from "./host";
 import type { SessionData } from "./loop";
 
-export type Phase = "starting" | "ready" | "proving" | "error";
+export type Phase = "starting" | "ready" | "proving" | "error" | "other_tab";
 
 export interface ShieldSession {
   phase: Phase;
@@ -83,26 +83,53 @@ export function useShieldSession(o: { mnemonic: string | null; network: string; 
 
   useEffect(() => {
     if (!enabled || !mnemonic) return;
-    const h = new ShieldHost(factory);
-    host.current = h;
+    let h: ShieldHost | null = null;
+    let closed = false;
+    let release: () => void = () => {};
     setPhase("starting");
     setError(null);
-    init(null)
-      .then(() => {
-        setPhase("ready");
-        return runRef.current();
-      })
-      .catch((e: unknown) => {
-        setPhase("error");
-        setError(e instanceof Error ? e.message : String(e));
-      });
+    const start = () => {
+      if (closed) return;
+      h = new ShieldHost(factory);
+      host.current = h;
+      init(null)
+        .then(() => {
+          setPhase("ready");
+          return runRef.current();
+        })
+        .catch((e: unknown) => {
+          setPhase("error");
+          setError(e instanceof Error ? e.message : String(e));
+        });
+    };
+    // One tab per network runs the shielded wallet: two loops over one stored state can blame an
+    // honest node for another tab's listing (review of 2026-10-18). Without the Web Locks API
+    // (very old browsers, tests) the stored-revision checks still refuse a stale write.
+    const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+    if (locks?.request) {
+      void locks
+        .request(`rougechain-shield-v2:${network}`, { ifAvailable: true }, (lock) => {
+          if (!lock) {
+            if (!closed) setPhase("other_tab");
+            return;
+          }
+          start();
+          return new Promise<void>((resolve) => {
+            release = resolve;
+            if (closed) resolve();
+          });
+        })
+        .catch(() => start());
+    } else start();
     return () => {
+      closed = true;
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
       host.current = null;
-      h.terminate(); // leaving the page: the worker and its memory go
+      h?.terminate(); // leaving the page: the worker and its memory go
+      release();
     };
-  }, [enabled, mnemonic, init, factory]);
+  }, [enabled, mnemonic, network, init, factory]);
 
   /** A payment: proving in the worker, then the worker is recycled (memory is never returned). */
   const pay = useCallback(

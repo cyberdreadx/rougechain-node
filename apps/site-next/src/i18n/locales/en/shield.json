@@ -5,6 +5,7 @@
   "experimental": "Experimental",
   "loading": "Starting the shielded wallet…",
   "error": "Something went wrong in the shielded wallet: {{message}}",
+  "otherTab": "The shielded wallet is already open in another tab. Close that tab (or use it) — only one tab at a time keeps the shielded wallet in step with the nodes.",
   "statement": {
     "label": "What shielded payments do and do not do",
     "hidden": "Shielded payments hide the amounts and who paid whom inside the pool.",

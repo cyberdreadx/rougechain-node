@@ -486,6 +486,7 @@ export default function ShieldPage({ workerFactory }: { workerFactory?: WorkerFa
     );
   else if (gate.kind === "provider") body = <p className="notice" data-testid="gate-provider">{t("gate.provider")}</p>;
   else if (gate.kind === "rawKey") body = <p className="notice" data-testid="gate-raw">{t("gate.rawKey")}</p>;
+  else if (session.phase === "other_tab") body = <p className="notice" data-testid="other-tab">{t("otherTab")}</p>;
   else if (session.phase === "starting" && !view) body = <p className="form-hint" role="status">{t("loading")}</p>;
   else
     body = (

@@ -245,6 +245,19 @@ describe("the page (flag on, worker stubbed)", () => {
     expect(await screen.findByTestId("state-waiting")).toHaveTextContent("Waiting for https://node-c.example, round 3 of 5. Going ahead without a node makes the restore wait 256 blocks longer.");
   });
 
+  it("a second tab: when another tab holds the shielded wallet, this one says so and starts no worker", async () => {
+    saveNodes("mainnet", THREE);
+    seedAppsWebWallet();
+    const request = vi.fn(async (_name: string, _opts: unknown, cb: (lock: unknown) => unknown) => cb(null));
+    vi.stubGlobal("navigator", Object.assign(Object.create(navigator), { locks: { request } }));
+    const { factory } = stubWorker(() => makeView());
+    await renderShield(factory);
+    expect(await screen.findByTestId("other-tab")).toHaveTextContent("already open in another tab");
+    expect(request.mock.calls[0][0]).toBe("rougechain-shield-v2:mainnet");
+    expect(factory).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("leaving the page terminates the worker", async () => {
     saveNodes("mainnet", THREE);
     seedAppsWebWallet();

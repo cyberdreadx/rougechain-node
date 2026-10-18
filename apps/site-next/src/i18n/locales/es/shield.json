@@ -5,6 +5,7 @@
   "experimental": "Experimental",
   "loading": "Iniciando la billetera blindada…",
   "error": "Algo falló en la billetera blindada: {{message}}",
+  "otherTab": "La cartera blindada ya está abierta en otra pestaña. Cierra esa pestaña (o úsala): solo una pestaña a la vez mantiene la cartera blindada sincronizada con los nodos.",
   "statement": {
     "label": "Qué hacen y qué no hacen los pagos blindados",
     "hidden": "Los pagos blindados ocultan los importes y quién pagó a quién dentro del fondo.",
