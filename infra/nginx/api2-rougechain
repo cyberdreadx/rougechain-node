@@ -1,0 +1,49 @@
+# api2.rougechain.io — node #2 (Hetzner, hel1-node2), mainnet.
+#
+# ALLOW-LIST, not a copy of api.rougechain.io: this origin exists so the shielded wallet
+# (rougechain.io/shield) can check the pool against a second machine. It serves only the
+# read routes that wallet uses; everything else is 404. Transaction submission stays on
+# the primary until a shield-only submit route is decided.
+#
+# Install (as root on node #2) — see infra/nginx/NODE2-API.md.
+
+limit_req_zone $binary_remote_addr zone=api2_read:10m rate=10r/s;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api2.rougechain.io;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name api2.rougechain.io;
+
+    ssl_certificate /etc/letsencrypt/live/api2.rougechain.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api2.rougechain.io/privkey.pem;
+
+    # Same wildcard CORS as api.rougechain.io (no cookie or session auth on the API).
+    proxy_hide_header Access-Control-Allow-Origin;
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type" always;
+    add_header Access-Control-Max-Age 86400 always;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    limit_req zone=api2_read burst=40 nodelay;
+    limit_req_status 429;
+
+    # The shielded wallet's reads (apps/site-next/src/shield/node-io.ts, client.ts).
+    location = /api/health                       { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5100; }
+    location = /api/shield-v2/stats              { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5100; }
+    location = /api/shield-v2/notes              { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5100; }
+    location ~ ^/api/account/[0-9a-f]+/nonce$    { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5100; }
+
+    location / { return 404; }
+}
