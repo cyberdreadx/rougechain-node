@@ -2,12 +2,15 @@
 #
 # ALLOW-LIST, not a copy of api.rougechain.io: this origin exists so the shielded wallet
 # (rougechain.io/shield) can check the pool against a second machine. It serves only the
-# read routes that wallet uses; everything else is 404. Transaction submission stays on
-# the primary until a shield-only submit route is decided.
+# read routes that wallet uses, plus POST /api/shield-v2/submit (the node admits only the
+# three shielded pool V2 types there, and refuses them until the activation height);
+# everything else is 404. The same file serves api3.rougechain.io (node #3): replace "api2".
 #
 # Install (as root on node #2) — see infra/nginx/NODE2-API.md.
 
 limit_req_zone $binary_remote_addr zone=api2_read:10m rate=10r/s;
+# Submits carry a ~0.4 MB proof each; a wallet sends one per payment.
+limit_req_zone $binary_remote_addr zone=api2_submit:10m rate=1r/s;
 
 server {
     listen 80;
@@ -46,6 +49,21 @@ server {
     location = /api/shield-v2/stats              { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5100; }
     location = /api/shield-v2/notes              { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5100; }
     location ~ ^/api/account/[0-9a-f]+/nonce$    { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5100; }
+
+    # Shielded pool V2 submit. add_header in a location replaces the server's set, so the CORS
+    # headers are repeated here with POST added.
+    location = /api/shield-v2/submit {
+        limit_except POST OPTIONS { deny all; }
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "POST, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type" always;
+        add_header Access-Control-Max-Age 86400 always;
+        if ($request_method = OPTIONS) { return 204; }
+        client_max_body_size 1m;
+        limit_req zone=api2_submit burst=10 nodelay;
+        proxy_read_timeout 30s;
+        proxy_pass http://127.0.0.1:5100;
+    }
 
     location / { return 404; }
 }
