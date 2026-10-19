@@ -216,8 +216,6 @@ mod tests {
         }
         assert!(!crate::shield_v2::shield_v2_active(0) && !crate::shield_v2::shield_v2_active(u64::MAX));
     }
-        assert!(!crate::shield_v2::shield_v2_active(0) && !crate::shield_v2::shield_v2_active(u64::MAX));
-    }
 
     /// CHAIN_ID_BINDING and CONTRACT_CHAIN_ID are `None` on every network until the owner
     /// schedules them (clients must ship `chainId` first).
