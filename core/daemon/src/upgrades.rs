@@ -103,7 +103,8 @@ pub const MAINNET: UpgradeSchedule = UpgradeSchedule {
 
 /// Testnet: the contract and game upgrades from block 1200. At 1240 the stake of validator
 /// `4e094d21…` (key held by nobody; 99% of testnet stake) is retired, so from 1250 the node's own
-/// staked key can be the designated proposer and gather finality.
+/// staked key can be the designated proposer and gather finality. SHIELD_V2 from 1480 (owner
+/// decision 2026-10-19; three testnet nodes: testnet, testnet2, testnet3).
 pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     network: "testnet",
     tx_uniqueness: Some(1200),
@@ -116,7 +117,7 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     token_minting: Some(1360),
     contract_nft_royalty: Some(1360),
     monetary_integrity: Some(1390),
-    shield_v2: None,
+    shield_v2: Some(1480),
     chain_id_binding: None,
     contract_chain_id: None,
     amm_integrity: Some(1440),
@@ -197,19 +198,24 @@ mod tests {
         }
         assert_eq!(TESTNET.token_minting, Some(1360), "TOKEN_MINTING activates on testnet at 1360");
         assert_eq!(TESTNET.contract_nft_royalty, Some(1360), "CONTRACT_NFT_ROYALTY activates on testnet at 1360");
-        assert_eq!(TESTNET.shield_v2, None, "SHIELD_V2 is not scheduled on testnet (spec §1.3)");
+        assert_eq!(TESTNET.shield_v2, Some(1480), "SHIELD_V2 activates on testnet at 1480");
         assert_eq!(TESTNET.amm_integrity, Some(1440), "AMM_INTEGRITY activates on testnet at 1440");
     }
 
-    /// Spec §1.3: SHIELD_V2 is `None` on every network until the owner schedules it.
+    /// Spec §1.3: SHIELD_V2 stays `None` on mainnet (and on unknown chains) until the owner
+    /// schedules it; testnet activates at 1480.
     #[test]
-    fn shield_v2_is_unscheduled_everywhere() {
+    fn shield_v2_is_scheduled_on_testnet_only() {
         assert_eq!(crate::shield_v2::SHIELD_V2_ACTIVATION_HEIGHT, None);
         assert_eq!(MAINNET.shield_v2, None);
-        assert_eq!(TESTNET.shield_v2, None);
-        for id in [MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, "test", ""] {
+        assert_eq!(TESTNET.shield_v2, Some(1480));
+        assert_eq!(schedule_for(MAINNET_CHAIN_ID).shield_v2, None);
+        assert_eq!(schedule_for(TESTNET_CHAIN_ID).shield_v2, Some(1480));
+        for id in ["test", ""] {
             assert_eq!(schedule_for(id).shield_v2, None, "{id}");
         }
+        assert!(!crate::shield_v2::shield_v2_active(0) && !crate::shield_v2::shield_v2_active(u64::MAX));
+    }
         assert!(!crate::shield_v2::shield_v2_active(0) && !crate::shield_v2::shield_v2_active(u64::MAX));
     }
 
