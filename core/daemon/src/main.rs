@@ -1099,10 +1099,15 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/shielded/unshield", post(v2_unshield))
         .route("/api/shielded/stats", get(shielded_stats))
         .route("/api/shielded/nullifier/:hash", get(shielded_nullifier_check))
-        // Shielded pool V2 (SHIELD_V2, not active on any network): read-only views. Transactions
-        // enter through the existing broadcast / mempool path only.
+        // Shielded pool V2 (SHIELD_V2, not active on any network): read-only views, plus a
+        // submit route that admits the three V2 types only (everything else stays behind the
+        // proxy's /api/tx/broadcast block).
         .route("/api/shield-v2/stats", get(shield_v2_stats))
         .route("/api/shield-v2/notes", get(shield_v2_notes))
+        .route(
+            "/api/shield-v2/submit",
+            post(shield_v2_submit).layer(DefaultBodyLimit::max(SHIELD_V2_SUBMIT_MAX_BYTES)),
+        )
         .route("/api/bridge/config", get(bridge_config))
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
@@ -3852,6 +3857,54 @@ async fn receive_broadcast_tx(
     {
         Ok(()) => Ok(Json(BroadcastTxResponse { success: true, error: None })),
         Err(e) => Ok(Json(BroadcastTxResponse { success: false, error: Some(e) })),
+    }
+}
+
+/// Largest accepted `/api/shield-v2/submit` body. A V2 envelope is about 0.4 MB (a proof of at
+/// most 200,000 bytes, hex-encoded, plus the body); 1 MiB leaves room without letting the route
+/// take the router's general 16 MiB.
+const SHIELD_V2_SUBMIT_MAX_BYTES: usize = 1024 * 1024;
+
+/// The type gate of `/api/shield-v2/submit`: only `shield_v2`, `shielded_transfer_v2` and
+/// `unshield_v2` get past it. Checked before any signature, proof or state work.
+fn shield_v2_submit_type_gate(tx: &quantum_vault_types::TxV1) -> Result<(), String> {
+    if shield_v2::is_shield_v2_type(&tx.tx_type) {
+        Ok(())
+    } else {
+        Err("this route accepts shielded pool V2 transactions only".to_string())
+    }
+}
+
+/// Submit route for shielded pool V2 transactions (wallets and peers).
+///
+/// It admits the three V2 types only and runs them through the same checks as a peer
+/// broadcast (`add_tx_to_mempool`: signature or signer-less shape, the V2 pool rules, then the
+/// proof). Before activation that mempool path refuses every V2 transaction, so the route is
+/// inert until the activation height. An accepted transaction is forwarded to this node's
+/// peers on the same route, so a transaction sent to a non-producing node reaches the producer.
+/// A node that already holds it refuses it as a duplicate and does not forward again, so the
+/// forwarding stops.
+async fn shield_v2_submit(
+    State(state): State<AppState>,
+    Json(tx): Json<quantum_vault_types::TxV1>,
+) -> Json<BroadcastTxResponse> {
+    if let Err(e) = shield_v2_submit_type_gate(&tx) {
+        return Json(BroadcastTxResponse { success: false, error: Some(e) });
+    }
+    let node = state.node.clone();
+    let tx_for_peers = tx.clone();
+    match tokio::task::spawn_blocking(move || node.add_tx_to_mempool(tx))
+        .await
+        .unwrap_or_else(|e| Err(format!("task failed: {}", e)))
+    {
+        Ok(()) => {
+            let peers = state.peer_manager.get_peers().await;
+            if !peers.is_empty() {
+                peer::forward_shield_v2_tx(&peers, &tx_for_peers);
+            }
+            Json(BroadcastTxResponse { success: true, error: None })
+        }
+        Err(e) => Json(BroadcastTxResponse { success: false, error: Some(e) }),
     }
 }
 
@@ -11479,6 +11532,26 @@ mod rate_limit_key_tests {
         assert!(!api_key_exempt_path("/api/finality"), "status route keeps requiring a key on keyed nodes");
         assert!(api_key_exempt_path("/api/v2/faucet") && api_key_exempt_path("/api/faucet"));
         assert!(!api_key_exempt_path("/api/blocks") && !api_key_exempt_path("/api/selection"));
+    }
+
+    #[test]
+    fn shield_v2_submit_admits_the_three_v2_types_only() {
+        let base: quantum_vault_types::TxV1 = serde_json::from_value(serde_json::json!({
+            "version": 1, "tx_type": "transfer", "from_pub_key": "", "nonce": 0,
+            "payload": {}, "fee": 0.0, "sig": ""
+        })).expect("minimal tx");
+        for ty in ["shield_v2", "shielded_transfer_v2", "unshield_v2"] {
+            let mut tx = base.clone();
+            tx.tx_type = ty.to_string();
+            assert!(shield_v2_submit_type_gate(&tx).is_ok(), "{ty}");
+        }
+        for ty in ["transfer", "shield", "unshield", "shielded_transfer", "stake", "token_unlock",
+                   "contract_call", "SHIELD_V2", "shield_v2 ", ""] {
+            let mut tx = base.clone();
+            tx.tx_type = ty.to_string();
+            assert!(shield_v2_submit_type_gate(&tx).is_err(), "{ty:?} must be refused");
+        }
+        assert!(SHIELD_V2_SUBMIT_MAX_BYTES >= 2 * 200_000 + 64 * 1024, "room for a hex proof at the cap");
     }
 
     #[test]
