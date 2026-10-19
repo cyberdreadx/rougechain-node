@@ -27,7 +27,7 @@ async function ready(store?: Store) {
   return { ...made, net, truth };
 }
 
-const isSubmit = (url: string) => url.endsWith("/api/tx/broadcast");
+const isSubmit = (url: string) => url.endsWith("/api/shield-v2/submit");
 
 describe("payments", () => {
   it("the state and the envelope are stored durably before the envelope is submitted", async () => {

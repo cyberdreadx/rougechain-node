@@ -4,7 +4,7 @@
 // scripts/shield-e2e.mjs load it as it is.
 //
 // It serves the node's REAL response shapes (core/daemon/src/node.rs `shield_v2_notes_since`,
-// `shield_v2_stats`; main.rs `/api/health`, `/api/account/:pk/nonce`, `/api/tx/broadcast`):
+// `shield_v2_stats`; main.rs `/api/health`, `/api/account/:pk/nonce`, `/api/shield-v2/submit`):
 //
 // * the listing: `{ active, tip_height, from_height, next_height, txs: [{ height, index, tx_hash,
 //   tx_type, nf1, nf2, outputs: [{ cm_out, leaf, kem_ct, note_ct }, …] }], success: true }`,
@@ -193,6 +193,6 @@ export function nodeAnswer(chain, url, init, opts = {}) {
     const n = chain.nonces.get(nonce[1]) ?? 0;
     return json({ success: true, nonce: n, next_nonce: n + 1 });
   }
-  if (u.pathname === "/api/tx/broadcast" && init?.method === "POST") return { status: 200, text: JSON.stringify({ success: true, error: null }), submitted: init.body };
+  if (u.pathname === "/api/shield-v2/submit" && init?.method === "POST") return { status: 200, text: JSON.stringify({ success: true, error: null }), submitted: init.body };
   return { status: 404, text: "" };
 }

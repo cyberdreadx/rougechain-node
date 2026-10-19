@@ -2,12 +2,12 @@
  * Shielded pool V2 on the site: the feature flag, the configured node set, and the client's own
  * constants (none of them consensus).
  *
- * The node set (UI_CONTRACT obligation 4, limit 7): an odd number of at least three nodes RUN BY
- * DIFFERENT OPERATORS, each an https origin. Until three exist the page is read-only and says so.
- * Today RougeChain has ONE public API origin per network, run by the project; a second node run by
- * the same operator would not be independent, so it is not listed. The two other slots are
- * placeholders, and stay so until an independent operator runs a node (then fill in `origin` and
- * `operator`). Placeholders are never handed to the core.
+ * The node set (UI_CONTRACT obligation 4, limit 7): an odd number of at least three nodes, each an
+ * https origin on its own host. Owner decision 2026-10-18: on mainnet the three are the project's
+ * own machines (the primary, node #2, node #3), each named as run by the project, so the settings
+ * show plainly that one operator stands behind all three; anyone can replace them with their own.
+ * Testnet runs one public node today, so its two other slots stay placeholders. Placeholders are
+ * never handed to the core.
  */
 import type { NetworkType } from "@rougechain/core/network";
 
@@ -25,11 +25,9 @@ export interface ConfiguredNode {
 
 export const DEFAULT_NODES: Record<NetworkType, ConfiguredNode[]> = {
   mainnet: [
-    { origin: "https://api.rougechain.io", operator: "RougeChain (project)" },
-    // PLACEHOLDER: a node run by an independent operator. Not configured yet.
-    { origin: null, operator: "independent operator 2 (not yet)" },
-    // PLACEHOLDER: a node run by a third, independent operator. Not configured yet.
-    { origin: null, operator: "independent operator 3 (not yet)" },
+    { origin: "https://api.rougechain.io", operator: "RougeChain (project): primary" },
+    { origin: "https://api2.rougechain.io", operator: "RougeChain (project): node 2" },
+    { origin: "https://api3.rougechain.io", operator: "RougeChain (project): node 3" },
   ],
   testnet: [
     { origin: "https://testnet.rougechain.io", operator: "RougeChain (project)" },
@@ -44,14 +42,12 @@ export const DEFAULT_NODES: Record<NetworkType, ConfiguredNode[]> = {
 export const MIN_NODES = 3;
 
 /**
- * Where an envelope is submitted. The node has no V2-specific submission route
- * (`core/shield-v2-wallet/NOTES.md` §6 item 1): a `TxV1` enters through the generic transaction
- * path. Which PUBLIC route carries it, with what rate limit, is node and proxy work that is not
- * decided yet — `/api/tx/broadcast` is the node's route that takes a `TxV1`, and it is closed at
- * the public proxy today. Shielded payments therefore cannot reach mainnet from this page yet,
- * whatever the flag says.
+ * Where an envelope is submitted: the node's V2-only submit route. It admits `shield_v2`,
+ * `shielded_transfer_v2` and `unshield_v2` and nothing else, refuses them before the activation
+ * height, and forwards an accepted one to the node's peers, so any configured node can take it.
+ * The generic `/api/tx/broadcast` stays closed at the public proxy.
  */
-export const SUBMIT_PATH = "/api/tx/broadcast";
+export const SUBMIT_PATH = "/api/shield-v2/submit";
 
 /** Seconds between rounds of the client loop while the page is open (the sync cadence). */
 export const ROUND_INTERVAL_MS = 20_000;

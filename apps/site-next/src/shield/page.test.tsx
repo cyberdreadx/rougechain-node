@@ -161,7 +161,8 @@ describe("the page (flag on, worker stubbed)", () => {
     expect(factory).not.toHaveBeenCalled();
   });
 
-  it("the required statement is near the top; with the default nodes the page is read-only and says three nodes are needed", async () => {
+  it("the required statement is near the top; with the default testnet nodes the page is read-only and says three nodes are needed", async () => {
+    localStorage.setItem("rougechain-network", "testnet");
     seedAppsWebWallet();
     const { factory } = stubWorker(() => makeView({ nodes: [] }));
     await renderShield(factory);

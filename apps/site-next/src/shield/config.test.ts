@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listProblem, originProblem } from "./config";
+import { DEFAULT_NODES, MIN_NODES, SUBMIT_PATH, listProblem, originProblem, usableOrigins } from "./config";
 
 describe("node origins", () => {
   it("accepts https origins", () => {
@@ -21,5 +21,21 @@ describe("node origins", () => {
     expect(listProblem(["https://a.example", "https://b.example", "https://c.example"])).toBeNull();
     expect(listProblem(["https://a.example", "https://A.example", "https://c.example"])).toBe("duplicate");
     expect(listProblem(["https://a.example", "https://b.example", "https://c.example", "https://d.example"])).toBe("even");
+  });
+});
+
+describe("default node set", () => {
+  it("mainnet: the project's three machines, each a valid https origin on its own host, named as the project's", () => {
+    const origins = usableOrigins(DEFAULT_NODES.mainnet);
+    expect(origins).toEqual(["https://api.rougechain.io", "https://api2.rougechain.io", "https://api3.rougechain.io"]);
+    expect(origins.length).toBeGreaterThanOrEqual(MIN_NODES);
+    expect(listProblem(origins)).toBeNull();
+    for (const n of DEFAULT_NODES.mainnet) expect(n.operator).toMatch(/^RougeChain \(project\)/);
+  });
+  it("testnet: one public node, so below the minimum and read-only", () => {
+    expect(usableOrigins(DEFAULT_NODES.testnet).length).toBeLessThan(MIN_NODES);
+  });
+  it("submits on the V2-only route, never the generic broadcast", () => {
+    expect(SUBMIT_PATH).toBe("/api/shield-v2/submit");
   });
 });
