@@ -1,6 +1,6 @@
 [package]
 name = "quantum-vault-daemon"
-version = "1.6.8"
+version = "1.6.9"
 edition = "2021"
 
 [dependencies]
