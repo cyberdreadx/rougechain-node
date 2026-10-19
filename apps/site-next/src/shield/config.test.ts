@@ -32,8 +32,12 @@ describe("default node set", () => {
     expect(listProblem(origins)).toBeNull();
     for (const n of DEFAULT_NODES.mainnet) expect(n.operator).toMatch(/^RougeChain \(project\)/);
   });
-  it("testnet: one public node, so below the minimum and read-only", () => {
-    expect(usableOrigins(DEFAULT_NODES.testnet).length).toBeLessThan(MIN_NODES);
+  it("testnet: the project's three machines, each a valid https origin on its own host, named as the project's", () => {
+    const origins = usableOrigins(DEFAULT_NODES.testnet);
+    expect(origins).toEqual(["https://testnet.rougechain.io", "https://testnet2.rougechain.io", "https://testnet3.rougechain.io"]);
+    expect(origins.length).toBeGreaterThanOrEqual(MIN_NODES);
+    expect(listProblem(origins)).toBeNull();
+    for (const n of DEFAULT_NODES.testnet) expect(n.operator).toMatch(/^RougeChain \(project\)/);
   });
   it("submits on the V2-only route, never the generic broadcast", () => {
     expect(SUBMIT_PATH).toBe("/api/shield-v2/submit");
