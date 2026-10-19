@@ -40,3 +40,29 @@ curl -s -X POST -H 'content-type: application/json' -d '{"version":1,"tx_type":"
 # → {"success":false,"error":"this route accepts shielded pool V2 transactions only"}
 curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' https://api2.rougechain.io/api/tx/broadcast   # → 404
 ```
+
+## Testnet nodes (testnet2 / testnet3)
+
+Node #2 and node #3 each also run a testnet node next to the mainnet one, so the shielded wallet
+has three testnet nodes too. Both machines run Ubuntu 26.04, which installer 2.1.0 does not list,
+so the install uses a copy of the signed installer with only `ubuntu:26.04` added to the OS check
+(the updater it installs is the signed file from the manifest, not that copy).
+
+```
+# on node #2 (node #3: NODE_NAME=nbg1-node3-testnet, PUBLIC_URL=http://178.104.228.9:5101)
+NETWORK=testnet VALIDATOR=0 HOST=0.0.0.0 NODE_NAME=hel1-node2-testnet \
+  PUBLIC_URL=http://95.217.128.167:5101 bash /root/install-validator-2604.sh
+ufw allow from 62.72.24.192 to any port 5101 proto tcp
+```
+
+The primary's testnet node pushes new blocks to both through
+`/etc/systemd/system/quantum-vault-testnet.service.d/zz-peers.conf`
+(`Environment=QV_PEERS=http://95.217.128.167:5101,http://178.104.228.9:5101`).
+
+Public origin: DNS A records `testnet2` → 95.217.128.167 and `testnet3` → 178.104.228.9, a
+certificate for each (same certbot command as above with the new name), and
+`infra/nginx/testnet2-rougechain` installed as `/etc/nginx/sites-available/testnet2-rougechain`
+(on node #3 with "testnet2" replaced by "testnet3") and linked into `sites-enabled`.
+
+Check: `curl https://testnet2.rougechain.io/api/health` → `rougechain-devnet-1` at the same height
+as `https://testnet.rougechain.io/api/health`.

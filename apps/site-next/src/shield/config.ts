@@ -6,8 +6,8 @@
  * https origin on its own host. Owner decision 2026-10-18: on mainnet the three are the project's
  * own machines (the primary, node #2, node #3), each named as run by the project, so the settings
  * show plainly that one operator stands behind all three; anyone can replace them with their own.
- * Testnet runs one public node today, so its two other slots stay placeholders. Placeholders are
- * never handed to the core.
+ * Testnet uses the same three machines (testnet, testnet2, testnet3), named the same way. A slot
+ * with a null origin is a placeholder and is never handed to the core.
  */
 import type { NetworkType } from "@rougechain/core/network";
 
@@ -30,11 +30,9 @@ export const DEFAULT_NODES: Record<NetworkType, ConfiguredNode[]> = {
     { origin: "https://api3.rougechain.io", operator: "RougeChain (project): node 3" },
   ],
   testnet: [
-    { origin: "https://testnet.rougechain.io", operator: "RougeChain (project)" },
-    // PLACEHOLDER: a node run by an independent operator. Not configured yet.
-    { origin: null, operator: "independent operator 2 (not yet)" },
-    // PLACEHOLDER: a node run by a third, independent operator. Not configured yet.
-    { origin: null, operator: "independent operator 3 (not yet)" },
+    { origin: "https://testnet.rougechain.io", operator: "RougeChain (project): primary" },
+    { origin: "https://testnet2.rougechain.io", operator: "RougeChain (project): node 2" },
+    { origin: "https://testnet3.rougechain.io", operator: "RougeChain (project): node 3" },
   ],
 };
 

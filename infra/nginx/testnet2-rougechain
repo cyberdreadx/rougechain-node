@@ -1,0 +1,67 @@
+# testnet2.rougechain.io — node #2 (Hetzner), TESTNET node (port 5101).
+#
+# The testnet twin of api2-rougechain: the same allow-list (the shielded wallet's reads plus
+# POST /api/shield-v2/submit), proxied to the testnet node on 127.0.0.1:5101; everything else
+# is 404. The same file serves testnet3.rougechain.io (node #3): replace "testnet2".
+#
+# Install (as root on node #2) — see infra/nginx/NODE2-API.md, section "Testnet nodes".
+
+limit_req_zone $binary_remote_addr zone=testnet2_read:10m rate=10r/s;
+# Submits carry a ~0.4 MB proof each; a wallet sends one per payment.
+limit_req_zone $binary_remote_addr zone=testnet2_submit:10m rate=1r/s;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name testnet2.rougechain.io;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name testnet2.rougechain.io;
+
+    ssl_certificate /etc/letsencrypt/live/testnet2.rougechain.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/testnet2.rougechain.io/privkey.pem;
+
+    # Same wildcard CORS as api.rougechain.io (no cookie or session auth on the API).
+    proxy_hide_header Access-Control-Allow-Origin;
+    proxy_hide_header Access-Control-Allow-Methods;
+    proxy_hide_header Access-Control-Allow-Headers;
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type" always;
+    add_header Access-Control-Max-Age 86400 always;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    limit_req zone=testnet2_read burst=40 nodelay;
+    limit_req_status 429;
+
+    # The shielded wallet's reads (apps/site-next/src/shield/node-io.ts, client.ts).
+    location = /api/health                       { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5101; }
+    location = /api/shield-v2/stats              { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5101; }
+    location = /api/shield-v2/notes              { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5101; }
+    location ~ ^/api/account/[0-9a-f]+/nonce$    { limit_except GET OPTIONS { deny all; } if ($request_method = OPTIONS) { return 204; } proxy_pass http://127.0.0.1:5101; }
+
+    # Shielded pool V2 submit. add_header in a location replaces the server's set, so the CORS
+    # headers are repeated here with POST added.
+    location = /api/shield-v2/submit {
+        limit_except POST OPTIONS { deny all; }
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "POST, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type" always;
+        add_header Access-Control-Max-Age 86400 always;
+        if ($request_method = OPTIONS) { return 204; }
+        client_max_body_size 1m;
+        limit_req zone=testnet2_submit burst=10 nodelay;
+        proxy_read_timeout 30s;
+        proxy_pass http://127.0.0.1:5101;
+    }
+
+    location / { return 404; }
+}
