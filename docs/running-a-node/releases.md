@@ -93,7 +93,7 @@ The signed object is the **manifest file itself**: both signatures are over its 
 
 A release must carry **both**, and the installer and updater refuse a manifest without a
 well-formed copy of each. They always verify the Ed25519 signature (stock OpenSSL 3.0 of Ubuntu
-22.04/24.04 and Debian 12). They verify the ML-DSA-65 signature with the installed `rougechain` CLI
+22.04/24.04/26.04 and Debian 12). They verify the ML-DSA-65 signature with the installed `rougechain` CLI
 — `rougechain release verify`, CLI ≥ 1.2.0 — whenever one is installed, and refuse the release if it
 does not verify; details in [Automatic updates — trust model](auto-update.md#trust-model). The
 release tooling and CI check both, and OpenSSL 3.5 or newer can check ML-DSA-65 by hand.
@@ -174,7 +174,7 @@ node verify-manifest.mjs --binary /path/to/the/binary --cli /path/to/rougechain 
 ## What the installer does
 
 [`scripts/install-validator.sh`](https://github.com/cyberdreadx/rougechain-node/blob/main/scripts/install-validator.sh)
-(Ubuntu 22.04 / 24.04, Debian 12; x86_64; run as root):
+(Ubuntu 22.04 / 24.04 / 26.04, Debian 12; x86_64; run as root):
 
 1. downloads `manifest-<network>.json`, its `.ed25519.sig` and its `.mldsa65.sig` from **every**
    source (the primary and the mirror);
