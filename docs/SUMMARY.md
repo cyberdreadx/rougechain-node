@@ -24,6 +24,7 @@
 - [Signed releases](running-a-node/releases.md)
 - [Automatic updates](running-a-node/auto-update.md)
 - [Network upgrade schedule (mainnet / testnet)](running-a-node/upgrade-schedule.md)
+- [Release 1.6.9 (2026-10): shielded pool V2 submit route](running-a-node/release-1.6.9.md)
 - [Release 1.6.8 (2026-10): NFT mint stability fix](running-a-node/release-1.6.8.md)
 - [Release 1.6.7 (2026-10): AMM_INTEGRITY on mainnet at block 260](running-a-node/release-1.6.7.md)
 - [Release 1.6.6 (2026-10): AMM_INTEGRITY on testnet at block 1440](running-a-node/release-1.6.6.md)

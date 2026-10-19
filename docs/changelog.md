@@ -4,6 +4,12 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.9: shielded pool V2 submit route — 2026-10-19
+
+- Adds `POST /api/shield-v2/submit` for shielded pool V2 transactions only, forwarded between nodes.
+  Inert until the pool's activation height is set (none yet). No consensus change.
+- See the [release notes](running-a-node/release-1.6.9.md).
+
 ## Node release 1.6.8: NFT mint stability fix — 2026-10-15
 
 - Fixes a bug that could make a node stop producing and importing blocks while processing certain
