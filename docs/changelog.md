@@ -4,6 +4,13 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.10: shielded pool V2 on testnet at block 1480 — 2026-10-19
+
+- Testnet: SHIELD_V2 activates at block 1480 (testnet nodes must upgrade before it). Mainnet
+  consensus unchanged (SHIELD_V2 not scheduled there).
+- Installer 2.1.1: Ubuntu 26.04 supported.
+- See the [release notes](running-a-node/release-1.6.10.md).
+
 ## Node release 1.6.9: shielded pool V2 submit route — 2026-10-19
 
 - Adds `POST /api/shield-v2/submit` for shielded pool V2 transactions only, forwarded between nodes.
