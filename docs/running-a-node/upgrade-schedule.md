@@ -20,11 +20,15 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Signatures commit to the chain id (CHAIN_ID_BINDING) | not scheduled | not scheduled |
 | Contracts read the chain id (CONTRACT_CHAIN_ID) | not scheduled | not scheduled |
 | Pool transactions apply all-or-nothing (AMM_INTEGRITY) | 260 | 1440 |
+| Shielded pool V2 (SHIELD_V2) | not scheduled | **1480** (release 1.6.10) |
 
 **Every height in this table has been reached** on both networks, except the `not scheduled` rows
-(mainnet passed 260 on 2026-10-10; testnet passed 1440 on 2026-10-09). Nothing else is scheduled beyond them; the next consensus changes — restoring the
-types suspended at 245, the shielded pool V2, and the consensus redesign decided on 2026-10-06 — have
-no heights yet and will be announced in advance (see [Status & Roadmap](../status.md)).
+and SHIELD_V2 on testnet (mainnet passed 260 on 2026-10-10; testnet passed 1440 on 2026-10-09).
+**SHIELD_V2 activates on testnet at block 1480** (release 1.6.10, scheduled 2026-10-19): every
+testnet node must run release 1.6.10 or later before that block. It is not scheduled on mainnet.
+The other next consensus changes — restoring the types suspended at 245 and the consensus redesign
+decided on 2026-10-06 — have no heights yet and will be announced in advance (see
+[Status & Roadmap](../status.md)).
 
 **Testnet validator cleanup (block 1240, testnet only):** 99% of testnet's stake sat on validator
 `4e094d21…`, whose key nobody holds, so it could never sign finality votes. At block 1240 its stake is

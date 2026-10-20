@@ -15662,10 +15662,10 @@ mod shield_v2_daemon_tests {
     }
 
     #[test]
-    fn unscheduled_everywhere_and_the_v1_types_stay_suspended() {
+    fn unscheduled_on_mainnet_testnet_at_1480_and_the_v1_types_stay_suspended() {
         assert_eq!(shield_v2::SHIELD_V2_ACTIVATION_HEIGHT, None);
         assert_eq!(crate::upgrades::MAINNET.shield_v2, None);
-        assert_eq!(crate::upgrades::TESTNET.shield_v2, None);
+        assert_eq!(crate::upgrades::TESTNET.shield_v2, Some(1480));
         for ty in ["shield", "shielded_transfer", "unshield"] { assert!(SUSPENDED_TX_TYPES.contains(&ty), "{ty}"); }
         for ty in shield_v2::SHIELD_V2_TX_TYPES { assert!(!SUSPENDED_TX_TYPES.contains(ty), "{ty}"); }
     }

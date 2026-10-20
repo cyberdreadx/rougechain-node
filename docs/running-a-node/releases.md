@@ -74,12 +74,13 @@ used only if the manifest's signature verifies and the file's sha256 matches the
 The example is abridged (`…`).
 
 All URLs are `https://`. Unknown fields are not allowed in schema 1; `installer` is the one
-optional field (an addition that old installers ignore, so the schema number did not change). The current manifests (release 1.6.9) list the
+optional field (an addition that old installers ignore, so the schema number did not change). The current manifests (release 1.6.10) list the
 full schedule in `activations` (mainnet: 49, 90, 100, 150, 150, 160, 170, 190, 235, 235, 245, 260; testnet
-also carries `validator_retirement` at 1240) — see the [upgrade schedule](upgrade-schedule.md). The
+also carries `validator_retirement` at 1240 and, from 1.6.10, `shield_v2` at 1480) — see the [upgrade schedule](upgrade-schedule.md). The
 example above is the 1.6.0 manifest, kept because it shows `upgrade_before_height` and `mandatory`
-set; the 1.6.9 manifests (both networks) have `mandatory: false` and `upgrade_before_height: null`
-— the release changes no rule, and every height in `activations` is already active.
+set; the 1.6.10 mainnet manifest has `mandatory: false` and `upgrade_before_height: null` (no mainnet
+rule changes), and the 1.6.10 testnet manifest has `mandatory: true` and `upgrade_before_height: 1480`
+(SHIELD_V2 activates there).
 
 ## Signatures
 
@@ -93,7 +94,7 @@ The signed object is the **manifest file itself**: both signatures are over its 
 
 A release must carry **both**, and the installer and updater refuse a manifest without a
 well-formed copy of each. They always verify the Ed25519 signature (stock OpenSSL 3.0 of Ubuntu
-22.04/24.04 and Debian 12). They verify the ML-DSA-65 signature with the installed `rougechain` CLI
+22.04/24.04/26.04 and Debian 12). They verify the ML-DSA-65 signature with the installed `rougechain` CLI
 — `rougechain release verify`, CLI ≥ 1.2.0 — whenever one is installed, and refuse the release if it
 does not verify; details in [Automatic updates — trust model](auto-update.md#trust-model). The
 release tooling and CI check both, and OpenSSL 3.5 or newer can check ML-DSA-65 by hand.
@@ -174,7 +175,7 @@ node verify-manifest.mjs --binary /path/to/the/binary --cli /path/to/rougechain 
 ## What the installer does
 
 [`scripts/install-validator.sh`](https://github.com/cyberdreadx/rougechain-node/blob/main/scripts/install-validator.sh)
-(Ubuntu 22.04 / 24.04, Debian 12; x86_64; run as root):
+(Ubuntu 22.04 / 24.04 / 26.04, Debian 12; x86_64; run as root):
 
 1. downloads `manifest-<network>.json`, its `.ed25519.sig` and its `.mldsa65.sig` from **every**
    source (the primary and the mirror);
