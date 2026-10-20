@@ -11,7 +11,8 @@
  */
 import type { NetworkType } from "@rougechain/core/network";
 
-/** `VITE_SHIELD_V2_ENABLED=true` turns the /shield page on. Off by default; not set in netlify.toml. */
+/** `VITE_SHIELD_V2_ENABLED=true` turns the /shield page on. Off by default; on for rougechain.io and
+ * testnet.rougechain.io via the root netlify.toml (2026-10-20). */
 export function shieldV2Enabled(): boolean {
   return import.meta.env.VITE_SHIELD_V2_ENABLED === "true";
 }
