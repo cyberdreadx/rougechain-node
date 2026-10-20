@@ -1,5 +1,9 @@
 # RougeChain node release 1.6.10: shielded pool V2 on testnet at block 1480 (2026-10)
 
+> **Superseded before publication by [release 1.6.11](release-1.6.11.md).** 1.6.10 was never
+> published to the release server: a second testnet node rejected testnet block 1467 (a faucet
+> payout) on its state root, and 1.6.11 fixes that. Install 1.6.11.
+
 **Required for every testnet node before testnet block 1480. Recommended for mainnet nodes.**
 Mainnet consensus is unchanged: the shielded pool V2 has no activation height on mainnet.
 

@@ -74,12 +74,12 @@ used only if the manifest's signature verifies and the file's sha256 matches the
 The example is abridged (`…`).
 
 All URLs are `https://`. Unknown fields are not allowed in schema 1; `installer` is the one
-optional field (an addition that old installers ignore, so the schema number did not change). The current manifests (release 1.6.10) list the
+optional field (an addition that old installers ignore, so the schema number did not change). The current manifests (release 1.6.11) list the
 full schedule in `activations` (mainnet: 49, 90, 100, 150, 150, 160, 170, 190, 235, 235, 245, 260; testnet
-also carries `validator_retirement` at 1240 and, from 1.6.10, `shield_v2` at 1480) — see the [upgrade schedule](upgrade-schedule.md). The
+also carries `validator_retirement` at 1240 and, from 1.6.11, `shield_v2` at 1480) — see the [upgrade schedule](upgrade-schedule.md). The
 example above is the 1.6.0 manifest, kept because it shows `upgrade_before_height` and `mandatory`
-set; the 1.6.10 mainnet manifest has `mandatory: false` and `upgrade_before_height: null` (no mainnet
-rule changes), and the 1.6.10 testnet manifest has `mandatory: true` and `upgrade_before_height: 1480`
+set; the 1.6.11 mainnet manifest has `mandatory: false` and `upgrade_before_height: null` (no mainnet
+rule changes), and the 1.6.11 testnet manifest has `mandatory: true` and `upgrade_before_height: 1480`
 (SHIELD_V2 activates there).
 
 ## Signatures
