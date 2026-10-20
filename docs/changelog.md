@@ -4,7 +4,15 @@ All notable changes to RougeChain.
 
 ---
 
-## Node release 1.6.10: shielded pool V2 on testnet at block 1480 — 2026-10-19
+## Node release 1.6.11: testnet faucet fix; shielded pool V2 on testnet at block 1480 — 2026-10-20
+
+- Testnet: every node now applies faucet payouts the same way (a fixed testnet mint-authority key
+  replaces the local node key), so non-producing testnet nodes follow the chain. Testnet nodes must
+  run 1.6.11 before testnet block 1480, where SHIELD_V2 activates. Mainnet consensus unchanged.
+- Includes everything planned for 1.6.10 (installer 2.1.1 with Ubuntu 26.04).
+- See the [release notes](running-a-node/release-1.6.11.md).
+
+## Node release 1.6.10 (not published) — 2026-10-19
 
 - Testnet: SHIELD_V2 activates at block 1480 (testnet nodes must upgrade before it). Mainnet
   consensus unchanged (SHIELD_V2 not scheduled there).
