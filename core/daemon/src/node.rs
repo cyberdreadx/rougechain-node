@@ -479,6 +479,13 @@ pub fn fee_and_type_sanity(tx: &TxV1) -> Result<(), String> {
 }
 
 /// The whole MONETARY_INTEGRITY rule, given whether this network allows faucet mints.
+/// Testnet (`rougechain-devnet-1`) runs without a genesis file, so it has no genesis authority set.
+/// These keys stand in for it in [`L1Node::apply_identity_for`]: a faucet payout or bridge mint is
+/// applied as a mint on every testnet node iff its signer is listed here. The one key is the
+/// project's testnet node (`testnet-validator-1`, `41d7fc30…`), which has made every testnet
+/// faucet payout; it is what the producing node already applied, so testnet history is unchanged.
+pub const TESTNET_MINT_AUTHORITY: &[&str] = &["41d7fc30c05b0795850c320dede0fea3ae6b1d59525a7df38058def9d124e59aa759f3e48baaf31b2a6df87f6ba4ef8dfff90f1e857fa353d5ce52fc8104c8d3e636c4ce3af215ca08e210ec3fbc0a08025a4e310128115d9c83ee51c63414f9e048a9a9fa712cf69755c8b13a4442f28237c0d55f4f02fa50e339efbdcfd7649defc571308e31b7f8c1f9a580233147f6cd25a4a9ded269ee60b7362c23a143e3367349a21de69096d8fb8cd9308e0bdcf0e4f158c6a44cfd1036941f81aa16f0249fed873553920bcb346c791dd544c239d59baa79b05686d680637a9461208c7108ed13b39841d9ca702cbac234ba4bc9830c60f2682b96289abfdfb466989c3fdd7f7d51219fc95e0b70106f77d3b7b479751ef7c6b1b42b85b88be628f4e578e51f43fded8d735244a278ad5b95f26a7da15799f4e84f9f7e672282d73bc4f44ab78ce50a7874afa9ed548ffe03382b5e7b2aa497417b5bfaec3f62bf8cdcb290adb2f8a089f38157172bbfb6511c3cae2afd5858932fcac4b2f0b903e0960cfccdd84e856307cc0c3e0b76990771f847607f6ebada17e37306f34a4dbecd4761f6d881807c7f43a66b9db0f9877eb876b6108ee9be65f8b8505328eb4fedae2c7292bcbd4276d47ff6325431f4471d2d34a41721f152840ff3c619445c3945c1b804a9768a5014bc25aed089de7fe3b2ec8f9579dd16c7d06546db16b3029f452d3ecf2beef0673166b5043461678f1644b0d8e63c85f0c23ede1d9ff6a387f5e4248dc2be53aa8d08d4a2fd3c49923509f19b8079ed69710d5c2230109037f605451d6c7c64bf65de2a4d2985d5ad2ee6439ffa5bdf9a9e6725d81a9be083221928e0d016730bbea97c42ce8580fba380d4a84544a852653ef8df06bc4cec45598f61a74f87c955e85e66457a1deb690d0a6564da2811d1b1eba59a27da0a9a9428928c449e2eae818ef4a7c70f326b02fb73e5e7824ea81e7320f9a3517b3c6f0d2b8f64ac27972190379851e1b38966402a506199b86815f4cfec84c58b3bc627080662d7b97ffbb84a9fdc2c2dc04179e7ebbffcc920923e31fcdfe3d344aa830a8b1dc13e4147c42537ef1d67ddb2e4e540199a5e172bbe63eeeba03b57edde7104df264baee4bd45955ce2cd65d70a9d17d6f0587673440591bdc6586a56ea26dc94ff5d2a65047c4b293a88ff0adf04b4776fe50f98dbeff9e494057814f48194fd8e1fde699100e76cb393e5ff75a40a78ee5a55fef00ada5ae890780a1e2d3c0ff3e3c5b095d90f1c692e8aa174314275552ff6ee3ecc057eb3c981adc27e05ae12c31ed77fe3e6ab3b688af81620c4394624c8a51f84c261b6afd3f419b5420dbcdca0b7326e926c52a63d5813a754054e57e065ca8e10d00b46323f7add467f8074e7a79015d7eb2f0232107dd5eadc8f71d0450be98af9ede149e7ec177d952b0cfe7bf1ef69e11e0e3f79952b4d57a5849508adc3ec19bc01346aad2f633fe581a78b9abf8b33a98cd06070b39a7d9ef35761c71696d092f41813f92018eda8d5da1b4f91166e16b6617ea51094d2b2933678de197b74e3f99b17fa03899140312d3ba35d75ac359d5adc93b86c3abf04c2e66d851bfddcb4d9851ec621ccde6fca1e32a9babab19c170162b66569e903da7974fdb0b1586919fffdddf31bbc189b79cb579ee82a60779a24ef36bfdb3afaa18112f8fed7676f7dd90220da82094e3fdc699db8a435650d4f8bf3b554f232c7f0fbeb7415bfb7b65483ba43e2dcf1bb93d713fa6d4ec35297cf7b5228e683a1971d5067f393f072e118361e0e008920a7e21a8cf7c501481b5d4ab2b2f8e7bf36dbd1092cc9ea91873650166cf4be55e39a83b25cc6c4d708efe68fc29f0127995299fc34113ceb029254deb08cdda698f6ee7c023d2690ebf8960b4e6108a6ade37d7197f985e93566a689bca391ef1b63d8bbb42b09f1a5d26ce41016ca1ada343868d16a579aa0e5a5b90553049998bd7efd059f52f5a8a5966ffb29c9998b8f19efd4cd80f04a3508e5906923d2efa3be2ba76662d15a84e6d6a0ba7fe59bd106fa7ecf77ec385d1d962e8a3d81acf34bee8daff22b960c13d0256fa4213ea3ee68d36e728c93d746593d4a5ff8ad054a9e5a577abf7845758b7f0defaf9deacb1a17ef156394168f6557e4cba2315c020622a32033f051bc0bcb1454d511ab8790c0c6e80aa6d5dc2ded5e6971ba1d2e5b255c20a1a34311fda339d274bc81c2d1034fd8565ca072f7613bc7bac865cd35464304fc1666da9886dda0fa853ebc979a0944bb57096948e86115ee2ff1ec7ef81ab96ef633d9eba18008bba721b4eace38b226b6e0da6912b0f6d1a60612e6db5ec3c7c2b018b7e5784c9309e90efd5262f501ffc4269c726120784e9011a478446472ad7c915bfedbca204c556d2a421f4fab8a1d1a230dd1f9b065f975647b9963c532e136e4318d67055a57f7632c1122716c0855049d3f915c8054fe6683c21edec95cdb15423fc6f3907fa3a441c0d76bedba17cdd15bcbea9748fb35c1ec75072f80b5ba25fdda58719eec9187e33f2a31fbd193d9a318288ea148c740e93b89c71881af1ad4404cc78da3ec2776245eb471b878ad7f73e15d693c787ed6876baedb74ec493ae74db109147bf57f7c5b6c33427f1d7fcffb20ac45233598f4bf0a25f40c6b13a04d0a3b6710f41b109aa53a5e185b70bb2a5cf369ff14735aef5236e06584f6087f1da06201"];
+
 pub fn monetary_integrity_check(tx: &TxV1, faucet_mint_allowed: bool) -> Result<(), String> {
     fee_and_type_sanity(tx)?;
     if tx.payload.faucet == Some(true) && !faucet_mint_allowed {
@@ -5244,9 +5251,21 @@ impl L1Node {
     /// authorized iff its signer is in that set — the SAME answer on every node and on every
     /// replay, independent of which node produced the block or which key this process holds
     /// (issue #66, item 3: no node-local identity in block-state application). Only when no
-    /// authority set exists (devnets / unit tests) does the local node key decide, as before.
+    /// authority set exists does the local node key decide, as before — EXCEPT on testnet, which
+    /// runs without a genesis file: there the fixed [`TESTNET_MINT_AUTHORITY`] stands in for the
+    /// genesis set, so every testnet node gives the same answer (before 1.6.11 a non-producing
+    /// testnet node applied the producer's faucet payout as an ordinary transfer and rejected the
+    /// block on its state root).
     fn apply_identity_for(&self, tx: &TxV1, node_pub_key: &str) -> String {
-        let authority = &self.opts.bridge_authority_keys;
+        let testnet_authority: Vec<String>;
+        let authority: &Vec<String> = if self.opts.bridge_authority_keys.is_empty()
+            && self.opts.chain.chain_id == crate::upgrades::TESTNET_CHAIN_ID
+        {
+            testnet_authority = TESTNET_MINT_AUTHORITY.iter().map(|k| k.to_string()).collect();
+            &testnet_authority
+        } else {
+            &self.opts.bridge_authority_keys
+        };
         if authority.is_empty() {
             node_pub_key.to_string()
         } else if authority.iter().any(|k| k == &tx.from_pub_key) {
@@ -7097,6 +7116,7 @@ impl L1Node {
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
+        let node_pub_key = self.apply_identity_for(tx, &node_pub_key);
         let block_height = self.store.get_tip().map(|t| t.height).unwrap_or(0);
         Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height, &self.shielded_supply, &mut None, &mut HashMap::new(), &mut None);
         Ok(())
@@ -17941,5 +17961,92 @@ mod amm_producer_guard_tests {
             assert_eq!(earned(None), 0, "old rules: the proposer's share of this fee is lost");
             assert!(earned(Some(0)) > 0, "from the height the fee is distributed");
         }
+    }
+}
+
+/// Testnet has no genesis authority set; [`TESTNET_MINT_AUTHORITY`] stands in for it so that a
+/// faucet payout is applied the same way on every testnet node, whichever key the node holds.
+#[cfg(test)]
+mod testnet_mint_authority_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::TmpDir;
+    use quantum_vault_crypto::pqc_keygen;
+
+    fn node(chain_id: &str) -> (TmpDir, L1Node) {
+        let dir = TmpDir::new();
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: chain_id.to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false, bridge_withdraw_store: None, bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
+        }).expect("node");
+        (dir, node)
+    }
+
+    fn faucet_tx(from: &str, to: &str) -> TxV1 {
+        TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: from.into(), nonce: 1,
+            payload: TxPayload { to_pub_key_hex: Some(to.into()), amount: Some(10_000), faucet: Some(true), ..Default::default() },
+            fee: 0.0, sig: String::new(), signed_payload: None }
+    }
+
+    /// Apply one faucet transfer as block application does and return (sender, recipient) balances.
+    fn apply_as(node: &L1Node, own_key: &str, tx: &TxV1) -> (u128, u128) {
+        let mut balances: HashMap<String, u128> = HashMap::new();
+        balances.insert(canon_addr(&tx.from_pub_key), xrge_f64_to_quanta(50_000.0));
+        let (mut tb, mut bt) = (HashMap::new(), HashMap::new());
+        let identity = node.apply_identity_for(tx, own_key);
+        L1Node::apply_balance_tx_inner(&mut balances, &mut tb, &mut bt, tx, Some(&node.validator_store), &identity,
+            &node.unbonding_queue, 1467, &node.shielded_supply, &mut None, &mut HashMap::new(), &mut None);
+        let to = tx.payload.to_pub_key_hex.clone().unwrap();
+        (*balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0), *balances.get(&canon_addr(&to)).unwrap_or(&0))
+    }
+
+    #[test]
+    fn the_constant_is_the_testnet_faucet_key() {
+        assert_eq!(TESTNET_MINT_AUTHORITY.len(), 1);
+        let k = TESTNET_MINT_AUTHORITY[0];
+        assert_eq!(k.len(), 3904);
+        assert!(k.starts_with("41d7fc30c05b0795") && k.ends_with("84f6087f1da06201"));
+        assert!(k.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    /// The producing node (holding the faucet key) and any other testnet node apply the payout
+    /// identically: a mint of 10,000 to the recipient, the sender untouched.
+    #[test]
+    fn a_testnet_faucet_payout_is_a_mint_on_every_testnet_node() {
+        let (_d, n) = node(crate::upgrades::TESTNET_CHAIN_ID);
+        let faucet = TESTNET_MINT_AUTHORITY[0];
+        let to = "cd".repeat(32);
+        let tx = faucet_tx(faucet, &to);
+        let other = pqc_keygen().public_key_hex;
+        let on_producer = apply_as(&n, faucet, &tx);
+        let on_other = apply_as(&n, &other, &tx);
+        assert_eq!(on_producer, on_other);
+        assert_eq!(on_producer, (xrge_f64_to_quanta(50_000.0), xrge_f64_to_quanta(10_000.0)));
+    }
+
+    /// A faucet flag from any other key is never a mint on testnet — not even on the node that
+    /// holds that key (it is applied as an ordinary transfer, the same on every node).
+    #[test]
+    fn a_faucet_flag_from_another_key_is_not_a_mint_on_testnet() {
+        let (_d, n) = node(crate::upgrades::TESTNET_CHAIN_ID);
+        let signer = pqc_keygen().public_key_hex;
+        let tx = faucet_tx(&signer, &"cd".repeat(32));
+        assert_eq!(n.apply_identity_for(&tx, &signer), "_unauthorized_");
+        let on_signer = apply_as(&n, &signer, &tx);
+        let on_other = apply_as(&n, &pqc_keygen().public_key_hex, &tx);
+        assert_eq!(on_signer, on_other);
+        assert_eq!(on_signer.0 + on_signer.1, xrge_f64_to_quanta(50_000.0), "no XRGE created");
+    }
+
+    /// Other chains without a genesis authority set keep the previous rule (the local key decides).
+    #[test]
+    fn other_chains_without_an_authority_set_are_unchanged() {
+        let (_d, n) = node("test");
+        let tx = faucet_tx(TESTNET_MINT_AUTHORITY[0], &"cd".repeat(32));
+        let own = pqc_keygen().public_key_hex;
+        assert_eq!(n.apply_identity_for(&tx, &own), own);
+        let (_d2, m) = node(crate::upgrades::MAINNET_CHAIN_ID);
+        assert_eq!(m.apply_identity_for(&tx, &own), own);
     }
 }
