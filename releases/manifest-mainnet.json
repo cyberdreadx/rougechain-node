@@ -2,18 +2,18 @@
   "schema": 1,
   "network": "mainnet",
   "chain_id": "rougechain-mainnet-1",
-  "version": "1.6.10",
-  "released": "2026-10-19",
-  "source_commit": "5afe534",
+  "version": "1.6.11",
+  "released": "2026-10-20",
+  "source_commit": "c208989",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-shield1480-5afe534",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-shield1480-5afe534",
+    "name": "quantum-vault-daemon-testnetfix-c208989",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-testnetfix-c208989",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.10/quantum-vault-daemon-shield1480-5afe534"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.11/quantum-vault-daemon-testnetfix-c208989"
     ],
-    "sha256": "09042df42c321aac660d07b7191b1dd7ba6389c6c55127730c368719e20722df",
-    "size": 29544272
+    "sha256": "471567227439993159a169e5ab1c99b9a7373bb81cf7654cf2c5967ad59111b5",
+    "size": 29531048
   },
   "cli": {
     "name": "rougechain-290d4a2",
@@ -95,6 +95,6 @@
       "height": 260
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.10.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.11.html",
   "min_installer_version": "2.0.0"
 }
