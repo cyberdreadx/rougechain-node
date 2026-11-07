@@ -9528,6 +9528,14 @@ impl L1Node {
         self.social_store.get_post_stats(post_id, viewer)
     }
 
+    pub fn social_get_post_likers(&self, post_id: &str, limit: usize, offset: usize) -> Result<Vec<String>, String> {
+        self.social_store.get_likers(post_id, limit, offset)
+    }
+
+    pub fn social_get_like_count(&self, post_id: &str) -> Result<u64, String> {
+        self.social_store.get_like_count(post_id)
+    }
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────

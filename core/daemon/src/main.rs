@@ -1169,8 +1169,10 @@ fn build_http_router(state: AppState) -> Router {
         // Social endpoints (read — posts/timeline)
         .route("/api/social/post/:postId", get(social_get_post))
         .route("/api/social/post/:postId/stats", get(social_post_stats))
+        .route("/api/social/post/:postId/likers", get(social_post_likers))
         .route("/api/social/post/:postId/replies", get(social_post_replies))
         .route("/api/social/user/:pubkey/posts", get(social_user_posts))
+        .route("/api/social/user/:pubkey/feed", get(social_user_feed))
         .route("/api/social/timeline", get(social_global_timeline))
         // Social endpoints (write — v2 signed)
         .route("/api/v2/social/play", post(social_play_signed))
@@ -11101,6 +11103,40 @@ async fn social_post_stats(
     let viewer = params.get("viewer").map(|s| s.as_str());
     match state.node.social_get_post_stats(&post_id, viewer) {
         Ok(stats) => Json(stats),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+/// Who liked a post: `{ likers: [pubkey], total }`. Likes were already public
+/// per-wallet (`/api/social/user/:pubkey/likes`); this is the reverse lookup.
+async fn social_post_likers(
+    State(state): State<AppState>,
+    Path(post_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let limit: usize = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).min(200);
+    let offset: usize = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let likers = state.node.social_get_post_likers(&post_id, limit, offset);
+    let total = state.node.social_get_like_count(&post_id);
+    match (likers, total) {
+        (Ok(likers), Ok(total)) => Json(serde_json::json!({ "likers": likers, "total": total })),
+        (Err(e), _) | (_, Err(e)) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+/// Recent posts from everyone `pubkey` follows, newest first — one request
+/// instead of the client fanning out per followee. Public: the follow graph and
+/// every post are already public, so this reveals nothing new (the signed
+/// `/api/v2/social/feed` stays for callers that want the authenticated form).
+async fn social_user_feed(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let limit: usize = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).min(100);
+    let offset: usize = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0).min(1000);
+    match state.node.social_get_following_feed(&pubkey, limit, offset) {
+        Ok(posts) => Json(serde_json::json!({ "posts": posts })),
         Err(e) => Json(serde_json::json!({ "error": e })),
     }
 }
