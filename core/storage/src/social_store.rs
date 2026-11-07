@@ -184,6 +184,22 @@ impl SocialStore {
         Ok(track_ids)
     }
 
+    /// Wallets that liked a post or track, in key order (stable across pages).
+    /// Likes are stored as `"<id>:<wallet>"`, so this is a prefix scan.
+    pub fn get_likers(&self, track_id: &str, limit: usize, offset: usize) -> Result<Vec<String>, String> {
+        let likes = self.likes_tree()?;
+        let prefix = format!("{}:", track_id);
+        let mut out = Vec::new();
+        for entry in likes.scan_prefix(prefix.as_bytes()).skip(offset).take(limit) {
+            let (k, _) = entry.map_err(|e| e.to_string())?;
+            let key_str = String::from_utf8_lossy(&k);
+            if let Some(wallet) = key_str.strip_prefix(&prefix) {
+                out.push(wallet.to_string());
+            }
+        }
+        Ok(out)
+    }
+
     // ── Comments ────────────────────────────────────────────
 
     pub fn add_comment(
@@ -738,5 +754,59 @@ impl SocialStore {
             "following": following,
             "isFollowing": is_following,
         }))
+    }
+}
+
+#[cfg(test)]
+mod likers_feed_tests {
+    use super::*;
+
+    fn store() -> (SocialStore, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "social_store_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        (SocialStore::new(&dir).expect("open store"), dir)
+    }
+
+    #[test]
+    fn likers_lists_who_liked_and_follows_toggles() {
+        let (s, dir) = store();
+        s.toggle_like("post-1", "alice").unwrap();
+        s.toggle_like("post-1", "bob").unwrap();
+        s.toggle_like("post-2", "carol").unwrap(); // other post must not leak in
+        s.toggle_like("post-10", "dave").unwrap(); // prefix "post-1" must not match "post-10"
+
+        let mut likers = s.get_likers("post-1", 50, 0).unwrap();
+        likers.sort();
+        assert_eq!(likers, vec!["alice", "bob"]);
+        assert_eq!(s.get_like_count("post-1").unwrap(), 2);
+
+        s.toggle_like("post-1", "alice").unwrap(); // unlike
+        assert_eq!(s.get_likers("post-1", 50, 0).unwrap(), vec!["bob"]);
+
+        // paging
+        s.toggle_like("post-1", "erin").unwrap();
+        assert_eq!(s.get_likers("post-1", 1, 0).unwrap().len(), 1);
+        assert_eq!(s.get_likers("post-1", 50, 1).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn following_feed_merges_followed_authors_newest_first() {
+        let (s, dir) = store();
+        s.toggle_follow("viewer", "alice").unwrap();
+        s.toggle_follow("viewer", "bob").unwrap();
+        let a1 = s.create_post("alice", "a1", None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let b1 = s.create_post("bob", "b1", None).unwrap();
+        s.create_post("mallory", "not followed", None).unwrap();
+
+        let feed = s.get_following_feed("viewer", 10, 0).unwrap();
+        let ids: Vec<_> = feed.iter().map(|p| p.id.clone()).collect();
+        assert_eq!(ids, vec![b1.id, a1.id]);
+        assert!(s.get_following_feed("nobody", 10, 0).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
