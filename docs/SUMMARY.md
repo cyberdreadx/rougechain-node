@@ -24,6 +24,7 @@
 - [Signed releases](running-a-node/releases.md)
 - [Automatic updates](running-a-node/auto-update.md)
 - [Network upgrade schedule (mainnet / testnet)](running-a-node/upgrade-schedule.md)
+- [Release 1.6.12 (2026-11): public social likers and following feed](running-a-node/release-1.6.12.md)
 - [Release 1.6.11 (2026-10): testnet faucet fix, shielded pool V2 on testnet at 1480](running-a-node/release-1.6.11.md)
 - [Release 1.6.10 (2026-10, not published)](running-a-node/release-1.6.10.md)
 - [Release 1.6.9 (2026-10): shielded pool V2 submit route](running-a-node/release-1.6.9.md)

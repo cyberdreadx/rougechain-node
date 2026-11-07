@@ -4,6 +4,12 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.12: public social likers and following feed — 2026-11-07
+
+- Adds `GET /api/social/post/:postId/likers` and `GET /api/social/user/:pubkey/feed` (read-only,
+  public). No consensus change.
+- See the [release notes](running-a-node/release-1.6.12.md).
+
 ## Node release 1.6.11: testnet faucet fix; shielded pool V2 on testnet at block 1480 — 2026-10-20
 
 - Testnet: every node now applies faucet payouts the same way (a fixed testnet mint-authority key
