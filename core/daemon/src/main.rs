@@ -745,7 +745,10 @@ async fn main() -> Result<(), String> {
     eprintln!("[core-daemon] building API router...");
     let api_router = build_http_router(app_state.clone());
     eprintln!("[core-daemon] binding API server...");
+    // HTTP/1.1 only. No client needs HTTP/2 here (nginx and peers speak 1.1), and turning it
+    // off keeps the old h2 0.3 server code (RUSTSEC-2026-0258) out of reach.
     let api_server = hyper::Server::bind(&api_addr)
+        .http1_only(true)
         .serve(api_router.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
