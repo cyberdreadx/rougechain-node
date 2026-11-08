@@ -4,6 +4,12 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.13: dependency security updates — 2026-11-08
+
+- Updates rustls, rustls-webpki, webpki-roots and tokio to their patched versions, and makes the
+  REST API server speak HTTP/1.1 only. No consensus change; the CLI is unchanged.
+- See the [release notes](running-a-node/release-1.6.13.md).
+
 ## Node release 1.6.12: public social likers and following feed — 2026-11-07
 
 - Adds `GET /api/social/post/:postId/likers` and `GET /api/social/user/:pubkey/feed` (read-only,
