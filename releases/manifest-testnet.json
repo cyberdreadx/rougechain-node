@@ -2,18 +2,18 @@
   "schema": 1,
   "network": "testnet",
   "chain_id": "rougechain-devnet-1",
-  "version": "1.6.11",
-  "released": "2026-10-20",
-  "source_commit": "c208989",
+  "version": "1.6.12",
+  "released": "2026-11-07",
+  "source_commit": "96ada5d",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-testnetfix-c208989",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-testnetfix-c208989",
+    "name": "quantum-vault-daemon-social-96ada5d",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-social-96ada5d",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.11/quantum-vault-daemon-testnetfix-c208989"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.12/quantum-vault-daemon-social-96ada5d"
     ],
-    "sha256": "471567227439993159a169e5ab1c99b9a7373bb81cf7654cf2c5967ad59111b5",
-    "size": 29531048
+    "sha256": "e4bc9aed1f5e74e9f887affa25a2f5be71ae26ace7e3b0ec747c95d1ecda7032",
+    "size": 29563008
   },
   "cli": {
     "name": "rougechain-290d4a2",
@@ -34,8 +34,8 @@
     "sha256": "aec428220a10040e6ab73a78acccf47ddf9eb450d0e5e367ab119c1080b8b83f",
     "size": 106873
   },
-  "mandatory": true,
-  "upgrade_before_height": 1480,
+  "mandatory": false,
+  "upgrade_before_height": null,
   "activations": [
     {
       "name": "tx_uniqueness",
@@ -90,6 +90,6 @@
       "height": 1480
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.11.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.12.html",
   "min_installer_version": "2.0.0"
 }
