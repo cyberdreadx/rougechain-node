@@ -2,18 +2,18 @@
   "schema": 1,
   "network": "mainnet",
   "chain_id": "rougechain-mainnet-1",
-  "version": "1.6.12",
-  "released": "2026-11-07",
-  "source_commit": "96ada5d",
+  "version": "1.6.13",
+  "released": "2026-11-08",
+  "source_commit": "4e9d3bc",
   "public_commit": null,
   "binary": {
-    "name": "quantum-vault-daemon-social-96ada5d",
-    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-social-96ada5d",
+    "name": "quantum-vault-daemon-deps-4e9d3bc",
+    "url": "https://api.rougechain.io/releases/quantum-vault-daemon-deps-4e9d3bc",
     "mirrors": [
-      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.12/quantum-vault-daemon-social-96ada5d"
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.13/quantum-vault-daemon-deps-4e9d3bc"
     ],
-    "sha256": "e4bc9aed1f5e74e9f887affa25a2f5be71ae26ace7e3b0ec747c95d1ecda7032",
-    "size": 29563008
+    "sha256": "59f9e30dc190121761c8f22563140a5b32506e4746d0f005aa866a5acac2d555",
+    "size": 29570464
   },
   "cli": {
     "name": "rougechain-290d4a2",
@@ -95,6 +95,6 @@
       "height": 260
     }
   ],
-  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.12.html",
+  "notes_url": "https://docs.rougechain.io/running-a-node/release-1.6.13.html",
   "min_installer_version": "2.0.0"
 }
