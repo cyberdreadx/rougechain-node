@@ -69,11 +69,11 @@ beforeEach(() => {
 
 describe("pages area wiring", () => {
   it("owns the apps/web paths and picks headers", () => {
-    expect(PAGES_PATHS).toEqual(["/validators", "/genesis-validators", "/node", "/agents", "/status", "/regenerate", "/privacy"]);
+    expect(PAGES_PATHS).toEqual(["/validators", "/genesis-validators", "/node", "/agents", "/status", "/regenerate", "/privacy", "/learn/what-is-rougechain"]);
     expect(featureHeaderProduct("/validators")).toBe("Validators");
     expect(featureHeaderProduct("/genesis-validators")).toBe("Validators");
     expect(featureHeaderProduct("/status")).toBe("Network");
-    for (const p of ["/node", "/agents", "/regenerate", "/privacy"]) expect(featureHeaderProduct(p)).toBeNull();
+    for (const p of ["/node", "/agents", "/regenerate", "/privacy", "/learn/what-is-rougechain"]) expect(featureHeaderProduct(p)).toBeNull();
   });
 });
 
@@ -350,6 +350,20 @@ describe("other pages", () => {
     mockFetch();
     renderAt("/status");
     expect(await screen.findByText("Could not reach the API")).toBeInTheDocument();
+  });
+
+  it("/learn/what-is-rougechain renders the article with its doc links", async () => {
+    mockFetch();
+    renderAt("/learn/what-is-rougechain");
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "What Is RougeChain and How Does XRGE Work" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "How native XRGE differs from XRGE on Base" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "FIPS 204" })).toHaveAttribute("href", "https://csrc.nist.gov/pubs/fips/204/final");
+    expect(screen.getByRole("link", { name: "status review dated October 6, 2026" })).toHaveAttribute(
+      "href",
+      "https://docs.rougechain.io/status.html",
+    );
   });
 
   it("/privacy carries apps/web's policy text verbatim", async () => {

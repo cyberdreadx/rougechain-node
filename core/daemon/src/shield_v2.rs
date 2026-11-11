@@ -5,8 +5,8 @@
 //! (spec §4) are `quantum_vault_shield_v2::pool`; the verifier (spec §2) is
 //! `quantum_vault_shield_v2::verify_spend`.
 //!
-//! **Activation: `None` on every network** ([`SHIELD_V2_ACTIVATION_HEIGHT`] for mainnet, the
-//! `shield_v2` field of `upgrades.rs` per network).
+//! **Activation: mainnet `None`, testnet 1480** ([`SHIELD_V2_ACTIVATION_HEIGHT`] for mainnet,
+//! the `shield_v2` field of `upgrades.rs` per network).
 //!
 //! **Before activation — and while it is `None` — consensus is exactly the previous release's**
 //! (REVIEW_NODE_1 finding R1-1). The previous release has no V2 rule at all: a transaction whose
@@ -72,7 +72,7 @@ use quantum_vault_storage::shield_v2_store::ShieldV2Store;
 use quantum_vault_types::{TxPayload, TxV1};
 
 /// Mainnet activation height of SHIELD_V2 (spec §1.3): **not scheduled**. Testnet's is in
-/// `upgrades.rs` (also `None`). The node reads `crate::upgrades::current().shield_v2`.
+/// `upgrades.rs` (1480). The node reads `crate::upgrades::current().shield_v2`.
 pub const SHIELD_V2_ACTIVATION_HEIGHT: Option<u64> = None;
 
 #[cfg(test)]

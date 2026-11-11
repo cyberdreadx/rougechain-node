@@ -9,6 +9,9 @@ RougeChain includes a built-in WASM smart contract engine powered by `wasmi` —
 > enforced conserving and overdraft-free. See
 > [Contract XRGE Custody](contract-xrge-custody.md) for the rules and examples.
 
+> **Try it in the browser:** the [Contract IDE](ide.md) at [rougechain.io/ide](https://rougechain.io/ide)
+> runs contracts on a local test chain (the node's own VM) and deploys them with your wallet.
+
 ## Overview
 
 Contracts are written in Rust (or any language that compiles to WASM), compiled to `.wasm`, and deployed on-chain. Execution is fuel-metered in a sandbox with host functions for chain interaction.

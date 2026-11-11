@@ -29,6 +29,8 @@
     "explore": "探索"
   },
   "footer": {
+    "learn": "学ぶ",
+    "playground": "プレイグラウンド",
     "tagline": "次の時代のために。",
     "docs": "ドキュメント",
     "community": "コミュニティ",
@@ -160,6 +162,10 @@
     "build": {
       "name": "開発者ポータル",
       "description": "RougeChain で開発するためのツール。"
+    },
+    "ide": {
+      "name": "プレイグラウンド",
+      "description": "ブラウザで WASM コントラクトを作成・テスト・デプロイ。"
     },
     "docs": {
       "name": "ドキュメント",

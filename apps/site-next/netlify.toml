@@ -29,3 +29,26 @@
   for = "/sw.js"
   [headers.values]
     Cache-Control = "no-cache"
+
+# Per-item explorer pages (one per transaction, block, address or bridge transfer) are rendered in the
+# browser; Google files them as "soft 404" and nobody searches for a hash. Keep them out of the index;
+# the list pages (/explorer, /transactions, /tokens, …) stay indexable.
+[[headers]]
+  for = "/tx/*"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+
+[[headers]]
+  for = "/block/*"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+
+[[headers]]
+  for = "/address/*"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+
+[[headers]]
+  for = "/explorer/bridge/*"
+  [headers.values]
+    X-Robots-Tag = "noindex"

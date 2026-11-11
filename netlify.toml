@@ -16,6 +16,9 @@
   # automatically by the relayer, any wallet type) and tracks a deposit until it is credited.
   # Set to "false" to pause the form again.
   VITE_EVM_DEPOSIT_ENABLED = "true"
+  # Shielded pool V2 page (/shield). Active on testnet from block 1480; on mainnet the page only
+  # says the pool is not active yet (no activation height there). Set to "false" to hide the page.
+  VITE_SHIELD_V2_ENABLED = "true"
 
 [[headers]]
   for = "/assets/*"

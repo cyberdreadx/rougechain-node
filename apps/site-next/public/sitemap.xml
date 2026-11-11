@@ -91,8 +91,18 @@
     <priority>0.6</priority>
   </url>
   <url>
+    <loc>https://rougechain.io/ide</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
     <loc>https://rougechain.io/privacy</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://rougechain.io/learn/what-is-rougechain</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
   </url>
 </urlset>

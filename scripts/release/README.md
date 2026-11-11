@@ -317,7 +317,7 @@ told out-of-band to re-run the new installer (and to set `MODE=off` in the meant
 ```bash
 cd scripts/release
 npm test                                    # tooling: round trip + tamper/wrong-key/garbage/schema cases
-./test-installer.sh                         # installer in Docker: ubuntu:24.04, debian:12, ubuntu:22.04
+./test-installer.sh                         # installer in Docker: ubuntu:26.04, ubuntu:24.04, debian:12, ubuntu:22.04
 REAL_BINARY=<node binary> REAL_CLI=<rougechain binary> ./test-installer.sh    # + the real binaries
 
 (cd ../../core && cargo build -p quantum-vault-cli)      # a CLI with `release verify` for the next suite

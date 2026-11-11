@@ -11,6 +11,7 @@ const Agents = lazy(() => import("../pages/Agents"));
 const Status = lazy(() => import("../pages/Status"));
 const Regenerate = lazy(() => import("../pages/Regenerate"));
 const Privacy = lazy(() => import("../pages/Privacy"));
+const WhatIsRougeChain = lazy(() => import("../pages/WhatIsRougeChain"));
 
 /** Route fallback ("common" is always preloaded, so this never suspends itself). */
 function PageLoading() {
@@ -33,13 +34,13 @@ function Page({ children }: { children: ReactNode }) {
 }
 
 /** Paths this area owns (same as apps/web). /buy is the swap area's; /contracts is the Explorer's. */
-export const PAGES_PATHS = ["/validators", "/genesis-validators", "/node", "/agents", "/status", "/regenerate", "/privacy"];
+export const PAGES_PATHS = ["/validators", "/genesis-validators", "/node", "/agents", "/status", "/regenerate", "/privacy", "/learn/what-is-rougechain"];
 
 /**
  * Header choice:
  *  - "Validators" app header for /validators and /genesis-validators (the staking app);
  *  - "Network" app header for /status: live chain telemetry, like the Explorer (registry: Network Status);
- *  - marketing header (null) for /node, /agents, /regenerate, /privacy: they are guides,
+ *  - marketing header (null) for /node, /agents, /regenerate, /privacy, /learn/*: they are guides,
  *    program and legal pages read like the landing site, not tools with local navigation.
  */
 export function pagesHeaderProduct(pathname: string): string | null {
@@ -58,6 +59,7 @@ export const pagesArea: FeatureArea = {
     <Route key="status" path="/status" element={<Page><Status /></Page>} />,
     <Route key="regenerate" path="/regenerate" element={<Page><Regenerate /></Page>} />,
     <Route key="privacy" path="/privacy" element={<Page><Privacy /></Page>} />,
+    <Route key="learn-what-is-rougechain" path="/learn/what-is-rougechain" element={<Page><WhatIsRougeChain /></Page>} />,
   ],
   headerProduct: pagesHeaderProduct,
 };

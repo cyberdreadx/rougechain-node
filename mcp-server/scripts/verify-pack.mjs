@@ -58,21 +58,23 @@ try {
       reject(new Error(`server did not report "${READY}" within ${TIMEOUT_MS}ms\n${err}`));
     }, TIMEOUT_MS);
 
+    // Resolve only after the child has exited: on Windows a running process keeps the temp
+    // directory (its cwd) locked, so deleting it right after kill() fails with EPERM.
+    let ready = false;
     const onData = (buf) => {
       err += buf.toString();
-      if (err.includes(READY)) {
+      if (!ready && err.includes(READY)) {
+        ready = true;
         clearTimeout(timer);
         child.kill("SIGTERM");
-        resolve();
       }
     };
     child.stderr.on("data", onData);
     child.stdout.on("data", onData);
     child.on("exit", (code) => {
       clearTimeout(timer);
-      if (!err.includes(READY)) {
-        reject(new Error(`server exited (code ${code}) before starting\n${err}`));
-      }
+      if (ready) resolve();
+      else reject(new Error(`server exited (code ${code}) before starting\n${err}`));
     });
     child.on("error", (e) => {
       clearTimeout(timer);
@@ -92,5 +94,12 @@ try {
   console.error(err.stderr?.toString?.() || err.message);
   process.exit(1);
 } finally {
-  if (tmp) rmSync(tmp, { recursive: true, force: true });
+  // Cleanup is best effort: a leftover temp folder must not fail the check (or block a publish).
+  if (tmp) {
+    try {
+      rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (e) {
+      console.warn(`[verify-pack] note: could not remove ${tmp} (${e.code || e.message}); delete it by hand.`);
+    }
+  }
 }

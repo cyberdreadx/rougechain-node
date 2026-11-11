@@ -3,19 +3,20 @@
 This page is the single source of truth for **what is live** versus **what is built but not
 activated**. If another page disagrees with this one, this page wins — please open an issue.
 
-_Last reviewed: 2026-10-06 (mainnet height 251)._
+_Last reviewed: 2026-10-16 (mainnet height 261)._
 
 > RougeChain is post-quantum-secured at the L1 level. The current production XRGE bridge remains
 > on the hardened R1 architecture. A V3 XRGE bridge using ML-DSA-65 post-quantum authorization has
 > been built and rehearsed; it is not deployed and awaits an external audit.
 
-## ⚠️ Current node release: 1.6.3 (blocks 235 and 245 have passed)
+## ⚠️ Current node release: 1.6.8 (blocks 235, 245 and 260 have passed)
 
-Mainnet activated mintable tokens and contract royalty reads at **block 235** and the
-monetary-integrity rule at **block 245** (2026-10-05). Every node must run release **1.6.2 or later**
-to follow the chain ([upgrade notice](running-a-node/mandatory-upgrade-2026-10-245.md)); release
-**1.6.3** (messenger and mail hardening, not a consensus change) is recommended for every node and
-is what the operator nodes run ([release notes](running-a-node/release-1.6.3.md)). Nodes installed
+Mainnet activated mintable tokens and contract royalty reads at **block 235**, the monetary-integrity
+rule at **block 245** (2026-10-05) and AMM_INTEGRITY at **block 260** (2026-10-10). Every mainnet node
+must run release **1.6.7 or later** to follow the chain ([release 1.6.7](running-a-node/release-1.6.7.md)).
+Release **1.6.8** (2026-10-15) fixes a bug that could stop a node producing and importing blocks
+while processing certain public NFT mints. It is not a consensus change, is recommended for every
+node, and is what the operator nodes run ([release notes](running-a-node/release-1.6.8.md)). Nodes installed
 with the one-line installer [update themselves](running-a-node/auto-update.md). The full schedule is
 in [Upgrade schedule](running-a-node/upgrade-schedule.md).
 
@@ -96,6 +97,7 @@ a minute.
 | Mintable custom tokens (creator-only minting, optional cap) | **LIVE since block 235** | Tokens created before 235 stay fixed-supply; see [Token creation](advanced/token-creation.md) |
 | Contracts read NFT royalties (`host_nft_royalty_bps` / `host_nft_royalty_recipient`) | **LIVE since block 235** | Royalties above 100 % refused at collection creation; `nft_marketplace` example |
 | Monetary-integrity rule | **LIVE since block 245** | Fee range, no `slash`, no faucet on mainnet, suspended types above |
+| Pool transactions all-or-nothing (AMM_INTEGRITY) | **LIVE since block 260** | A pool transaction that cannot take effect changes nothing and pays no fee; one pool per pair; checked integer amounts |
 | LP fee collection | **LIVE** | "Collect fees" on Pools withdraws only fee earnings |
 | ETH / USDC deposits through the bridge contract (`depositETH` / `depositERC20`, auto-claimed) | **LIVE — reopened 2026-10-05** | The manual claim route is closed at the public endpoint |
 | Bitcoin deposits (BTC → qBTC) | **LIVE** | Bitcoin **withdrawals are switched off** in the site while the relayer is stopped; see [Bitcoin Bridge](bridge/btc-bridge.md) |
@@ -129,6 +131,7 @@ contract is owned by a single operator hot key. No bridge component has been ext
 | Reproducible V3 contract build / audit candidate | Complete |
 | OP-stack deployment rehearsal (local devnet, throwaway keys and token) | Complete |
 | Shielded pool V2 | Specified, in development — see "Suspended since block 245" |
+| XRGE holder staking contract (WASM, fixed reward pot, 3-day unstake delay) | Deployed and tested on **testnet** only — not on mainnet |
 
 ## Consensus redesign — decided 2026-10-06, NOT built
 
@@ -173,6 +176,7 @@ activation height has been chosen for the V3 bridge.
 | Game-ready contracts (GAME_READY 1 + 2 + 3, payable calls) | ✅ Live (blocks 150, 160, 170, 190) |
 | Mintable tokens, contract royalty reads | ✅ Live (block 235) |
 | Monetary-integrity rule | ✅ Live (block 245) |
+| AMM_INTEGRITY (pool transactions all-or-nothing) | ✅ Live (block 260) |
 | Shielded pool V2 | 🟡 In development, unaudited |
 | Restoring the other suspended types | ⏳ Being rebuilt, no height |
 | Consensus redesign (forks A–E) | ⏳ Decided, not built; simulator + independent review first |

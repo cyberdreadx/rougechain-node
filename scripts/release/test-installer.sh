@@ -2,7 +2,7 @@
 #
 # End-to-end test of scripts/install-validator.sh in Docker.
 #
-#   scripts/release/test-installer.sh                  # ubuntu:24.04 + debian:12 + ubuntu:22.04
+#   scripts/release/test-installer.sh                  # ubuntu:26.04 + ubuntu:24.04 + debian:12 + ubuntu:22.04
 #   IMAGES="debian:12" scripts/release/test-installer.sh
 #   REAL_BINARY=/srv/rougechain-releases/quantum-vault-daemon-<…> scripts/release/test-installer.sh
 #
@@ -30,7 +30,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-IMAGES="${IMAGES:-ubuntu:24.04 debian:12 ubuntu:22.04}"
+IMAGES="${IMAGES:-ubuntu:26.04 ubuntu:24.04 debian:12 ubuntu:22.04}"
 WEB_IMAGE="busybox:1.36"
 NET="rc-inst-test-net"
 WEB="rc-inst-test-web"

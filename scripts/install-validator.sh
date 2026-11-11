@@ -49,13 +49,13 @@
 #                                            what the timer runs: install a newer signed release
 #   Settings: /etc/rougechain/<network>/update.conf (MODE=auto|notify|off, PIN_VERSION, …)
 #
-# Supported: Ubuntu 22.04 / 24.04 and Debian 12 on x86_64, with systemd.
+# Supported: Ubuntu 22.04 / 24.04 / 26.04 and Debian 12 on x86_64, with systemd.
 # Docs: https://docs.rougechain.io/running-a-node/releases.html
 #       https://docs.rougechain.io/running-a-node/auto-update.html
 #
 set -euo pipefail
 
-INSTALLER_VERSION="2.1.0"
+INSTALLER_VERSION="2.1.1"
 
 # Ed25519 release public key: the raw 32-byte key, base64. Every release manifest must carry a
 # valid signature by this key. Written by scripts/release/embed-installer-key.mjs from
@@ -391,17 +391,17 @@ load_config() {
 }
 
 check_platform() {
-  [ "$(uname -s)" = "Linux" ] || die "unsupported system: $(uname -s). This installer supports Ubuntu 22.04/24.04 and Debian 12 on x86_64."
+  [ "$(uname -s)" = "Linux" ] || die "unsupported system: $(uname -s). This installer supports Ubuntu 22.04/24.04/26.04 and Debian 12 on x86_64."
   [ "$(uname -m)" = "x86_64" ] || die "unsupported CPU architecture: $(uname -m). Release binaries are built for x86_64 only — build from source instead (docs: running-a-node/installation)."
-  [ -r /etc/os-release ] || die "cannot identify the operating system (/etc/os-release is missing). Supported: Ubuntu 22.04/24.04, Debian 12."
+  [ -r /etc/os-release ] || die "cannot identify the operating system (/etc/os-release is missing). Supported: Ubuntu 22.04/24.04/26.04, Debian 12."
   local id ver
   # shellcheck disable=SC1091
   id="$(. /etc/os-release && printf '%s' "${ID:-}")"
   # shellcheck disable=SC1091
   ver="$(. /etc/os-release && printf '%s' "${VERSION_ID:-}")"
   case "$id:$ver" in
-    ubuntu:22.04|ubuntu:24.04|debian:12) OS_LABEL="$id $ver" ;;
-    *) die "unsupported operating system: ${id:-unknown} ${ver:-unknown}. Supported: Ubuntu 22.04, Ubuntu 24.04, Debian 12 (x86_64). On anything else, build from source (docs: running-a-node/installation)." ;;
+    ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|debian:12) OS_LABEL="$id $ver" ;;
+    *) die "unsupported operating system: ${id:-unknown} ${ver:-unknown}. Supported: Ubuntu 22.04, Ubuntu 24.04, Ubuntu 26.04, Debian 12 (x86_64). On anything else, build from source (docs: running-a-node/installation)." ;;
   esac
 }
 

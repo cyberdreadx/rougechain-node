@@ -813,6 +813,26 @@
   border-top: 1px solid var(--border);
   padding-top: 28px;
 }
+.rc-article {
+  max-width: 760px;
+}
+.rc-article > p,
+.rc-article li {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.rc-article > h2 {
+  margin-top: 44px;
+}
+.rc-article > ul {
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+}
+.rc-article strong {
+  color: var(--ink);
+  font-weight: 500;
+}
 .rc-legal code {
   font-family: var(--mono);
   font-size: 12px;

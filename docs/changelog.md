@@ -4,6 +4,39 @@ All notable changes to RougeChain.
 
 ---
 
+## Node release 1.6.13: dependency security updates — 2026-11-08
+
+- Updates rustls, rustls-webpki, webpki-roots and tokio to their patched versions, and makes the
+  REST API server speak HTTP/1.1 only. No consensus change; the CLI is unchanged.
+- See the [release notes](running-a-node/release-1.6.13.md).
+
+## Node release 1.6.12: public social likers and following feed — 2026-11-07
+
+- Adds `GET /api/social/post/:postId/likers` and `GET /api/social/user/:pubkey/feed` (read-only,
+  public). No consensus change.
+- See the [release notes](running-a-node/release-1.6.12.md).
+
+## Node release 1.6.11: testnet faucet fix; shielded pool V2 on testnet at block 1480 — 2026-10-20
+
+- Testnet: every node now applies faucet payouts the same way (a fixed testnet mint-authority key
+  replaces the local node key), so non-producing testnet nodes follow the chain. Testnet nodes must
+  run 1.6.11 before testnet block 1480, where SHIELD_V2 activates. Mainnet consensus unchanged.
+- Includes everything planned for 1.6.10 (installer 2.1.1 with Ubuntu 26.04).
+- See the [release notes](running-a-node/release-1.6.11.md).
+
+## Node release 1.6.10 (not published) — 2026-10-19
+
+- Testnet: SHIELD_V2 activates at block 1480 (testnet nodes must upgrade before it). Mainnet
+  consensus unchanged (SHIELD_V2 not scheduled there).
+- Installer 2.1.1: Ubuntu 26.04 supported.
+- See the [release notes](running-a-node/release-1.6.10.md).
+
+## Node release 1.6.9: shielded pool V2 submit route — 2026-10-19
+
+- Adds `POST /api/shield-v2/submit` for shielded pool V2 transactions only, forwarded between nodes.
+  Inert until the pool's activation height is set (none yet). No consensus change.
+- See the [release notes](running-a-node/release-1.6.9.md).
+
 ## Node release 1.6.8: NFT mint stability fix — 2026-10-15
 
 - Fixes a bug that could make a node stop producing and importing blocks while processing certain

@@ -532,3 +532,38 @@ pub fn broadcast_tx(peers: &[String], tx: &TxV1) {
         });
     }
 }
+
+/// Forward an accepted shielded pool V2 transaction to every peer on `/shield-v2/submit`, the
+/// route public proxies let through. A peer without that route (an older release) gets the
+/// plain `/tx/broadcast` instead. Both are idempotent: a peer that already has the transaction
+/// refuses it as a duplicate.
+pub fn forward_shield_v2_tx(peers: &[String], tx: &TxV1) {
+    for peer in peers {
+        let base = peer.trim_end_matches('/').to_string();
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let submit = client
+                .post(format!("{}/shield-v2/submit", base))
+                .json(&tx_clone)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await;
+            match submit {
+                Ok(res) if res.status().is_success() => {
+                    eprintln!("[peer] Forwarded shield_v2 tx ({}) to {}", tx_clone.tx_type, base);
+                }
+                Ok(res) if res.status() == reqwest::StatusCode::NOT_FOUND
+                    || res.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED => {
+                    let _ = client
+                        .post(format!("{}/tx/broadcast", base))
+                        .json(&tx_clone)
+                        .timeout(Duration::from_secs(10))
+                        .send()
+                        .await;
+                }
+                _ => {} // peer offline, already has it, or refused it
+            }
+        });
+    }
+}

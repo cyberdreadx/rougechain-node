@@ -1,0 +1,30 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_localchain_free: (a: number, b: number) => void;
+export const localchain_addressOf: (a: number, b: number, c: number) => [number, number];
+export const localchain_advanceTime: (a: number, b: bigint) => void;
+export const localchain_call: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: bigint) => [number, number, number];
+export const localchain_createAccount: (a: number, b: number, c: number) => [number, number, number];
+export const localchain_createCollection: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint, j: number, k: number, l: number) => [number, number, number, number];
+export const localchain_createToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+export const localchain_deploy: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+export const localchain_events: (a: number, b: number, c: number, d: number) => [number, number, number];
+export const localchain_fund: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+export const localchain_mintNft: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [bigint, number, number];
+export const localchain_new: (a: number, b: number, c: bigint) => [number, number, number];
+export const localchain_quantaPerXrge: () => [number, number];
+export const localchain_query: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+export const localchain_snapshot: (a: number) => [number, number, number];
+export const localchain_storage: (a: number, b: number, c: number) => [number, number, number];
+export const localchain_transferNft: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: number, h: number) => [number, number];
+export const localchain_transferToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
+export const localchain_transferXrge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_start: () => void;

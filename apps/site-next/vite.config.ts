@@ -20,8 +20,20 @@ function siteMeta(mode: string): Plugin {
   };
 }
 
-export default defineConfig(({ mode }) => ({
+// Shielded pool V2 (/shield): off unless VITE_SHIELD_V2_ENABLED=true at build time. For `vite build`
+// the value is fixed as a literal so that, when off, the page, its worker and the .wasm are not
+// even emitted (dead branch). Dev server and tests read it at run time (vi.stubEnv works).
+function shieldFlag(mode: string): string {
+  const env = loadEnv(mode, process.cwd(), "VITE_");
+  return (process.env.VITE_SHIELD_V2_ENABLED ?? env.VITE_SHIELD_V2_ENABLED) === "true" ? "true" : "false";
+}
+
+export default defineConfig(({ mode, command }) => ({
   plugins: [react(), tailwindcss(), siteMeta(mode)],
+  ...(command === "build" ? { define: { "import.meta.env.VITE_SHIELD_V2_ENABLED": JSON.stringify(shieldFlag(mode)) } } : {}),
+  // The shield page's prover is a module worker that imports the wasm-bindgen package (README of
+  // core/shield-v2-wasm/browser-test, friction item 1): "iife" workers cannot code-split.
+  worker: { format: "es" as const },
   // site-next runs React 19 while apps/web is still on React 18 in the same npm workspace.
   // dedupe makes every import of these (including from packages/brand, ui, chain-readonly)
   // resolve from THIS app's dependencies, so there is exactly one React in the bundle.

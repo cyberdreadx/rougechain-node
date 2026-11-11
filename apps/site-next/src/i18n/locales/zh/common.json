@@ -29,6 +29,8 @@
     "explore": "探索"
   },
   "footer": {
+    "learn": "了解",
+    "playground": "演练场",
     "tagline": "为未来而建。",
     "docs": "文档",
     "community": "社区",
@@ -160,6 +162,10 @@
     "build": {
       "name": "开发者门户",
       "description": "在 RougeChain 上构建的工具。"
+    },
+    "ide": {
+      "name": "合约演练场",
+      "description": "在浏览器中编写、测试和部署 WASM 合约。"
     },
     "docs": {
       "name": "文档",

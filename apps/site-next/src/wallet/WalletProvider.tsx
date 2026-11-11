@@ -35,7 +35,7 @@ import { deriveMessagingKeypair, migrateToDerivedMessagingKeys, withDerivedMessa
 import { getRougeChainProvider, signMessageViaExtension, signViaExtension, type SignedMessage } from "@rougechain/core/extension-bridge";
 import { pubkeyToAddress } from "@rougechain/core/address";
 import { signMessage } from "@rougechain/core/message-signing";
-import { signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
+import { signShieldV2Bytes, signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
 import { verifyNodeChainId } from "@rougechain/core/chain-id";
 import { useChain } from "../explorer/chain";
 import {
@@ -49,6 +49,7 @@ import { setOnboardingActive } from "./tour";
 import { networkLabel, useExtensionProvider, useRougeAddress } from "./hooks";
 import i18n from "../i18n";
 import { toast } from "./toast";
+import { getActiveNetwork } from "@rougechain/core/network";
 
 export type OnboardingMode = "create" | "import";
 /** Post-create / post-import steps shown on /wallet (same order as apps/web). */
@@ -255,6 +256,15 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     // Session only until the password step encrypts it: never plaintext in localStorage.
     stageUnifiedWallet(wallet);
     notifyWalletChanged();
+    // Shielded pool V2 (flag on only): the shielded state for a phrase GENERATED here is made in
+    // this same action, without an embargo (UI_CONTRACT obligation 1 (a)). Lazy: with the flag off
+    // nothing of it is loaded. A failure leaves no state; the /shield page then makes one under the
+    // embargo, the safe default. (The test is spelled out so that `vite build` folds it to a literal
+    // and, with the flag off, does not even emit the shield worker or the .wasm.)
+    if (import.meta.env.VITE_SHIELD_V2_ENABLED === "true") {
+      const network = getActiveNetwork();
+      void import("../shield/host").then((m) => m.makeStateForNewlyGeneratedPhrase(mnemonic, network)).catch(() => {});
+    }
     registerWalletOnNode({
       id: wallet.id,
       displayName: wallet.displayName,
@@ -269,6 +279,12 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     // already exists (it then replaces that vault with the imported wallet).
     stageUnifiedWallet(wallet);
     notifyWalletChanged();
+    // Shielded pool V2 (flag on only): an imported phrase never inherits the "only copy" statement
+    // an earlier create() may have left here (UI_CONTRACT obligation 1).
+    if (import.meta.env.VITE_SHIELD_V2_ENABLED === "true" && wallet.mnemonic) {
+      const phrase = wallet.mnemonic;
+      void import("../shield/host").then((m) => m.forgetStatementForImportedPhrase(phrase)).catch(() => {});
+    }
     setFlow({ mode: "import", step: "password" });
   }, []);
 
@@ -398,6 +414,12 @@ export interface Signer {
    * @rougechain/core/message-signing). A provider wallet asks its user every time.
    */
   signMessage(message: string): Promise<SignedMessage>;
+  /**
+   * ML-DSA-65 account signature of a shielded pool V2 shield over the `signing_bytes` the wallet
+   * core defines; refuses any bytes that are not a shield_v2 envelope from this key. Local keys only — the extension / Qwalla provider has
+   * no such call, so a provider wallet cannot shield (the /shield page says so).
+   */
+  signBytes?(bytesHex: string): Promise<string>;
 }
 
 /**
@@ -426,6 +448,7 @@ export function useSigner(): Signer | null {
           publicKey,
           address: await pubkeyToAddress(publicKey),
         }),
+        signBytes: async (bytesHex) => signShieldV2Bytes(bytesHex, priv, publicKey),
       };
     }
     return {

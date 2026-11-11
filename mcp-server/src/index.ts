@@ -160,7 +160,7 @@ function fail(message: string) {
 
 const server = new McpServer({
   name: "rougechain",
-  version: "1.3.1",
+  version: "1.4.1",
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -836,7 +836,7 @@ if (signer) {
       collectionId: z.string().describe("Collection ID"),
       name: z.string().describe("NFT name"),
       metadataUri: z.string().optional().describe("Metadata URI (ipfs/https/data)"),
-      attributes: z.record(z.unknown()).optional().describe("Trait attributes"),
+      attributes: z.record(z.string(), z.unknown()).optional().describe("Trait attributes"),
     },
     async ({ collectionId, name, metadataUri, attributes }) =>
       tx(() => rc.nft.mint(w, { collectionId, name, metadataUri, attributes })),

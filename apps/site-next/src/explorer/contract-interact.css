@@ -1,0 +1,175 @@
+/* Contract page: Read / Write tabs (explorer). Uses the brand tokens only. */
+.interact {
+  display: grid;
+  gap: 16px;
+}
+.interact-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.interact-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: 500 13px var(--font);
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.interact-tab:hover {
+  color: var(--ink);
+}
+.interact-tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--red);
+}
+.interact-tab:focus-visible,
+.interact-custom > summary:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+.interact-panel {
+  display: grid;
+  gap: 14px;
+}
+.interact-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  max-width: 70ch;
+}
+.interact-note.warn {
+  color: var(--warning);
+}
+.interact-known {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 14px;
+}
+.interact-known .small {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.interact-method {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+.interact-method-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.interact-method-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+}
+.interact-about {
+  margin: 0;
+  font-size: 13px;
+  max-width: 70ch;
+}
+.interact-args {
+  resize: vertical;
+  font: 13px var(--mono);
+  min-height: 46px;
+}
+.interact-pay {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.interact-pay .field:first-child {
+  width: 120px;
+}
+.interact-grow {
+  flex: 1;
+  min-width: 160px;
+}
+.interact-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.interact-confirm {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.interact-confirm.mainnet {
+  border-color: var(--warning);
+}
+.interact-cost {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0;
+}
+.interact-cost dt {
+  font: 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.interact-cost dd {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.interact-result {
+  font-size: 13px;
+}
+.interact-result p {
+  margin: 0;
+}
+.interact-preview {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.interact-preview pre {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-x: auto;
+  max-height: 320px;
+}
+.interact-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.interact-custom > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+@media (max-width: 560px) {
+  .interact-method {
+    padding: 14px;
+  }
+  .interact-pay .field:first-child {
+    width: 100%;
+  }
+}
